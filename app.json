@@ -19,7 +19,6 @@
       "supportsTablet": true,
       "bundleIdentifier": "com.photosync.app",
       "buildNumber": "1.0.0",
-      "deploymentTarget": "13.0",
       "infoPlist": {
         "NSPhotoLibraryUsageDescription": "PhotoLynk needs access to your photos to back them up to your secure private cloud.",
         "NSPhotoLibraryAddUsageDescription": "PhotoLynk needs permission to save restored photos to your library.",
@@ -70,10 +69,6 @@
       ],
       "package": "com.photosync.app",
       "versionCode": 1,
-      "minSdkVersion": 21,
-      "targetSdkVersion": 34,
-      "compileSdkVersion": 34,
-      "edgeToEdgeEnabled": true,
       "usesCleartextTraffic": true
     },
     "web": {
