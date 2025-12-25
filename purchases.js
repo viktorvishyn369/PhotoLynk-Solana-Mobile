@@ -1,0 +1,402 @@
+// RevenueCat Purchases Integration for StealthCloud
+// Handles in-app subscriptions with easy navigation and grace period support
+
+import { Platform } from 'react-native';
+
+// Safely import Purchases - may not be available until native rebuild
+let Purchases = null;
+let purchasesAvailable = false;
+try {
+  Purchases = require('react-native-purchases').default;
+  purchasesAvailable = true;
+} catch (e) {
+  console.log('RevenueCat not available (native rebuild required)');
+}
+
+// RevenueCat API Keys - Replace with your actual keys from RevenueCat dashboard
+const REVENUECAT_API_KEY_IOS = 'appl_YOUR_IOS_API_KEY';
+const REVENUECAT_API_KEY_ANDROID = 'goog_YOUR_ANDROID_API_KEY';
+
+// Product IDs - Must match what you configure in App Store Connect / Google Play Console
+export const PRODUCT_IDS = {
+  MONTHLY_100GB: 'stealthcloud_100gb_monthly',
+  MONTHLY_200GB: 'stealthcloud_200gb_monthly',
+  MONTHLY_400GB: 'stealthcloud_400gb_monthly',
+  MONTHLY_1TB: 'stealthcloud_1tb_monthly',
+};
+
+// Map tier GB to product ID
+export const TIER_TO_PRODUCT = {
+  100: PRODUCT_IDS.MONTHLY_100GB,
+  200: PRODUCT_IDS.MONTHLY_200GB,
+  400: PRODUCT_IDS.MONTHLY_400GB,
+  1000: PRODUCT_IDS.MONTHLY_1TB,
+};
+
+// Map product ID to tier GB
+export const PRODUCT_TO_TIER = {
+  [PRODUCT_IDS.MONTHLY_100GB]: 100,
+  [PRODUCT_IDS.MONTHLY_200GB]: 200,
+  [PRODUCT_IDS.MONTHLY_400GB]: 400,
+  [PRODUCT_IDS.MONTHLY_1TB]: 1000,
+};
+
+// Entitlement ID - The entitlement that grants access to StealthCloud
+export const ENTITLEMENT_ID = 'stealthcloud_access';
+
+// Grace period in days (matches server SUBSCRIPTION_GRACE_DAYS)
+export const GRACE_PERIOD_DAYS = 3;
+
+let isInitialized = false;
+
+/**
+ * Initialize RevenueCat SDK
+ * Call this once when the app starts
+ * @param {string} appUserId - User's email or unique ID for RevenueCat
+ */
+export const initializePurchases = async (appUserId = null) => {
+  if (isInitialized) return;
+  if (!purchasesAvailable || !Purchases) {
+    console.log('RevenueCat skipped (native module not available)');
+    return;
+  }
+  
+  try {
+    const apiKey = Platform.OS === 'ios' ? REVENUECAT_API_KEY_IOS : REVENUECAT_API_KEY_ANDROID;
+    
+    if (appUserId) {
+      await Purchases.configure({ apiKey, appUserID: appUserId });
+    } else {
+      await Purchases.configure({ apiKey });
+    }
+    
+    isInitialized = true;
+    console.log('RevenueCat initialized successfully');
+  } catch (e) {
+    console.error('RevenueCat initialization failed:', e);
+    throw e;
+  }
+};
+
+/**
+ * Set or update the user ID in RevenueCat
+ * Call this after user logs in
+ * @param {string} appUserId - User's email or unique ID
+ */
+export const identifyUser = async (appUserId) => {
+  if (!appUserId) return;
+  if (!purchasesAvailable || !Purchases) return;
+  
+  try {
+    await Purchases.logIn(appUserId);
+    console.log('RevenueCat user identified:', appUserId);
+  } catch (e) {
+    console.error('RevenueCat identify failed:', e);
+  }
+};
+
+/**
+ * Log out user from RevenueCat
+ * Call this when user logs out
+ */
+export const logoutUser = async () => {
+  if (!purchasesAvailable || !Purchases) return;
+  try {
+    await Purchases.logOut();
+    console.log('RevenueCat user logged out');
+  } catch (e) {
+    console.error('RevenueCat logout failed:', e);
+  }
+};
+
+/**
+ * Get available packages/products for purchase
+ * @returns {Object} offerings with packages
+ */
+export const getOfferings = async () => {
+  if (!purchasesAvailable || !Purchases) return null;
+  try {
+    const offerings = await Purchases.getOfferings();
+    return offerings;
+  } catch (e) {
+    console.error('Failed to get offerings:', e);
+    return null;
+  }
+};
+
+/**
+ * Get current subscription status
+ * @returns {Object} { isActive, isInGracePeriod, expiresAt, tierGb, productId }
+ */
+export const getSubscriptionStatus = async () => {
+  if (!purchasesAvailable || !Purchases) {
+    return { isActive: false, isInGracePeriod: false, expiresAt: null, tierGb: null, productId: null };
+  }
+  try {
+    const customerInfo = await Purchases.getCustomerInfo();
+    const entitlement = customerInfo.entitlements.active[ENTITLEMENT_ID];
+    
+    if (!entitlement) {
+      return {
+        isActive: false,
+        isInGracePeriod: false,
+        expiresAt: null,
+        tierGb: null,
+        productId: null,
+      };
+    }
+    
+    const expiresAt = entitlement.expirationDate ? new Date(entitlement.expirationDate) : null;
+    const now = new Date();
+    const isExpired = expiresAt && expiresAt < now;
+    
+    // Check if in grace period (within GRACE_PERIOD_DAYS after expiration)
+    let isInGracePeriod = false;
+    if (isExpired && expiresAt) {
+      const gracePeriodEnd = new Date(expiresAt.getTime() + GRACE_PERIOD_DAYS * 24 * 60 * 60 * 1000);
+      isInGracePeriod = now < gracePeriodEnd;
+    }
+    
+    const productId = entitlement.productIdentifier;
+    const tierGb = PRODUCT_TO_TIER[productId] || null;
+    
+    return {
+      isActive: !isExpired,
+      isInGracePeriod,
+      expiresAt,
+      tierGb,
+      productId,
+      willRenew: entitlement.willRenew,
+      periodType: entitlement.periodType, // 'normal', 'trial', 'intro'
+    };
+  } catch (e) {
+    console.error('Failed to get subscription status:', e);
+    return {
+      isActive: false,
+      isInGracePeriod: false,
+      expiresAt: null,
+      tierGb: null,
+      productId: null,
+    };
+  }
+};
+
+/**
+ * Purchase a subscription by tier
+ * @param {number} tierGb - Plan tier in GB (100, 200, 400, 1000)
+ * @returns {Object} { success, customerInfo, error }
+ */
+export const purchaseSubscription = async (tierGb) => {
+  if (!purchasesAvailable || !Purchases) {
+    return { success: false, error: 'In-app purchases not available (native rebuild required)' };
+  }
+  try {
+    const offerings = await Purchases.getOfferings();
+    
+    if (!offerings || !offerings.current) {
+      return { success: false, error: 'No offerings available' };
+    }
+    
+    // Find the package for the requested tier
+    const productId = TIER_TO_PRODUCT[tierGb];
+    if (!productId) {
+      return { success: false, error: 'Invalid tier' };
+    }
+    
+    // Look for the package in all available packages
+    let targetPackage = null;
+    const allPackages = offerings.current.availablePackages || [];
+    
+    for (const pkg of allPackages) {
+      if (pkg.product && pkg.product.identifier === productId) {
+        targetPackage = pkg;
+        break;
+      }
+    }
+    
+    if (!targetPackage) {
+      return { success: false, error: `Package for ${tierGb}GB not found` };
+    }
+    
+    // Make the purchase
+    const { customerInfo } = await Purchases.purchasePackage(targetPackage);
+    
+    // Check if purchase was successful
+    const entitlement = customerInfo.entitlements.active[ENTITLEMENT_ID];
+    if (entitlement) {
+      return { success: true, customerInfo };
+    }
+    
+    return { success: false, error: 'Purchase completed but entitlement not active' };
+  } catch (e) {
+    if (e.userCancelled) {
+      return { success: false, error: 'cancelled', userCancelled: true };
+    }
+    console.error('Purchase failed:', e);
+    return { success: false, error: e.message || 'Purchase failed' };
+  }
+};
+
+/**
+ * Restore previous purchases
+ * @returns {Object} { success, customerInfo, error }
+ */
+export const restorePurchases = async () => {
+  if (!purchasesAvailable || !Purchases) {
+    return { success: false, error: 'In-app purchases not available (native rebuild required)' };
+  }
+  try {
+    const customerInfo = await Purchases.restorePurchases();
+    const entitlement = customerInfo.entitlements.active[ENTITLEMENT_ID];
+    
+    return {
+      success: !!entitlement,
+      customerInfo,
+      hasActiveSubscription: !!entitlement,
+    };
+  } catch (e) {
+    console.error('Restore failed:', e);
+    return { success: false, error: e.message || 'Restore failed' };
+  }
+};
+
+/**
+ * Get formatted price for a tier
+ * @param {number} tierGb - Plan tier in GB
+ * @returns {string} Formatted price string or null
+ */
+export const getPriceForTier = async (tierGb) => {
+  if (!purchasesAvailable || !Purchases) return null;
+  try {
+    const offerings = await Purchases.getOfferings();
+    if (!offerings || !offerings.current) return null;
+    
+    const productId = TIER_TO_PRODUCT[tierGb];
+    const allPackages = offerings.current.availablePackages || [];
+    
+    for (const pkg of allPackages) {
+      if (pkg.product && pkg.product.identifier === productId) {
+        return pkg.product.priceString;
+      }
+    }
+    
+    return null;
+  } catch (e) {
+    console.error('Failed to get price:', e);
+    return null;
+  }
+};
+
+/**
+ * Get all available plans with prices
+ * @returns {Array} [{ tierGb, productId, price, priceString, title }]
+ */
+export const getAvailablePlans = async () => {
+  if (!purchasesAvailable || !Purchases) return [];
+  try {
+    const offerings = await Purchases.getOfferings();
+    if (!offerings || !offerings.current) return [];
+    
+    const plans = [];
+    const allPackages = offerings.current.availablePackages || [];
+    
+    for (const pkg of allPackages) {
+      const productId = pkg.product?.identifier;
+      const tierGb = PRODUCT_TO_TIER[productId];
+      
+      if (tierGb) {
+        plans.push({
+          tierGb,
+          productId,
+          price: pkg.product.price,
+          priceString: pkg.product.priceString,
+          title: tierGb === 1000 ? '1 TB' : `${tierGb} GB`,
+          description: pkg.product.description || 'Monthly subscription',
+          package: pkg,
+        });
+      }
+    }
+    
+    // Sort by tier size
+    plans.sort((a, b) => a.tierGb - b.tierGb);
+    
+    return plans;
+  } catch (e) {
+    console.error('Failed to get available plans:', e);
+    return [];
+  }
+};
+
+/**
+ * Check if user can upload (active subscription or in grace period)
+ * @returns {Object} { canUpload, reason, daysRemaining }
+ */
+export const checkUploadAccess = async () => {
+  const status = await getSubscriptionStatus();
+  
+  if (status.isActive) {
+    return { canUpload: true, reason: 'active' };
+  }
+  
+  if (status.isInGracePeriod) {
+    const now = new Date();
+    const gracePeriodEnd = new Date(status.expiresAt.getTime() + GRACE_PERIOD_DAYS * 24 * 60 * 60 * 1000);
+    const daysRemaining = Math.ceil((gracePeriodEnd - now) / (24 * 60 * 60 * 1000));
+    
+    return {
+      canUpload: false,
+      canSync: true,
+      reason: 'grace',
+      daysRemaining,
+      message: `Subscription expired. You have ${daysRemaining} day${daysRemaining !== 1 ? 's' : ''} to sync your data.`,
+    };
+  }
+  
+  return {
+    canUpload: false,
+    canSync: false,
+    reason: 'expired',
+    message: 'Subscription expired. Please renew to continue.',
+  };
+};
+
+/**
+ * Listen for subscription changes
+ * @param {Function} callback - Called when subscription status changes
+ * @returns {Function} Unsubscribe function
+ */
+export const addSubscriptionListener = (callback) => {
+  if (!purchasesAvailable || !Purchases) {
+    return () => {}; // Return no-op unsubscribe function
+  }
+  const listener = Purchases.addCustomerInfoUpdateListener((customerInfo) => {
+    const entitlement = customerInfo.entitlements.active[ENTITLEMENT_ID];
+    callback({
+      isActive: !!entitlement,
+      customerInfo,
+    });
+  });
+  
+  return () => {
+    listener.remove();
+  };
+};
+
+export default {
+  initializePurchases,
+  identifyUser,
+  logoutUser,
+  getOfferings,
+  getSubscriptionStatus,
+  purchaseSubscription,
+  restorePurchases,
+  getPriceForTier,
+  getAvailablePlans,
+  checkUploadAccess,
+  addSubscriptionListener,
+  PRODUCT_IDS,
+  TIER_TO_PRODUCT,
+  PRODUCT_TO_TIER,
+  ENTITLEMENT_ID,
+  GRACE_PERIOD_DAYS,
+};
