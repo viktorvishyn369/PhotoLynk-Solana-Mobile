@@ -14,15 +14,15 @@ try {
 }
 
 // RevenueCat API Keys - Replace with your actual keys from RevenueCat dashboard
-const REVENUECAT_API_KEY_IOS = 'appl_YOUR_IOS_API_KEY';
-const REVENUECAT_API_KEY_ANDROID = 'goog_YOUR_ANDROID_API_KEY';
+const REVENUECAT_API_KEY_IOS = process.env.EXPO_PUBLIC_REVENUECAT_IOS_KEY || 'appl_YOUR_IOS_API_KEY';
+const REVENUECAT_API_KEY_ANDROID = process.env.EXPO_PUBLIC_REVENUECAT_ANDROID_KEY || 'goog_YOUR_ANDROID_API_KEY';
 
 // Product IDs - Must match what you configure in App Store Connect / Google Play Console
 export const PRODUCT_IDS = {
-  MONTHLY_100GB: 'stealthcloud_100gb_monthly',
-  MONTHLY_200GB: 'stealthcloud_200gb_monthly',
-  MONTHLY_400GB: 'stealthcloud_400gb_monthly',
-  MONTHLY_1TB: 'stealthcloud_1tb_monthly',
+  MONTHLY_100GB: 'stealthcloud.100gb.monthly',
+  MONTHLY_200GB: 'stealthcloud.200gb.monthly',
+  MONTHLY_400GB: 'stealthcloud.400gb.monthly',
+  MONTHLY_1TB: 'stealthcloud.1tb.monthly',
 };
 
 // Map tier GB to product ID
@@ -62,7 +62,20 @@ export const initializePurchases = async (appUserId = null) => {
   }
   
   try {
-    const apiKey = Platform.OS === 'ios' ? REVENUECAT_API_KEY_IOS : REVENUECAT_API_KEY_ANDROID;
+    const apiKeyRaw = Platform.OS === 'ios' ? REVENUECAT_API_KEY_IOS : REVENUECAT_API_KEY_ANDROID;
+    const apiKey = (apiKeyRaw || '').trim();
+    if (!apiKey || apiKey.includes('YOUR_')) {
+      console.log('RevenueCat skipped (missing EXPO_PUBLIC_REVENUECAT_* key)');
+      return;
+    }
+    if (Platform.OS === 'ios' && !apiKey.startsWith('appl_')) {
+      console.log('RevenueCat skipped (expected iOS key starting with appl_)');
+      return;
+    }
+    if (Platform.OS === 'android' && !apiKey.startsWith('goog_')) {
+      console.log('RevenueCat skipped (expected Android key starting with goog_)');
+      return;
+    }
     
     if (appUserId) {
       await Purchases.configure({ apiKey, appUserID: appUserId });
