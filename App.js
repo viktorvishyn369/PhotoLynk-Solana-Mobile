@@ -46,7 +46,8 @@ import {
   formatBytes,
   normalizeFilenameForCompare,
   normalizeEmailForDeviceUuid,
-  isValidUrl
+  isValidUrl,
+  computeFileIdentity,
 } from './utils';
 import {
   AUTO_UPLOAD_POLL_INTERVAL_SECONDS,
@@ -144,6 +145,7 @@ const LEGACY_APP_DISPLAY_NAME = 'PhotoSync';
 const ANDROID_HW_ID_KEY = 'android_hardware_device_id';
 const IOS_HW_ID_KEY = 'ios_hardware_device_id';
 const RESTORE_HISTORY_KEY = 'restore_history';
+const RESTORE_HISTORY_FILE = `${FileSystem.documentDirectory}restore_history_v2.json`;
 const makeHistoryKey = (type, id) => `${type}:${id}`;
 const PHOTOLYNK_QR_SCHEMA = 'photolynk';
 const LOCAL_SERVER_QR_SCHEMA = 'photolynk_local';
@@ -152,11 +154,31 @@ const REMOTE_SERVER_QR_SCHEMA = 'photolynk_remote';
 // Persisted restore history to avoid re-downloading when the OS renames saved assets.
 const loadRestoreHistory = async () => {
   try {
+    try {
+      const info = await FileSystem.getInfoAsync(RESTORE_HISTORY_FILE);
+      if (info && info.exists) {
+        const rawFile = await FileSystem.readAsStringAsync(RESTORE_HISTORY_FILE);
+        if (rawFile) {
+          const parsedFile = JSON.parse(rawFile);
+          if (Array.isArray(parsedFile)) {
+            return new Set(parsedFile.filter(Boolean));
+          }
+        }
+      }
+    } catch (e) {
+      // ignore
+    }
     const raw = await SecureStore.getItemAsync(RESTORE_HISTORY_KEY);
     if (!raw) return new Set();
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return new Set();
-    return new Set(parsed.filter(Boolean));
+    const set = new Set(parsed.filter(Boolean));
+    try {
+      await FileSystem.writeAsStringAsync(RESTORE_HISTORY_FILE, JSON.stringify([...set]));
+    } catch (e) {
+      // ignore
+    }
+    return set;
   } catch (e) {
     return new Set();
   }
@@ -265,6 +287,11 @@ const computeIosHardwareId = async () => {
 
 const saveRestoreHistory = async (set) => {
   try {
+    try {
+      await FileSystem.writeAsStringAsync(RESTORE_HISTORY_FILE, JSON.stringify([...set]));
+    } catch (e) {
+      // ignore
+    }
     await SecureStore.setItemAsync(RESTORE_HISTORY_KEY, JSON.stringify([...set]));
   } catch (e) {
     // ignore
@@ -441,6 +468,54 @@ const buildLocalAssetIdSetPaged = async ({ album, maxInitialEmptyWaitMs = 30000 
   }
 
   return set;
+};
+
+// Fetch all server files with pagination (for Remote/Local backup/sync)
+const fetchAllServerFilesPaged = async (serverUrl, config) => {
+  const PAGE_LIMIT = 500;
+  const allFiles = [];
+  let offset = 0;
+
+  while (true) {
+    const response = await axios.get(`${serverUrl}/api/files`, {
+      ...config,
+      params: { offset, limit: PAGE_LIMIT }
+    });
+
+    const files = (response.data && response.data.files) ? response.data.files : [];
+    allFiles.push(...files);
+
+    if (!files || files.length < PAGE_LIMIT) break;
+    offset += files.length;
+    const total = typeof response.data?.total === 'number' ? response.data.total : null;
+    if (typeof total === 'number' && offset >= total) break;
+  }
+
+  return allFiles;
+};
+
+// Fetch all StealthCloud manifests with pagination
+const fetchAllManifestsPaged = async (serverUrl, config) => {
+  const PAGE_LIMIT = 500;
+  const allManifests = [];
+  let offset = 0;
+
+  while (true) {
+    const response = await axios.get(`${serverUrl}/api/cloud/manifests`, {
+      ...config,
+      params: { offset, limit: PAGE_LIMIT }
+    });
+
+    const manifests = (response.data && response.data.manifests) ? response.data.manifests : [];
+    allManifests.push(...manifests);
+
+    if (!manifests || manifests.length < PAGE_LIMIT) break;
+    offset += manifests.length;
+    const total = typeof response.data?.total === 'number' ? response.data.total : null;
+    if (typeof total === 'number' && offset >= total) break;
+  }
+
+  return allManifests;
 };
 
 // Beautiful gradient spinner component for loading screen
@@ -1060,8 +1135,7 @@ export default function App() {
 
         let existingManifests = [];
         try {
-          const listRes = await axios.get(`${SERVER_URL}/api/cloud/manifests`, config);
-          existingManifests = (listRes.data && listRes.data.manifests) ? listRes.data.manifests : [];
+          existingManifests = await fetchAllManifestsPaged(SERVER_URL, config);
         } catch (e) {
           existingManifests = [];
         }
@@ -1117,8 +1191,7 @@ export default function App() {
         config = await getAuthHeaders();
         SERVER_URL = getServerUrl();
         try {
-          const listRes = await axios.get(`${SERVER_URL}/api/cloud/manifests`, config);
-          const existingManifests = (listRes.data && listRes.data.manifests) ? listRes.data.manifests : [];
+          const existingManifests = await fetchAllManifestsPaged(SERVER_URL, config);
           cumulativeUploaded = existingManifests.length;
           console.log('AutoUpload: loaded cumulative uploaded count from server:', cumulativeUploaded);
         } catch (e) {
@@ -1139,8 +1212,7 @@ export default function App() {
         } else {
           // If we couldn't load manifests, try again or use empty set
           try {
-            const listRes = await axios.get(`${SERVER_URL}/api/cloud/manifests`, config);
-            const manifests = (listRes.data && listRes.data.manifests) ? listRes.data.manifests : [];
+            const manifests = await fetchAllManifestsPaged(SERVER_URL, config);
             manifests.forEach(m => already.add(m.manifestId));
           } catch (e) {
             console.log('AutoUpload: failed to load manifest IDs, will check individually');
@@ -1244,31 +1316,6 @@ export default function App() {
 
             autoUploadNightRunnerHeartbeatMsRef.current = Date.now();
 
-            const manifestId = sha256(`asset:${asset.id}`);
-            if (already.has(manifestId)) {
-              skipped += 1;
-              console.log('AutoUpload: skipping already uploaded asset:', asset.id);
-              continue;
-            }
-
-            // Cross-device duplicate detection: check filename before uploading
-            let assetInfo = null;
-            try {
-              assetInfo = Platform.OS === 'android'
-                ? await MediaLibrary.getAssetInfoAsync(asset.id, { shouldDownloadFromNetwork: true })
-                : await MediaLibrary.getAssetInfoAsync(asset.id);
-            } catch (e) {
-              console.warn('AutoUpload: getAssetInfoAsync failed:', asset.id, e?.message);
-            }
-            if (assetInfo) {
-              const assetFilename = normalizeFilenameForCompare(assetInfo.filename || asset.filename);
-              if (assetFilename && alreadyFilenames.has(assetFilename)) {
-                console.log(`AutoUpload: skipping duplicate filename: ${assetFilename}`);
-                skipped += 1;
-                continue;
-              }
-            }
-
             console.log('AutoUpload: attempting upload for asset:', asset.id);
             const r = await autoUploadStealthCloudUploadOneAsset({
               asset,
@@ -1289,7 +1336,7 @@ export default function App() {
             if (r && r.uploaded) {
               uploaded += 1;
               cumulativeUploaded += 1;
-              already.add(manifestId);
+              if (r.manifestId) already.add(r.manifestId);
               // Update status with current progress (only if not cancelled)
               if (totalEstimatedCount !== null && !autoUploadNightRunnerCancelRef.current && autoUploadEnabledRef.current) {
                 setStatus(`Auto-Backup: ${cumulativeUploaded}/${totalEstimatedCount} uploaded`);
@@ -1524,8 +1571,7 @@ export default function App() {
 
       let existingManifests = [];
       try {
-        const listRes = await axios.get(`${SERVER_URL}/api/cloud/manifests`, config);
-        existingManifests = (listRes.data && listRes.data.manifests) ? listRes.data.manifests : [];
+        existingManifests = await fetchAllManifestsPaged(SERVER_URL, config);
       } catch (e) {
         existingManifests = [];
       }
@@ -1579,12 +1625,6 @@ export default function App() {
         }
 
         try {
-          const manifestId = sha256(`asset:${asset.id}`);
-          if (already.has(manifestId)) {
-            skipped += 1;
-            continue;
-          }
-
           setStatus(`Comparing ${processedIndex}/${totalCount}`);
 
           let assetInfo;
@@ -1601,16 +1641,6 @@ export default function App() {
             continue;
           }
 
-          // Cross-device duplicate detection: skip if filename already exists on server
-          const assetFilename = normalizeFilenameForCompare(assetInfo.filename || asset.filename);
-          if (assetFilename && alreadyFilenames.has(assetFilename)) {
-            console.log(`StealthCloud: skipping duplicate filename: ${assetFilename}`);
-            skipped += 1;
-            continue;
-          }
-
-          setStatus(`Encrypting ${processedIndex}/${totalCount}`);
-
           let filePath, tmpCopied, tmpUri;
           try {
             const resolved = await resolveReadableFilePath({ assetId: asset.id, assetInfo });
@@ -1622,6 +1652,44 @@ export default function App() {
             failed += 1;
             continue;
           }
+
+          // Get file size first for stable manifestId
+          let originalSize = null;
+          if (Platform.OS === 'ios') {
+            const fileUri = filePath.startsWith('/') ? `file://${filePath}` : (filePath || tmpUri);
+            try {
+              const info = await FileSystem.getInfoAsync(fileUri);
+              originalSize = info && typeof info.size === 'number' ? Number(info.size) : null;
+            } catch (e) {
+              originalSize = null;
+            }
+          } else {
+            let ReactNativeBlobUtil = null;
+            try {
+              const mod = require('react-native-blob-util');
+              ReactNativeBlobUtil = mod && (mod.default || mod);
+            } catch (e) {}
+            if (ReactNativeBlobUtil?.fs?.stat) {
+              try {
+                const stat = await ReactNativeBlobUtil.fs.stat(filePath);
+                originalSize = stat && stat.size ? Number(stat.size) : null;
+              } catch (e) {}
+            }
+          }
+
+          // Compute stable cross-device manifestId from filename + size
+          const assetFilename = assetInfo.filename || asset.filename || null;
+          const fileIdentity = computeFileIdentity(assetFilename, originalSize);
+          const manifestId = fileIdentity ? sha256(`file:${fileIdentity}`) : sha256(`asset:${asset.id}`);
+
+          // Skip if already uploaded (by stable manifestId)
+          if (already.has(manifestId)) {
+            if (tmpCopied && tmpUri) await FileSystem.deleteAsync(tmpUri, { idempotent: true });
+            skipped += 1;
+            continue;
+          }
+
+          setStatus(`Encrypting ${processedIndex}/${totalCount}`);
 
           const fileKey = new Uint8Array(32);
           global.crypto.getRandomValues(fileKey);
@@ -1636,7 +1704,6 @@ export default function App() {
           const chunkIds = [];
           const chunkSizes = [];
 
-          let originalSize = null;
           let chunkPlainBytes = null;
           const chunkUploadsInFlight = new Set();
           let runChunkUpload = null;
@@ -1644,12 +1711,6 @@ export default function App() {
 
           if (Platform.OS === 'ios') {
             const fileUri = filePath.startsWith('/') ? `file://${filePath}` : (filePath || tmpUri);
-            try {
-              const info = await FileSystem.getInfoAsync(fileUri);
-              originalSize = info && typeof info.size === 'number' ? Number(info.size) : null;
-            } catch (e) {
-              originalSize = null;
-            }
 
             setStatus(
               originalSize
@@ -1920,9 +1981,9 @@ export default function App() {
       setStatus('Checking server files...');
       const config = await getAuthHeaders();
       const SERVER_URL = getServerUrl();
-      const serverRes = await axios.get(`${SERVER_URL}/api/files`, config);
+      const allServerFiles = await fetchAllServerFilesPaged(SERVER_URL, config);
       const serverFiles = new Set(
-        (serverRes.data.files || [])
+        allServerFiles
           .map(f => normalizeFilenameForCompare(f && f.filename ? f.filename : null))
           .filter(Boolean)
       );
@@ -2963,8 +3024,7 @@ export default function App() {
       // list manifests so we can skip already-backed up items (by asset id OR filename)
       let existingManifests = [];
       try {
-        const listRes = await axios.get(`${SERVER_URL}/api/cloud/manifests`, config);
-        existingManifests = (listRes.data && listRes.data.manifests) ? listRes.data.manifests : [];
+        existingManifests = await fetchAllManifestsPaged(SERVER_URL, config);
       } catch (e) {
         existingManifests = [];
       }
@@ -3075,13 +3135,6 @@ export default function App() {
 
         try {
 
-        // deterministic manifest id per asset (stable for retries)
-        const manifestId = sha256(`asset:${asset.id}`);
-        if (already.has(manifestId)) {
-          skipped++;
-          continue;
-        }
-
         setStatus(`Comparing ${processedIndex}/${totalCount || '?'}`);
 
         let assetInfo;
@@ -3098,16 +3151,6 @@ export default function App() {
           continue;
         }
 
-        // Cross-device duplicate detection: skip if filename already exists on server
-        const assetFilename = normalizeFilenameForCompare(assetInfo.filename || asset.filename);
-        if (assetFilename && alreadyFilenames.has(assetFilename)) {
-          console.log(`StealthCloud: skipping duplicate filename: ${assetFilename}`);
-          skipped++;
-          continue;
-        }
-
-        setStatus(`Encrypting ${processedIndex}/${totalCount || '?'}`);
-
         let filePath, tmpCopied, tmpUri;
         try {
           const resolved = await resolveReadableFilePath({ assetId: asset.id, assetInfo });
@@ -3119,6 +3162,44 @@ export default function App() {
           failed++;
           continue;
         }
+
+        // Get file size first for stable manifestId
+        let originalSize = null;
+        if (Platform.OS === 'ios') {
+          const fileUri = filePath.startsWith('/') ? `file://${filePath}` : (filePath || tmpUri);
+          try {
+            const info = await FileSystem.getInfoAsync(fileUri);
+            originalSize = info && typeof info.size === 'number' ? Number(info.size) : null;
+          } catch (e) {
+            originalSize = null;
+          }
+        } else {
+          let ReactNativeBlobUtil = null;
+          try {
+            const mod = require('react-native-blob-util');
+            ReactNativeBlobUtil = mod && (mod.default || mod);
+          } catch (e) {}
+          if (ReactNativeBlobUtil?.fs?.stat) {
+            try {
+              const stat = await ReactNativeBlobUtil.fs.stat(filePath);
+              originalSize = stat && stat.size ? Number(stat.size) : null;
+            } catch (e) {}
+          }
+        }
+
+        // Compute stable cross-device manifestId from filename + size
+        const assetFilename = assetInfo.filename || asset.filename || null;
+        const fileIdentity = computeFileIdentity(assetFilename, originalSize);
+        const manifestId = fileIdentity ? sha256(`file:${fileIdentity}`) : sha256(`asset:${asset.id}`);
+
+        // Skip if already uploaded (by stable manifestId)
+        if (already.has(manifestId)) {
+          if (tmpCopied && tmpUri) await FileSystem.deleteAsync(tmpUri, { idempotent: true });
+          skipped++;
+          continue;
+        }
+
+        setStatus(`Encrypting ${processedIndex}/${totalCount || '?'}`);
 
         // Generate per-file key and base nonce
         const fileKey = new Uint8Array(32);
@@ -3136,7 +3217,6 @@ export default function App() {
         const chunkIds = [];
         const chunkSizes = [];
 
-        let originalSize = null;
         let chunkPlainBytes = null;
         const chunkUploadsInFlight = new Set();
         let runChunkUpload = null;
@@ -3144,12 +3224,6 @@ export default function App() {
 
         if (Platform.OS === 'ios') {
           const fileUri = filePath.startsWith('/') ? `file://${filePath}` : (filePath || tmpUri);
-          try {
-            const info = await FileSystem.getInfoAsync(fileUri);
-            originalSize = info && typeof info.size === 'number' ? Number(info.size) : null;
-          } catch (e) {
-            originalSize = null;
-          }
 
           maxChunkUploadsInFlight = Math.max(1, chooseStealthCloudMaxParallelChunkUploads({ platform: 'ios', originalSize, fastMode: fastModeEnabledRef.current }));
           runChunkUpload = createConcurrencyLimiter(maxChunkUploadsInFlight);
@@ -4237,17 +4311,17 @@ export default function App() {
     try {
       console.log('\n🔍 ===== BACKUP TRACE START =====');
 
-      // 1. Get Server List
+      // 1. Get Server List (with pagination to get ALL files)
       setStatus('Checking server files...');
       const config = await getAuthHeaders();
       const SERVER_URL = getServerUrl();
       console.log('Using server URL for backup:', SERVER_URL);
-      const serverRes = await axios.get(`${SERVER_URL}/api/files`, config);
+      const allServerFiles = await fetchAllServerFilesPaged(SERVER_URL, config);
 
-      console.log(`\n☁️  Server response: ${serverRes.data.files.length} files`);
+      console.log(`\n☁️  Server response: ${allServerFiles.length} files`);
 
       const serverFiles = new Set(
-        (serverRes.data.files || [])
+        allServerFiles
           .map(f => normalizeFilenameForCompare(f && f.filename ? f.filename : null))
           .filter(Boolean)
       );
@@ -4367,20 +4441,23 @@ export default function App() {
       setStatus(`Ready to backup ${toUpload.length} of ${checkedCount} files...`);
       await new Promise(resolve => setTimeout(resolve, 1000)); // Brief pause to show message
 
-      // 4. Upload Loop with per-file error handling
+      // 4. Upload Loop with per-file error handling (parallel)
       let successCount = 0;
       let duplicateCount = 0;
       let failedCount = 0;
       const failedFiles = [];
-      
-      for (let i = 0; i < toUpload.length; i++) {
-        const asset = toUpload[i];
+      let processedCount = 0;
+
+      // Concurrency: Fast Mode Android=8 / iOS=6; Slow Mode Android=5 / iOS=3
+      const maxParallelUploads = fastModeEnabledRef.current
+        ? (Platform.OS === 'android' ? 8 : 6)
+        : (Platform.OS === 'android' ? 5 : 3);
+      const runUpload = createConcurrencyLimiter(maxParallelUploads);
+
+      const uploadTasks = toUpload.map((asset, idx) => runUpload(async () => {
         try {
-          if (!(await ensureAutoUploadPolicyAllowsWorkIfBackgrounded())) {
-            break;
-          }
-          setStatus(`Uploading ${i + 1}/${toUpload.length}`);
-          
+          if (!(await ensureAutoUploadPolicyAllowsWorkIfBackgrounded())) return;
+
           // Get file info
           const assetInfo = await MediaLibrary.getAssetInfoAsync(asset.id);
           const resolved = await resolveReadableFilePath({ assetId: asset.id, assetInfo });
@@ -4390,17 +4467,16 @@ export default function App() {
             console.warn(`Skipping ${asset.filename}: no URI`);
             failedCount++;
             failedFiles.push(asset.filename);
-            continue;
+            return;
           }
 
           // iOS fix: Use the actual filename from assetInfo, not the UUID
-          // assetInfo.filename contains the real name like "IMG_0001.HEIC"
           const actualFilename = assetInfo.filename || asset.filename;
 
           const mime = getMimeFromFilename(actualFilename, asset.mediaType);
           const fileUri = filePath.startsWith('file://') ? filePath : `file://${filePath}`;
 
-          // Mobile: use FOREGROUND uploads (background + proxies/CDN can fail with -1 unknown error)
+          // Mobile: use FOREGROUND uploads
           const sessionTypeUpload = FileSystem.FileSystemSessionType.FOREGROUND;
           const uploadRes = await FileSystem.uploadAsync(`${SERVER_URL}/api/upload/raw`, fileUri, {
             httpMethod: 'POST',
@@ -4413,20 +4489,18 @@ export default function App() {
             }
           });
 
-          // Check HTTP status - uploadAsync doesn't throw on 4xx/5xx errors
           if (!uploadRes || uploadRes.status < 200 || uploadRes.status >= 300) {
             console.error(`✗ Upload failed for ${actualFilename}: HTTP ${uploadRes?.status || 'unknown'} - ${uploadRes?.body || 'no response'}`);
             failedCount++;
             failedFiles.push(actualFilename);
-            continue;
+            return;
           }
 
           let parsed = null;
           try {
             parsed = uploadRes && uploadRes.body ? JSON.parse(uploadRes.body) : null;
-          } catch (e) {
-            parsed = null;
-          }
+          } catch (e) { parsed = null; }
+
           if (parsed && parsed.duplicate) {
             duplicateCount++;
             console.log(`⊘ Skipped (duplicate): ${actualFilename}`);
@@ -4438,10 +4512,14 @@ export default function App() {
           console.error(`✗ Failed to upload ${asset.filename}:`, fileError.message);
           failedCount++;
           failedFiles.push(asset.filename);
+        } finally {
+          processedCount++;
+          setStatus(`Uploading ${processedCount}/${toUpload.length}`);
+          setProgress(processedCount / toUpload.length);
         }
-        
-        setProgress((i + 1) / toUpload.length);
-      }
+      }));
+
+      await Promise.all(uploadTasks);
 
       // Show detailed completion status
       console.log('\n📊 ===== BACKUP SUMMARY =====');
@@ -4525,10 +4603,9 @@ export default function App() {
     setProgress(0); // Reset progress
 
     try {
-      // 1. Get Server Files
+      // 1. Get Server Files (with pagination to get ALL files)
       const config = await getAuthHeaders();
-      const serverRes = await axios.get(`${getServerUrl()}/api/files`, config);
-      let serverFiles = serverRes.data.files;
+      let serverFiles = await fetchAllServerFilesPaged(getServerUrl(), config);
 
       if (opts && Array.isArray(opts.onlyFilenames) && opts.onlyFilenames.length > 0) {
         const allowed = new Set(opts.onlyFilenames.map(v => normalizeFilenameForCompare(v)).filter(Boolean));
@@ -4583,22 +4660,25 @@ export default function App() {
       setStatus(`Ready to download ${toDownload.length} of ${serverFiles.length} files...`);
       await new Promise(resolve => setTimeout(resolve, 1000)); // Brief pause to show message
 
-      // 3. Download Loop - download new files only
-      let count = 0;
+      // 3. Download Loop - download new files in parallel
       const downloadedUris = [];
+      let processedCount = 0;
       
-      for (const file of toDownload) {
+      // Fast Mode: parallel downloads (Android=8, iOS=6)
+      // Slow Mode: Android=5, iOS=3
+      const maxParallelDownloads = fastModeEnabledRef.current 
+        ? (Platform.OS === 'android' ? 8 : 6)
+        : (Platform.OS === 'android' ? 5 : 3);
+      const runDownload = createConcurrencyLimiter(maxParallelDownloads);
+      
+      const downloadTasks = toDownload.map((file) => runDownload(async () => {
         try {
-          setStatus(`Downloading ${count + 1}/${toDownload.length}`);
-          console.log(`Downloading: ${file.filename}`);
-          
           const downloadPath = FileSystem.cacheDirectory + file.filename;
           
           // Delete cached file if it exists to prevent conflicts
           const cachedFileInfo = await FileSystem.getInfoAsync(downloadPath);
           if (cachedFileInfo.exists) {
             await FileSystem.deleteAsync(downloadPath, { idempotent: true });
-            console.log(`Cleared cached file: ${file.filename}`);
           }
           
           const downloadRes = await FileSystem.downloadAsync(
@@ -4616,9 +4696,13 @@ export default function App() {
           }
         } catch (fileError) {
           console.error(`Error downloading ${file.filename}:`, fileError);
+        } finally {
+          processedCount++;
+          setStatus(`Downloading ${processedCount}/${toDownload.length}`);
         }
-        count++;
-      }
+      }));
+      
+      await Promise.all(downloadTasks);
       
       // 4. Save all downloaded files to gallery in batch
       let successCount = 0;

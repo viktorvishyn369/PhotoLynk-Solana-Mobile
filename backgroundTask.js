@@ -17,7 +17,8 @@ import {
   sanitizeHeaders,
   stripContentType,
   withRetries,
-  shouldRetryChunkUpload
+  shouldRetryChunkUpload,
+  computeFileIdentity,
 } from './utils';
 
 import {
@@ -261,8 +262,6 @@ export const uploadEncryptedChunk = async ({ SERVER_URL, config, chunkId, encryp
 // Upload single asset to StealthCloud (background task version)
 export const autoUploadStealthCloudUploadOneAsset = async ({ asset, config, SERVER_URL, existingManifestIds, onStatus, fastMode = false }) => {
   if (!asset || !asset.id) return { uploaded: 0, skipped: 0, failed: 0 };
-  const manifestId = sha256(`asset:${asset.id}`);
-  if (existingManifestIds && existingManifestIds.has(manifestId)) return { uploaded: 0, skipped: 1, failed: 0 };
 
   if (onStatus) onStatus('encrypting');
   const masterKey = await getStealthCloudMasterKey();
@@ -290,6 +289,27 @@ export const autoUploadStealthCloudUploadOneAsset = async ({ asset, config, SERV
   const filePath = staged && staged.filePath ? staged.filePath : null;
   if (!filePath) return { uploaded: 0, skipped: 0, failed: 1 };
 
+  // Get file size for stable manifestId
+  let originalSize = null;
+  const fileUri = filePath.startsWith('/') ? `file://${filePath}` : filePath;
+  try {
+    const info = await FileSystem.getInfoAsync(fileUri);
+    originalSize = info?.size || null;
+  } catch (e) {}
+
+  // Compute stable cross-device manifestId from filename + size
+  const filename = assetInfo.filename || asset.filename || null;
+  const fileIdentity = computeFileIdentity(filename, originalSize);
+  const manifestId = fileIdentity ? sha256(`file:${fileIdentity}`) : sha256(`asset:${asset.id}`);
+  
+  // Skip if already uploaded (by stable manifestId)
+  if (existingManifestIds && existingManifestIds.has(manifestId)) {
+    if (staged && staged.tmpCopied && staged.tmpUri) {
+      try { await FileSystem.deleteAsync(staged.tmpUri, { idempotent: true }); } catch (e) {}
+    }
+    return { uploaded: 0, skipped: 1, failed: 0, manifestId };
+  }
+
   const fileKey = new Uint8Array(32);
   global.crypto.getRandomValues(fileKey);
   const baseNonce16 = new Uint8Array(16);
@@ -298,7 +318,6 @@ export const autoUploadStealthCloudUploadOneAsset = async ({ asset, config, SERV
   global.crypto.getRandomValues(wrapNonce);
   const wrappedKey = nacl.secretbox(fileKey, wrapNonce, masterKey);
 
-  const fileUri = filePath.startsWith('/') ? `file://${filePath}` : filePath;
   if (!fileUri) return { uploaded: 0, skipped: 0, failed: 1 };
 
   let chunkIndex = 0;

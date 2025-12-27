@@ -100,28 +100,33 @@ const getHashTarget = async ({ asset, info, resolveReadableFilePath }) => {
       if (qIdx !== -1) hashTarget = hashTarget.slice(0, qIdx);
       try { hashTarget = decodeURI(hashTarget); } catch (e) {}
     } else if (rawUri.startsWith('ph://') || rawUri.startsWith('content://')) {
-      // Need to stage to temp file
-      try {
-        const resolved = await resolveReadableFilePath({ assetId: asset.id, assetInfo: info });
-        hashTarget = resolved && resolved.filePath ? resolved.filePath : null;
-        tmpCopied = resolved && resolved.tmpCopied ? resolved.tmpCopied : false;
-        tmpUri = resolved && resolved.tmpUri ? resolved.tmpUri : null;
-      } catch (e) {
-        // iOS fallback: try with shouldDownloadFromNetwork
-        if (Platform.OS === 'ios') {
-          try {
-            const infoDownloaded = await MediaLibrary.getAssetInfoAsync(asset.id, { shouldDownloadFromNetwork: true });
-            const dlUri = (infoDownloaded && (infoDownloaded.localUri || infoDownloaded.uri)) || null;
-            if (dlUri && typeof dlUri === 'string' && (dlUri.startsWith('file://') || dlUri.startsWith('/'))) {
-              hashTarget = dlUri.startsWith('file://') ? dlUri.replace('file://', '') : dlUri;
-            } else {
-              const resolved = await resolveReadableFilePath({ assetId: asset.id, assetInfo: infoDownloaded });
-              hashTarget = resolved && resolved.filePath ? resolved.filePath : null;
-              tmpCopied = resolved && resolved.tmpCopied ? resolved.tmpCopied : false;
-              tmpUri = resolved && resolved.tmpUri ? resolved.tmpUri : null;
+      // Android: PixelHash can read content:// directly (avoid expensive temp copies)
+      if (Platform.OS === 'android' && rawUri.startsWith('content://')) {
+        hashTarget = rawUri;
+      } else {
+        // Need to stage to temp file
+        try {
+          const resolved = await resolveReadableFilePath({ assetId: asset.id, assetInfo: info });
+          hashTarget = resolved && resolved.filePath ? resolved.filePath : null;
+          tmpCopied = resolved && resolved.tmpCopied ? resolved.tmpCopied : false;
+          tmpUri = resolved && resolved.tmpUri ? resolved.tmpUri : null;
+        } catch (e) {
+          // iOS fallback: try with shouldDownloadFromNetwork
+          if (Platform.OS === 'ios') {
+            try {
+              const infoDownloaded = await MediaLibrary.getAssetInfoAsync(asset.id, { shouldDownloadFromNetwork: true });
+              const dlUri = (infoDownloaded && (infoDownloaded.localUri || infoDownloaded.uri)) || null;
+              if (dlUri && typeof dlUri === 'string' && (dlUri.startsWith('file://') || dlUri.startsWith('/'))) {
+                hashTarget = dlUri.startsWith('file://') ? dlUri.replace('file://', '') : dlUri;
+              } else {
+                const resolved = await resolveReadableFilePath({ assetId: asset.id, assetInfo: infoDownloaded });
+                hashTarget = resolved && resolved.filePath ? resolved.filePath : null;
+                tmpCopied = resolved && resolved.tmpCopied ? resolved.tmpCopied : false;
+                tmpUri = resolved && resolved.tmpUri ? resolved.tmpUri : null;
+              }
+            } catch (e2) {
+              // Failed to get readable path
             }
-          } catch (e2) {
-            // Failed to get readable path
           }
         }
       }

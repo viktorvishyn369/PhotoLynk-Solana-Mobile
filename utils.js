@@ -141,3 +141,12 @@ export const normalizeEmailForDeviceUuid = (value) => {
   if (!trimmed) return null;
   return trimmed.toLowerCase();
 };
+
+// Compute a stable cross-device file identity string from filename and size
+// This is used to generate manifestId that is the same across iOS/Android for the same file
+export const computeFileIdentity = (filename, originalSize) => {
+  const normalizedFilename = normalizeFilenameForCompare(filename);
+  if (!normalizedFilename) return null;
+  const sizeStr = typeof originalSize === 'number' && !Number.isNaN(originalSize) ? String(originalSize) : '';
+  return `${normalizedFilename}:${sizeStr}`;
+};

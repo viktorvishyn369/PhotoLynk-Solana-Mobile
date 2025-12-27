@@ -22,6 +22,36 @@ class PixelHashModule(reactContext: ReactApplicationContext) : ReactContextBaseJ
             var bitmap: Bitmap? = null
             var normalized: Bitmap? = null
             try {
+                // First pass: read dimensions only (avoid decoding full-res)
+                val bounds = BitmapFactory.Options().apply {
+                    inJustDecodeBounds = true
+                }
+                val inputStreamBounds: InputStream? = if (path.startsWith("content://")) {
+                    reactApplicationContext.contentResolver.openInputStream(Uri.parse(path))
+                } else {
+                    val filePath = if (path.startsWith("file://")) path.removePrefix("file://") else path
+                    java.io.FileInputStream(filePath)
+                }
+                if (inputStreamBounds == null) {
+                    promise.reject("E_FILE", "Cannot open file: $path")
+                    return@Thread
+                }
+                BitmapFactory.decodeStream(inputStreamBounds, null, bounds)
+                inputStreamBounds.close()
+
+                // Choose a conservative decode target size; final hash is 16x16 anyway
+                val maxDim = maxOf(bounds.outWidth, bounds.outHeight)
+                var sampleSize = 1
+                while (maxDim / sampleSize > 1024) {
+                    sampleSize *= 2
+                }
+
+                // Second pass: decode with sampling
+                val options = BitmapFactory.Options().apply {
+                    inPreferredConfig = Bitmap.Config.ARGB_8888
+                    inSampleSize = sampleSize
+                    inJustDecodeBounds = false
+                }
                 val inputStream: InputStream? = if (path.startsWith("content://")) {
                     reactApplicationContext.contentResolver.openInputStream(Uri.parse(path))
                 } else {
@@ -32,11 +62,6 @@ class PixelHashModule(reactContext: ReactApplicationContext) : ReactContextBaseJ
                 if (inputStream == null) {
                     promise.reject("E_FILE", "Cannot open file: $path")
                     return@Thread
-                }
-
-                // Decode image
-                val options = BitmapFactory.Options().apply {
-                    inPreferredConfig = Bitmap.Config.ARGB_8888
                 }
                 bitmap = BitmapFactory.decodeStream(inputStream, null, options)
                 inputStream.close()
@@ -115,6 +140,38 @@ class PixelHashModule(reactContext: ReactApplicationContext) : ReactContextBaseJ
         Thread {
             var bitmap: Bitmap? = null
             try {
+                // First pass: bounds only
+                val bounds = BitmapFactory.Options().apply {
+                    inJustDecodeBounds = true
+                }
+                val inputStreamBounds: InputStream? = if (path.startsWith("content://")) {
+                    reactApplicationContext.contentResolver.openInputStream(Uri.parse(path))
+                } else {
+                    val filePath = if (path.startsWith("file://")) path.removePrefix("file://") else path
+                    java.io.FileInputStream(filePath)
+                }
+
+                if (inputStreamBounds == null) {
+                    promise.reject("E_FILE", "Cannot open file: $path")
+                    return@Thread
+                }
+
+                BitmapFactory.decodeStream(inputStreamBounds, null, bounds)
+                inputStreamBounds.close()
+
+                // Decode sampled (corners hash is tolerant; avoid full-res decode)
+                val maxDim = maxOf(bounds.outWidth, bounds.outHeight)
+                var sampleSize = 1
+                while (maxDim / sampleSize > 1024) {
+                    sampleSize *= 2
+                }
+
+                val options = BitmapFactory.Options().apply {
+                    inPreferredConfig = Bitmap.Config.ARGB_8888
+                    inSampleSize = sampleSize
+                    inJustDecodeBounds = false
+                }
+
                 val inputStream: InputStream? = if (path.startsWith("content://")) {
                     reactApplicationContext.contentResolver.openInputStream(Uri.parse(path))
                 } else {
@@ -127,9 +184,6 @@ class PixelHashModule(reactContext: ReactApplicationContext) : ReactContextBaseJ
                     return@Thread
                 }
 
-                val options = BitmapFactory.Options().apply {
-                    inPreferredConfig = Bitmap.Config.ARGB_8888
-                }
                 bitmap = BitmapFactory.decodeStream(inputStream, null, options)
                 inputStream.close()
 
@@ -238,6 +292,38 @@ class PixelHashModule(reactContext: ReactApplicationContext) : ReactContextBaseJ
         Thread {
             var bitmap: Bitmap? = null
             try {
+                // First pass: bounds only
+                val bounds = BitmapFactory.Options().apply {
+                    inJustDecodeBounds = true
+                }
+                val inputStreamBounds: InputStream? = if (path.startsWith("content://")) {
+                    reactApplicationContext.contentResolver.openInputStream(Uri.parse(path))
+                } else {
+                    val filePath = if (path.startsWith("file://")) path.removePrefix("file://") else path
+                    java.io.FileInputStream(filePath)
+                }
+
+                if (inputStreamBounds == null) {
+                    promise.reject("E_FILE", "Cannot open file: $path")
+                    return@Thread
+                }
+
+                BitmapFactory.decodeStream(inputStreamBounds, null, bounds)
+                inputStreamBounds.close()
+
+                // Decode sampled (edge hash is tolerant; avoid full-res decode)
+                val maxDim = maxOf(bounds.outWidth, bounds.outHeight)
+                var decodeSampleSize = 1
+                while (maxDim / decodeSampleSize > 1024) {
+                    decodeSampleSize *= 2
+                }
+
+                val options = BitmapFactory.Options().apply {
+                    inPreferredConfig = Bitmap.Config.ARGB_8888
+                    inSampleSize = decodeSampleSize
+                    inJustDecodeBounds = false
+                }
+
                 val inputStream: InputStream? = if (path.startsWith("content://")) {
                     reactApplicationContext.contentResolver.openInputStream(Uri.parse(path))
                 } else {
@@ -250,9 +336,6 @@ class PixelHashModule(reactContext: ReactApplicationContext) : ReactContextBaseJ
                     return@Thread
                 }
 
-                val options = BitmapFactory.Options().apply {
-                    inPreferredConfig = Bitmap.Config.ARGB_8888
-                }
                 bitmap = BitmapFactory.decodeStream(inputStream, null, options)
                 inputStream.close()
 
@@ -280,8 +363,8 @@ class PixelHashModule(reactContext: ReactApplicationContext) : ReactContextBaseJ
                 val borderX = maxOf(1, (origWidth * 0.05).toInt())
                 val borderY = maxOf(1, (origHeight * 0.05).toInt())
 
-                // Sample size for edge hash (8 pixels per edge = 32 total edge samples)
-                val sampleSize = 8
+                // Sample count for edge hash (8 pixels per edge = 32 total edge samples)
+                val edgeSampleCount = 8
                 val edgeValues = IntArray(32)
 
                 // Helper to get grayscale at (x, y)
@@ -296,30 +379,30 @@ class PixelHashModule(reactContext: ReactApplicationContext) : ReactContextBaseJ
                 var idx = 0
 
                 // Top edge (within borderY from top)
-                for (i in 0 until sampleSize) {
-                    val x = (origWidth * i) / sampleSize
+                for (i in 0 until edgeSampleCount) {
+                    val x = (origWidth * i) / edgeSampleCount
                     val y = borderY / 2
                     edgeValues[idx++] = getGray(x, y)
                 }
 
                 // Bottom edge
-                for (i in 0 until sampleSize) {
-                    val x = (origWidth * i) / sampleSize
+                for (i in 0 until edgeSampleCount) {
+                    val x = (origWidth * i) / edgeSampleCount
                     val y = origHeight - borderY / 2 - 1
                     edgeValues[idx++] = getGray(x, y)
                 }
 
                 // Left edge
-                for (i in 0 until sampleSize) {
+                for (i in 0 until edgeSampleCount) {
                     val x = borderX / 2
-                    val y = (origHeight * i) / sampleSize
+                    val y = (origHeight * i) / edgeSampleCount
                     edgeValues[idx++] = getGray(x, y)
                 }
 
                 // Right edge
-                for (i in 0 until sampleSize) {
+                for (i in 0 until edgeSampleCount) {
                     val x = origWidth - borderX / 2 - 1
-                    val y = (origHeight * i) / sampleSize
+                    val y = (origHeight * i) / edgeSampleCount
                     edgeValues[idx++] = getGray(x, y)
                 }
 

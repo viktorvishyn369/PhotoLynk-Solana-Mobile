@@ -17,6 +17,7 @@ import {
   normalizeFilenameForCompare,
   sanitizeHeaders,
   stripContentType,
+  computeFileIdentity,
 } from './utils';
 
 import {
@@ -204,9 +205,6 @@ const uploadOneAssetToStealthCloud = async ({
   asset, config, SERVER_URL, masterKey, already, fastModeEnabled,
   processedIndex, totalCount, onStatus, onProgress,
 }) => {
-  const manifestId = sha256(`asset:${asset.id}`);
-  if (already.has(manifestId)) return { uploaded: 0, skipped: 1, failed: 0 };
-
   onStatus(`Encrypting ${processedIndex}/${totalCount || '?'}`);
 
   let assetInfo;
@@ -243,7 +241,28 @@ const uploadOneAssetToStealthCloud = async ({
   if (Platform.OS === 'ios') {
     const fileUri = filePath.startsWith('/') ? `file://${filePath}` : (filePath || tmpUri);
     try { const info = await FileSystem.getInfoAsync(fileUri); originalSize = info?.size || null; } catch (e) {}
-    
+  } else {
+    // Android: get file size first
+    let ReactNativeBlobUtil = null;
+    try { const mod = require('react-native-blob-util'); ReactNativeBlobUtil = mod?.default || mod; } catch (e) {}
+    if (ReactNativeBlobUtil?.fs?.stat) {
+      try { const stat = await ReactNativeBlobUtil.fs.stat(filePath); originalSize = stat?.size || null; } catch (e) {}
+    }
+  }
+
+  // Compute stable cross-device manifestId from filename + size
+  const filename = assetInfo.filename || asset.filename || null;
+  const fileIdentity = computeFileIdentity(filename, originalSize);
+  const manifestId = fileIdentity ? sha256(`file:${fileIdentity}`) : sha256(`asset:${asset.id}`);
+  
+  // Skip if already uploaded (by stable manifestId)
+  if (already.has(manifestId)) {
+    if (tmpCopied && tmpUri) await FileSystem.deleteAsync(tmpUri, { idempotent: true });
+    return { uploaded: 0, skipped: 1, failed: 0, manifestId };
+  }
+
+  if (Platform.OS === 'ios') {
+    const fileUri = filePath.startsWith('/') ? `file://${filePath}` : (filePath || tmpUri);
     const maxChunkUploadsInFlight = Math.max(1, chooseStealthCloudMaxParallelChunkUploads({ platform: 'ios', originalSize, fastMode: fastModeEnabled }));
     const runChunkUpload = createConcurrencyLimiter(maxChunkUploadsInFlight);
     const chunkPlainBytes = chooseStealthCloudChunkBytes({ platform: 'ios', originalSize, fastMode: fastModeEnabled });
@@ -282,8 +301,6 @@ const uploadOneAssetToStealthCloud = async ({
     try { const mod = require('react-native-blob-util'); ReactNativeBlobUtil = mod?.default || mod; } catch (e) {}
     if (!ReactNativeBlobUtil?.fs?.readStream) throw new Error('StealthCloud backup requires react-native-blob-util.');
 
-    const stat = await ReactNativeBlobUtil.fs.stat(filePath);
-    originalSize = stat?.size || null;
     const maxChunkUploadsInFlight = Math.max(1, chooseStealthCloudMaxParallelChunkUploads({ platform: 'android', originalSize, fastMode: fastModeEnabled }));
     const runChunkUpload = createConcurrencyLimiter(maxChunkUploadsInFlight);
     const chunkPlainBytes = chooseStealthCloudChunkBytes({ platform: 'android', originalSize, fastMode: fastModeEnabled });

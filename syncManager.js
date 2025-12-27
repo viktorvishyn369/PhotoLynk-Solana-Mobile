@@ -15,11 +15,41 @@ import {
   makeChunkNonce,
   normalizeFilenameForCompare,
   normalizeFilePath,
+  computeFileIdentity,
 } from './utils';
 
 import {
   chooseStealthCloudMaxParallelChunkUploads,
+  createConcurrencyLimiter,
 } from './backgroundTask';
+
+// ============================================================================
+// PAGINATION HELPERS
+// ============================================================================
+
+// Fetch all StealthCloud manifests with pagination
+const fetchAllManifestsPaged = async (serverUrl, config) => {
+  const PAGE_LIMIT = 500;
+  const allManifests = [];
+  let offset = 0;
+
+  while (true) {
+    const response = await axios.get(`${serverUrl}/api/cloud/manifests`, {
+      ...config,
+      params: { offset, limit: PAGE_LIMIT }
+    });
+
+    const manifests = (response.data && response.data.manifests) ? response.data.manifests : [];
+    allManifests.push(...manifests);
+
+    if (!manifests || manifests.length < PAGE_LIMIT) break;
+    offset += manifests.length;
+    const total = typeof response.data?.total === 'number' ? response.data.total : null;
+    if (typeof total === 'number' && offset >= total) break;
+  }
+
+  return allManifests;
+};
 
 // ============================================================================
 // CONSTANTS
@@ -80,6 +110,7 @@ export const stealthCloudRestoreCore = async ({
   onStatus = () => {},
   onProgress = () => {},
 }) => {
+  let historyWrites = 0;
   const shouldRetryRestoreDownload = (e) => {
     const msg = (e && e.message ? e.message : '').toLowerCase();
     if (msg.includes(' 404') || msg.includes('not found')) return false;
@@ -87,17 +118,14 @@ export const stealthCloudRestoreCore = async ({
   };
 
   onStatus('Checking server files...');
-  const listRes = await withRetries(async () => {
-    return await axios.get(`${SERVER_URL}/api/cloud/manifests`, { headers: config.headers, timeout: 30000 });
-  }, {
-    retries: 10,
-    baseDelayMs: 1000,
-    maxDelayMs: 30000,
-    shouldRetry: shouldRetryRestoreDownload
-  });
-
-  let manifests = (listRes.data && listRes.data.manifests) ? listRes.data.manifests : [];
-  console.log(`SyncManager: fetched ${manifests.length} manifests from server`);
+  let manifests = [];
+  try {
+    manifests = await fetchAllManifestsPaged(SERVER_URL, config);
+  } catch (e) {
+    console.error('SyncManager: failed to fetch manifests:', e.message);
+    manifests = [];
+  }
+  console.log(`SyncManager: fetched ${manifests.length} manifests from server (paginated)`);
 
   // Filter to specific manifests if provided (Choose Files mode)
   if (manifestIds && Array.isArray(manifestIds) && manifestIds.length > 0) {
@@ -147,7 +175,13 @@ export const stealthCloudRestoreCore = async ({
       const filename = manifest.filename || `${mid}.bin`;
       const normalizedFilename = normalizeFilenameForCompare(filename);
       const historyKey = makeHistoryKey('sc', mid);
-      const alreadyRestored = restoreHistory.has(historyKey);
+      const restoreOriginalSize = typeof manifest.originalSize === 'number'
+        ? manifest.originalSize
+        : (manifest.originalSize ? Number(manifest.originalSize) : (manifest.size ? Number(manifest.size) : null));
+      // Use computeFileIdentity for consistent cross-device identity
+      const fileIdentity = computeFileIdentity(filename, restoreOriginalSize);
+      const fileHistoryKey = fileIdentity ? makeHistoryKey('scf', fileIdentity) : null;
+      const alreadyRestored = restoreHistory.has(historyKey) || (fileHistoryKey ? restoreHistory.has(fileHistoryKey) : false);
       
       if ((normalizedFilename && localFilenames.has(normalizedFilename)) || alreadyRestored) {
         skipped++;
@@ -168,7 +202,8 @@ export const stealthCloudRestoreCore = async ({
       const baseNonce16 = naclUtil.decodeBase64(manifest.baseNonce16);
 
       // Reconstruct plaintext to a temp file (append per chunk)
-      const outUri = `${FileSystem.cacheDirectory}sc_restore_${filename}`;
+      const safeFilename = String(filename || `${mid}.bin`).replace(/[\\/\n\r\t\0]/g, '_');
+      const outUri = `${FileSystem.cacheDirectory}${safeFilename}`;
       const outPath = normalizeFilePath(outUri);
       await FileSystem.deleteAsync(outUri, { idempotent: true });
       await FileSystem.writeAsStringAsync(outUri, '', { encoding: FileSystem.EncodingType.Base64 });
@@ -186,9 +221,6 @@ export const stealthCloudRestoreCore = async ({
       }
 
       // Download chunks concurrently, then decrypt+append in order
-      const restoreOriginalSize = typeof manifest.originalSize === 'number'
-        ? manifest.originalSize
-        : (manifest.originalSize ? Number(manifest.originalSize) : (manifest.size ? Number(manifest.size) : null));
       const restorePlatform = Platform.OS === 'android' ? 'android' : 'ios';
       const maxParallel = Math.max(1, chooseStealthCloudMaxParallelChunkUploads({
         platform: restorePlatform,
@@ -247,7 +279,13 @@ export const stealthCloudRestoreCore = async ({
         localFilenames.add(normalizedFilename);
       }
       restoreHistory.add(historyKey);
-      await saveRestoreHistory(restoreHistory);
+      if (fileHistoryKey) {
+        restoreHistory.add(fileHistoryKey);
+      }
+      historyWrites++;
+      if (historyWrites % 10 === 0) {
+        await saveRestoreHistory(restoreHistory);
+      }
       onProgress((i + 1) / manifests.length);
 
       // CPU cooldown between files
@@ -263,6 +301,14 @@ export const stealthCloudRestoreCore = async ({
       console.warn('StealthCloud restore failed for manifest:', mid, e?.message);
       failed++;
       onProgress((i + 1) / manifests.length);
+    }
+  }
+
+  if (historyWrites > 0) {
+    try {
+      await saveRestoreHistory(restoreHistory);
+    } catch (e) {
+      // ignore
     }
   }
 
@@ -286,6 +332,30 @@ export const stealthCloudRestoreCore = async ({
  * @param {Function} params.onProgress - Callback for progress updates (0-1)
  * @returns {Promise<{restored: number, skipped: number, failed: number, serverTotal: number}>}
  */
+// Fetch all server files with pagination
+const fetchAllServerFilesPaged = async (serverUrl, config) => {
+  const PAGE_LIMIT = 500;
+  const allFiles = [];
+  let offset = 0;
+
+  while (true) {
+    const response = await axios.get(`${serverUrl}/api/files`, {
+      ...config,
+      params: { offset, limit: PAGE_LIMIT }
+    });
+
+    const files = (response.data && response.data.files) ? response.data.files : [];
+    allFiles.push(...files);
+
+    if (!files || files.length < PAGE_LIMIT) break;
+    offset += files.length;
+    const total = typeof response.data?.total === 'number' ? response.data.total : null;
+    if (typeof total === 'number' && offset >= total) break;
+  }
+
+  return allFiles;
+};
+
 export const localRemoteRestoreCore = async ({
   config,
   SERVER_URL,
@@ -296,8 +366,7 @@ export const localRemoteRestoreCore = async ({
 }) => {
   onStatus('Checking server files...');
   
-  const serverRes = await axios.get(`${SERVER_URL}/api/files`, config);
-  let serverFiles = serverRes.data.files || [];
+  let serverFiles = await fetchAllServerFilesPaged(SERVER_URL, config);
 
   // Filter to specific filenames if provided (Choose Files mode)
   if (onlyFilenames && Array.isArray(onlyFilenames) && onlyFilenames.length > 0) {
@@ -335,13 +404,15 @@ export const localRemoteRestoreCore = async ({
   onProgress(0);
 
   let successCount = 0;
-  const downloadedUris = [];
+  let failedCount = 0;
+  let processedCount = 0;
 
-  for (let i = 0; i < toDownload.length; i++) {
-    const file = toDownload[i];
+  // Parallel file downloads: 4 on iOS, 6 on Android
+  const maxParallelDownloads = Platform.OS === 'android' ? 6 : 4;
+  const runDownload = createConcurrencyLimiter(maxParallelDownloads);
+
+  const downloadTasks = toDownload.map((file, idx) => runDownload(async () => {
     try {
-      onStatus(`Downloading ${i + 1}/${toDownload.length}: ${file.filename}`);
-      
       const downloadUrl = `${SERVER_URL}/api/files/${encodeURIComponent(file.filename)}`;
       const localUri = `${FileSystem.cacheDirectory}${file.filename}`;
       
@@ -354,7 +425,6 @@ export const localRemoteRestoreCore = async ({
       if (downloadResult.status === 200) {
         await MediaLibrary.saveToLibraryAsync(localUri);
         await FileSystem.deleteAsync(localUri, { idempotent: true });
-        downloadedUris.push(localUri);
         successCount++;
         
         // Add to local filenames to prevent re-download in same session
@@ -364,15 +434,19 @@ export const localRemoteRestoreCore = async ({
         }
       } else {
         console.warn(`Download failed for ${file.filename}: HTTP ${downloadResult.status}`);
+        failedCount++;
       }
-      
-      onProgress((i + 1) / toDownload.length);
     } catch (e) {
       console.warn(`Failed to download ${file.filename}:`, e?.message);
+      failedCount++;
+    } finally {
+      processedCount++;
+      onStatus(`Downloading ${processedCount}/${toDownload.length}`);
+      onProgress(processedCount / toDownload.length);
     }
-  }
+  }));
 
-  const failedCount = toDownload.length - successCount;
+  await Promise.all(downloadTasks);
   
   return { 
     restored: successCount, 
