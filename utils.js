@@ -91,8 +91,22 @@ export const normalizeHostInput = (value) => {
 export const computeServerUrl = (type, localHostValue, remoteHostValue) => {
   const PORT = '3000';
   if (type === 'stealthcloud') return 'https://stealthlynk.io';
+  const rawRemote = (remoteHostValue || '').trim();
+  const remoteProtocol = /^https:\/\//i.test(rawRemote)
+    ? 'https'
+    : /^http:\/\//i.test(rawRemote)
+      ? 'http'
+      : 'https'; // default to HTTPS for domain hosts
   const host = normalizeHostInput(type === 'remote' ? remoteHostValue : localHostValue);
-  if (type === 'remote') return host ? `https://${host}:${PORT}` : `https://localhost:${PORT}`;
+  if (type === 'remote') {
+    const isIpv4 = /^\d{1,3}(?:\.\d{1,3}){3}$/.test(host || '');
+    const proto = isIpv4 ? 'http' : remoteProtocol;
+    // For domain+HTTPS, omit :3000 (use 443). For IP or HTTP, keep port.
+    if (proto === 'https' && !isIpv4) {
+      return host ? `${proto}://${host}` : `${proto}://localhost`;
+    }
+    return host ? `${proto}://${host}:${PORT}` : `${proto}://localhost:${PORT}`;
+  }
   return `http://${host || 'localhost'}:${PORT}`;
 };
 

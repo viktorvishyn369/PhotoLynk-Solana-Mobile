@@ -14,8 +14,82 @@ class PixelHashModule: NSObject {
   
   @objc
   func hashImagePixels(_ path: String, resolver resolve: @escaping RCTPromiseResolveBlock, rejecter reject: @escaping RCTPromiseRejectBlock) {
-    DispatchQueue.global(qos: .userInitiated).async {
-      do {
+    // Uses 16x16 average hash (aHash) - tolerant to compression/upload/download changes
+    // Similar to image-hash library approach
+    DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+      autoreleasepool {
+        let cleanPath = path.replacingOccurrences(of: "file://", with: "")
+        guard let image = UIImage(contentsOfFile: cleanPath) else {
+          reject("E_LOAD", "Cannot load image: \(path)", nil)
+          return
+        }
+        
+        // Resize to 16x16 using CGContext directly (avoids UIGraphicsImageRenderer scale issues)
+        let hashSize = 16
+        let bytesPerPixel = 4
+        let bytesPerRow = bytesPerPixel * hashSize
+        var pixelData = [UInt8](repeating: 0, count: hashSize * hashSize * bytesPerPixel)
+        
+        guard let context = CGContext(
+          data: &pixelData,
+          width: hashSize,
+          height: hashSize,
+          bitsPerComponent: 8,
+          bytesPerRow: bytesPerRow,
+          space: CGColorSpaceCreateDeviceRGB(),
+          bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else {
+          reject("E_CONTEXT", "Cannot create graphics context", nil)
+          return
+        }
+        
+        // Draw image scaled to 16x16 - UIImage.draw handles EXIF orientation
+        UIGraphicsPushContext(context)
+        image.draw(in: CGRect(x: 0, y: 0, width: hashSize, height: hashSize))
+        UIGraphicsPopContext()
+        
+        // Compute grayscale values and average
+        let pixelCount = hashSize * hashSize
+        var grayValues = [UInt8](repeating: 0, count: pixelCount)
+        var totalGray: Int = 0
+        
+        for i in 0..<pixelCount {
+          let offset = i * bytesPerPixel
+          let r = Int(pixelData[offset])
+          let g = Int(pixelData[offset + 1])
+          let b = Int(pixelData[offset + 2])
+          // Standard grayscale conversion
+          let gray = (r * 299 + g * 587 + b * 114) / 1000
+          grayValues[i] = UInt8(gray)
+          totalGray += gray
+        }
+        
+        let avgGray = totalGray / pixelCount
+        
+        // Build binary hash: 1 if pixel > average, 0 otherwise
+        // 16x16 = 256 bits = 32 bytes = 64 hex chars
+        var hashBytes = [UInt8](repeating: 0, count: 32)
+        
+        for i in 0..<pixelCount {
+          if Int(grayValues[i]) > avgGray {
+            let byteIndex = i / 8
+            let bitIndex = 7 - (i % 8)
+            hashBytes[byteIndex] |= UInt8(1 << bitIndex)
+          }
+        }
+        
+        let hexString = hashBytes.map { String(format: "%02x", $0) }.joined()
+        resolve(hexString)
+      }
+    }
+  }
+  
+  @objc
+  func hashImageCorners(_ path: String, resolver resolve: @escaping RCTPromiseResolveBlock, rejecter reject: @escaping RCTPromiseRejectBlock) {
+    // Computes hash from 4 corners (10% region each), converted to grayscale
+    // If corners match, photos likely have same scene/background
+    DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+      autoreleasepool {
         let cleanPath = path.replacingOccurrences(of: "file://", with: "")
         guard let image = UIImage(contentsOfFile: cleanPath) else {
           reject("E_LOAD", "Cannot load image: \(path)", nil)
@@ -27,19 +101,23 @@ class PixelHashModule: NSObject {
           return
         }
         
-        let width = cgImage.width
-        let height = cgImage.height
-        let bytesPerPixel = 4
-        let bytesPerRow = bytesPerPixel * width
-        let bitsPerComponent = 8
+        let origWidth = cgImage.width
+        let origHeight = cgImage.height
         
-        var pixelData = [UInt8](repeating: 0, count: width * height * bytesPerPixel)
+        // 10% corner region from each corner
+        let cornerW = max(4, Int(Double(origWidth) * 0.10))
+        let cornerH = max(4, Int(Double(origHeight) * 0.10))
+        
+        // Extract pixel data from original image
+        let bytesPerPixel = 4
+        let bytesPerRow = bytesPerPixel * origWidth
+        var pixelData = [UInt8](repeating: 0, count: origWidth * origHeight * bytesPerPixel)
         
         guard let context = CGContext(
           data: &pixelData,
-          width: width,
-          height: height,
-          bitsPerComponent: bitsPerComponent,
+          width: origWidth,
+          height: origHeight,
+          bitsPerComponent: 8,
           bytesPerRow: bytesPerRow,
           space: CGColorSpaceCreateDeviceRGB(),
           bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
@@ -48,19 +126,184 @@ class PixelHashModule: NSObject {
           return
         }
         
-        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
+        // Draw with EXIF orientation
+        UIGraphicsPushContext(context)
+        image.draw(in: CGRect(x: 0, y: 0, width: origWidth, height: origHeight))
+        UIGraphicsPopContext()
         
-        // SHA256 hash of pixel data
-        var hash = [UInt8](repeating: 0, count: Int(CC_SHA256_DIGEST_LENGTH))
-        pixelData.withUnsafeBytes { buffer in
-          _ = CC_SHA256(buffer.baseAddress, CC_LONG(buffer.count), &hash)
+        // Helper to get grayscale at (x, y)
+        func getGray(_ x: Int, _ y: Int) -> UInt8 {
+          let clampedX = max(0, min(x, origWidth - 1))
+          let clampedY = max(0, min(y, origHeight - 1))
+          let offset = (clampedY * origWidth + clampedX) * bytesPerPixel
+          let r = Int(pixelData[offset])
+          let g = Int(pixelData[offset + 1])
+          let b = Int(pixelData[offset + 2])
+          return UInt8((r * 299 + g * 587 + b * 114) / 1000)
         }
         
-        let hexString = hash.map { String(format: "%02x", $0) }.joined()
-        resolve(hexString)
+        // Sample 4 points from each corner (16 total samples)
+        // 2x2 grid within each corner region
+        var cornerValues = [UInt8]()
         
-      } catch {
-        reject("E_HASH", "Failed to hash image: \(error.localizedDescription)", error)
+        // Top-left corner
+        for dy in 0..<2 {
+          for dx in 0..<2 {
+            let x = (cornerW * dx) / 2 + cornerW / 4
+            let y = (cornerH * dy) / 2 + cornerH / 4
+            cornerValues.append(getGray(x, y))
+          }
+        }
+        
+        // Top-right corner
+        for dy in 0..<2 {
+          for dx in 0..<2 {
+            let x = origWidth - cornerW + (cornerW * dx) / 2 + cornerW / 4
+            let y = (cornerH * dy) / 2 + cornerH / 4
+            cornerValues.append(getGray(x, y))
+          }
+        }
+        
+        // Bottom-left corner
+        for dy in 0..<2 {
+          for dx in 0..<2 {
+            let x = (cornerW * dx) / 2 + cornerW / 4
+            let y = origHeight - cornerH + (cornerH * dy) / 2 + cornerH / 4
+            cornerValues.append(getGray(x, y))
+          }
+        }
+        
+        // Bottom-right corner
+        for dy in 0..<2 {
+          for dx in 0..<2 {
+            let x = origWidth - cornerW + (cornerW * dx) / 2 + cornerW / 4
+            let y = origHeight - cornerH + (cornerH * dy) / 2 + cornerH / 4
+            cornerValues.append(getGray(x, y))
+          }
+        }
+        
+        // Compute average of corner values
+        let totalCorner = cornerValues.reduce(0) { $0 + Int($1) }
+        let avgCorner = totalCorner / cornerValues.count
+        
+        // Build 16-bit hash from corner samples (1 if > avg, 0 otherwise)
+        var hashValue: UInt16 = 0
+        for i in 0..<min(16, cornerValues.count) {
+          if Int(cornerValues[i]) > avgCorner {
+            hashValue |= UInt16(1 << (15 - i))
+          }
+        }
+        
+        let hexString = String(format: "%04x", hashValue)
+        resolve(hexString)
+      }
+    }
+  }
+  
+  @objc
+  func hashImageEdges(_ path: String, resolver resolve: @escaping RCTPromiseResolveBlock, rejecter reject: @escaping RCTPromiseRejectBlock) {
+    // Computes hash of 5% border from all 4 sides (edges only, not center)
+    // If edges match, photos likely have same background/scene
+    DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+      autoreleasepool {
+        let cleanPath = path.replacingOccurrences(of: "file://", with: "")
+        guard let image = UIImage(contentsOfFile: cleanPath) else {
+          reject("E_LOAD", "Cannot load image: \(path)", nil)
+          return
+        }
+        
+        guard let cgImage = image.cgImage else {
+          reject("E_CGIMAGE", "Cannot get CGImage", nil)
+          return
+        }
+        
+        let origWidth = cgImage.width
+        let origHeight = cgImage.height
+        
+        // 5% border from each side
+        let borderX = max(1, Int(Double(origWidth) * 0.05))
+        let borderY = max(1, Int(Double(origHeight) * 0.05))
+        
+        // Sample size for edge hash (8 pixels per edge = 32 total edge samples)
+        let sampleSize = 8
+        
+        // Extract pixel data from original image
+        let bytesPerPixel = 4
+        let bytesPerRow = bytesPerPixel * origWidth
+        var pixelData = [UInt8](repeating: 0, count: origWidth * origHeight * bytesPerPixel)
+        
+        guard let context = CGContext(
+          data: &pixelData,
+          width: origWidth,
+          height: origHeight,
+          bitsPerComponent: 8,
+          bytesPerRow: bytesPerRow,
+          space: CGColorSpaceCreateDeviceRGB(),
+          bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else {
+          reject("E_CONTEXT", "Cannot create graphics context", nil)
+          return
+        }
+        
+        // Draw with EXIF orientation
+        UIGraphicsPushContext(context)
+        image.draw(in: CGRect(x: 0, y: 0, width: origWidth, height: origHeight))
+        UIGraphicsPopContext()
+        
+        // Sample edge pixels and compute grayscale values
+        var edgeValues = [UInt8]()
+        
+        // Helper to get grayscale at (x, y)
+        func getGray(_ x: Int, _ y: Int) -> UInt8 {
+          let offset = (y * origWidth + x) * bytesPerPixel
+          let r = Int(pixelData[offset])
+          let g = Int(pixelData[offset + 1])
+          let b = Int(pixelData[offset + 2])
+          return UInt8((r * 299 + g * 587 + b * 114) / 1000)
+        }
+        
+        // Top edge (within borderY from top)
+        for i in 0..<sampleSize {
+          let x = (origWidth * i) / sampleSize
+          let y = borderY / 2
+          edgeValues.append(getGray(x, y))
+        }
+        
+        // Bottom edge
+        for i in 0..<sampleSize {
+          let x = (origWidth * i) / sampleSize
+          let y = origHeight - borderY / 2 - 1
+          edgeValues.append(getGray(x, y))
+        }
+        
+        // Left edge
+        for i in 0..<sampleSize {
+          let x = borderX / 2
+          let y = (origHeight * i) / sampleSize
+          edgeValues.append(getGray(x, y))
+        }
+        
+        // Right edge
+        for i in 0..<sampleSize {
+          let x = origWidth - borderX / 2 - 1
+          let y = (origHeight * i) / sampleSize
+          edgeValues.append(getGray(x, y))
+        }
+        
+        // Compute average of edge values
+        let totalEdge = edgeValues.reduce(0) { $0 + Int($1) }
+        let avgEdge = totalEdge / edgeValues.count
+        
+        // Build 32-bit hash from edge samples (1 if > avg, 0 otherwise)
+        var hashValue: UInt32 = 0
+        for i in 0..<min(32, edgeValues.count) {
+          if Int(edgeValues[i]) > avgEdge {
+            hashValue |= UInt32(1 << (31 - i))
+          }
+        }
+        
+        let hexString = String(format: "%08x", hashValue)
+        resolve(hexString)
       }
     }
   }

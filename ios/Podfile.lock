@@ -1624,6 +1624,8 @@ PODS:
     - React-perflogger
     - React-utils (= 0.76.9)
   - RevenueCat (5.50.1)
+  - RNCClipboard (1.16.3):
+    - React-Core
   - RNGestureHandler (2.20.2):
     - DoubleConversion
     - glog
@@ -1851,6 +1853,7 @@ DEPENDENCIES:
   - React-utils (from `../node_modules/react-native/ReactCommon/react/utils`)
   - ReactCodegen (from `build/generated/ios`)
   - ReactCommon/turbomodule/core (from `../node_modules/react-native/ReactCommon`)
+  - "RNCClipboard (from `../node_modules/@react-native-clipboard/clipboard`)"
   - RNGestureHandler (from `../node_modules/react-native-gesture-handler`)
   - RNPurchases (from `../node_modules/react-native-purchases`)
   - RNReanimated (from `../node_modules/react-native-reanimated`)
@@ -2031,6 +2034,8 @@ EXTERNAL SOURCES:
     :path: build/generated/ios
   ReactCommon:
     :path: "../node_modules/react-native/ReactCommon"
+  RNCClipboard:
+    :path: "../node_modules/@react-native-clipboard/clipboard"
   RNGestureHandler:
     :path: "../node_modules/react-native-gesture-handler"
   RNPurchases:
@@ -2129,6 +2134,7 @@ SPEC CHECKSUMS:
   ReactCodegen: f853a20cc9125c5521c8766b4b49375fec20648b
   ReactCommon: 300d8d9c5cb1a6cd79a67cf5d8f91e4d477195f9
   RevenueCat: c676920ae9b3c9cd08c49d26e7cd4c04a0263069
+  RNCClipboard: f6679d470d0da2bce2a37b0af7b9e0bf369ecda5
   RNGestureHandler: 32336458ef842088a459ccfcc10b583186de2633
   RNPurchases: 0189c1cd0cc18ced16bdecc9560bd6e0a98a0a40
   RNReanimated: 39e9001841ccea006e7ec2fe3dd36adde7ded419

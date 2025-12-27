@@ -2,7 +2,7 @@
   "expo": {
     "name": "PhotoLynk",
     "slug": "photosync",
-    "version": "1.0.0",
+    "version": "1.0.6",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
@@ -18,7 +18,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.photosync.app",
-      "buildNumber": "1.0.0",
+      "buildNumber": "1.0.6",
       "infoPlist": {
         "NSPhotoLibraryUsageDescription": "PhotoLynk needs access to your photos to back them up to your secure private cloud.",
         "NSPhotoLibraryAddUsageDescription": "PhotoLynk needs permission to save restored photos to your library.",
@@ -43,7 +43,7 @@
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "monochromeImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#5E35B1"
+        "backgroundColor": "#FFFFFF"
       },
       "permissions": [
         "INTERNET",
@@ -68,8 +68,7 @@
         "android.permission.CAMERA"
       ],
       "package": "com.photosync.app",
-      "versionCode": 1,
-      "usesCleartextTraffic": true
+      "versionCode": 6
     },
     "web": {
       "favicon": "./assets/favicon.png"

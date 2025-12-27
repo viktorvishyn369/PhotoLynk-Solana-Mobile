@@ -194,6 +194,8 @@ export const getStealthCloudMasterKey = async () => {
 };
 
 // Call this during login to pre-derive and cache the master key
+// Returns a Promise that resolves after key derivation completes
+// Uses setTimeout to yield to the UI thread during heavy PBKDF2 computation
 export const cacheStealthCloudMasterKey = async (email, password) => {
   if (!email || !password) return;
   // If already cached, skip re-deriving to avoid extra PBKDF2 cost
@@ -206,8 +208,16 @@ export const cacheStealthCloudMasterKey = async (email, password) => {
   } catch (e) {
     // ignore and derive below
   }
+  
+  // Yield to UI thread before starting heavy computation
+  await new Promise(resolve => setTimeout(resolve, 50));
+  
   const salt = email.toLowerCase().trim();
   const derivedKey = pbkdf2Sha256(password, salt, 100000, 32);
+  
+  // Yield again after computation
+  await new Promise(resolve => setTimeout(resolve, 10));
+  
   try {
     await SecureStore.setItemAsync(DERIVED_MASTER_KEY_CACHE, naclUtil.encodeBase64(derivedKey));
     console.log('StealthCloud: pre-cached derived key during login');
@@ -390,10 +400,11 @@ export const chooseStealthCloudChunkBytes = ({ platform, originalSize, fastMode 
 };
 
 export const chooseStealthCloudMaxParallelChunkUploads = ({ platform, originalSize, fastMode = false }) => {
-  // Fast mode: higher concurrency for maximum speed
-  // Android can handle more parallel uploads than iOS
+  // Fast mode: maximum safe concurrency for speed
+  // iOS: 6 parallel (URLSession default pool limit per host)
+  // Android: 10 parallel (OkHttp handles well with keep-alive)
   if (fastMode) {
-    return platform === 'android' ? 6 : 4;
+    return platform === 'android' ? 10 : 6;
   }
   // Default: conservative concurrency to reduce CPU/memory pressure
   const size = typeof originalSize === 'number' ? originalSize : null;

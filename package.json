@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@babel/runtime": "^7.28.4",
+    "@react-native-clipboard/clipboard": "^1.14.3",
     "@react-navigation/bottom-tabs": "^7.9.0",
     "@react-navigation/native": "^7.1.26",
     "axios": "^1.13.2",

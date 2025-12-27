@@ -16,35 +16,334 @@ class PixelHashModule(reactContext: ReactApplicationContext) : ReactContextBaseJ
 
     @ReactMethod
     fun hashImagePixels(path: String, promise: Promise) {
-        try {
-            val inputStream: InputStream? = if (path.startsWith("content://")) {
-                reactApplicationContext.contentResolver.openInputStream(Uri.parse(path))
-            } else {
-                val filePath = if (path.startsWith("file://")) path.removePrefix("file://") else path
-                java.io.FileInputStream(filePath)
-            }
-
-            if (inputStream == null) {
-                promise.reject("E_FILE", "Cannot open file: $path")
-                return
-            }
-
-            val digest = MessageDigest.getInstance("SHA-256")
-            inputStream.use { ins ->
-                val buffer = ByteArray(64 * 1024)
-                while (true) {
-                    val read = ins.read(buffer)
-                    if (read <= 0) break
-                    digest.update(buffer, 0, read)
+        // Uses 16x16 average hash (aHash) - tolerant to compression/upload/download changes
+        // Similar to image-hash library approach
+        Thread {
+            var bitmap: Bitmap? = null
+            var normalized: Bitmap? = null
+            try {
+                val inputStream: InputStream? = if (path.startsWith("content://")) {
+                    reactApplicationContext.contentResolver.openInputStream(Uri.parse(path))
+                } else {
+                    val filePath = if (path.startsWith("file://")) path.removePrefix("file://") else path
+                    java.io.FileInputStream(filePath)
                 }
-            }
 
-            val hashBytes = digest.digest()
-            val hexString = hashBytes.joinToString("") { "%02x".format(it) }
-            promise.resolve(hexString)
-        } catch (e: Exception) {
-            promise.reject("E_HASH", "Failed to hash image: ${e.message}", e)
-        }
+                if (inputStream == null) {
+                    promise.reject("E_FILE", "Cannot open file: $path")
+                    return@Thread
+                }
+
+                // Decode image
+                val options = BitmapFactory.Options().apply {
+                    inPreferredConfig = Bitmap.Config.ARGB_8888
+                }
+                bitmap = BitmapFactory.decodeStream(inputStream, null, options)
+                inputStream.close()
+
+                if (bitmap == null) {
+                    promise.reject("E_DECODE", "Cannot decode image: $path")
+                    return@Thread
+                }
+
+                // Apply EXIF orientation
+                try {
+                    val orientation = readExifOrientation(path)
+                    val rotated = applyExifOrientation(bitmap!!, orientation)
+                    if (rotated !== bitmap) {
+                        bitmap!!.recycle()
+                        bitmap = rotated
+                    }
+                } catch (e: Exception) {
+                    // ignore orientation errors
+                }
+
+                // Resize to 16x16 (matching image-hash library HASH_SIZE=16)
+                val hashSize = 16
+                normalized = Bitmap.createScaledBitmap(bitmap!!, hashSize, hashSize, true)
+                bitmap!!.recycle()
+                bitmap = null
+
+                // Compute grayscale values and average
+                val pixelCount = hashSize * hashSize
+                val grayValues = IntArray(pixelCount)
+                var totalGray = 0
+
+                for (y in 0 until hashSize) {
+                    for (x in 0 until hashSize) {
+                        val pixel = normalized!!.getPixel(x, y)
+                        val r = Color.red(pixel)
+                        val g = Color.green(pixel)
+                        val b = Color.blue(pixel)
+                        // Standard grayscale conversion
+                        val gray = (r * 299 + g * 587 + b * 114) / 1000
+                        grayValues[y * hashSize + x] = gray
+                        totalGray += gray
+                    }
+                }
+                normalized!!.recycle()
+                normalized = null
+
+                val avgGray = totalGray / pixelCount
+
+                // Build binary hash: 1 if pixel > average, 0 otherwise
+                // 16x16 = 256 bits = 32 bytes = 64 hex chars
+                val hashBytes = ByteArray(32)
+
+                for (i in 0 until pixelCount) {
+                    if (grayValues[i] > avgGray) {
+                        val byteIndex = i / 8
+                        val bitIndex = 7 - (i % 8)
+                        hashBytes[byteIndex] = (hashBytes[byteIndex].toInt() or (1 shl bitIndex)).toByte()
+                    }
+                }
+
+                val hexString = hashBytes.joinToString("") { "%02x".format(it) }
+                promise.resolve(hexString)
+            } catch (e: Exception) {
+                bitmap?.recycle()
+                normalized?.recycle()
+                promise.reject("E_HASH", "Failed to hash image: ${e.message}", e)
+            }
+        }.start()
+    }
+
+    @ReactMethod
+    fun hashImageCorners(path: String, promise: Promise) {
+        // Computes hash from 4 corners (10% region each), converted to grayscale
+        // If corners match, photos likely have same scene/background
+        Thread {
+            var bitmap: Bitmap? = null
+            try {
+                val inputStream: InputStream? = if (path.startsWith("content://")) {
+                    reactApplicationContext.contentResolver.openInputStream(Uri.parse(path))
+                } else {
+                    val filePath = if (path.startsWith("file://")) path.removePrefix("file://") else path
+                    java.io.FileInputStream(filePath)
+                }
+
+                if (inputStream == null) {
+                    promise.reject("E_FILE", "Cannot open file: $path")
+                    return@Thread
+                }
+
+                val options = BitmapFactory.Options().apply {
+                    inPreferredConfig = Bitmap.Config.ARGB_8888
+                }
+                bitmap = BitmapFactory.decodeStream(inputStream, null, options)
+                inputStream.close()
+
+                if (bitmap == null) {
+                    promise.reject("E_DECODE", "Cannot decode image: $path")
+                    return@Thread
+                }
+
+                // Apply EXIF orientation
+                try {
+                    val orientation = readExifOrientation(path)
+                    val rotated = applyExifOrientation(bitmap!!, orientation)
+                    if (rotated !== bitmap) {
+                        bitmap!!.recycle()
+                        bitmap = rotated
+                    }
+                } catch (e: Exception) {
+                    // ignore orientation errors
+                }
+
+                val origWidth = bitmap!!.width
+                val origHeight = bitmap!!.height
+
+                // 10% corner region from each corner
+                val cornerW = maxOf(4, (origWidth * 0.10).toInt())
+                val cornerH = maxOf(4, (origHeight * 0.10).toInt())
+
+                // Helper to get grayscale at (x, y)
+                fun getGray(x: Int, y: Int): Int {
+                    val clampedX = x.coerceIn(0, origWidth - 1)
+                    val clampedY = y.coerceIn(0, origHeight - 1)
+                    val pixel = bitmap!!.getPixel(clampedX, clampedY)
+                    val r = Color.red(pixel)
+                    val g = Color.green(pixel)
+                    val b = Color.blue(pixel)
+                    return (r * 299 + g * 587 + b * 114) / 1000
+                }
+
+                // Sample 4 points from each corner (16 total samples)
+                val cornerValues = IntArray(16)
+                var idx = 0
+
+                // Top-left corner
+                for (dy in 0 until 2) {
+                    for (dx in 0 until 2) {
+                        val x = (cornerW * dx) / 2 + cornerW / 4
+                        val y = (cornerH * dy) / 2 + cornerH / 4
+                        cornerValues[idx++] = getGray(x, y)
+                    }
+                }
+
+                // Top-right corner
+                for (dy in 0 until 2) {
+                    for (dx in 0 until 2) {
+                        val x = origWidth - cornerW + (cornerW * dx) / 2 + cornerW / 4
+                        val y = (cornerH * dy) / 2 + cornerH / 4
+                        cornerValues[idx++] = getGray(x, y)
+                    }
+                }
+
+                // Bottom-left corner
+                for (dy in 0 until 2) {
+                    for (dx in 0 until 2) {
+                        val x = (cornerW * dx) / 2 + cornerW / 4
+                        val y = origHeight - cornerH + (cornerH * dy) / 2 + cornerH / 4
+                        cornerValues[idx++] = getGray(x, y)
+                    }
+                }
+
+                // Bottom-right corner
+                for (dy in 0 until 2) {
+                    for (dx in 0 until 2) {
+                        val x = origWidth - cornerW + (cornerW * dx) / 2 + cornerW / 4
+                        val y = origHeight - cornerH + (cornerH * dy) / 2 + cornerH / 4
+                        cornerValues[idx++] = getGray(x, y)
+                    }
+                }
+
+                bitmap!!.recycle()
+                bitmap = null
+
+                // Compute average of corner values
+                val avgCorner = cornerValues.sum() / cornerValues.size
+
+                // Build 16-bit hash from corner samples (1 if > avg, 0 otherwise)
+                var hashValue = 0
+                for (i in 0 until 16) {
+                    if (cornerValues[i] > avgCorner) {
+                        hashValue = hashValue or (1 shl (15 - i))
+                    }
+                }
+
+                val hexString = String.format("%04x", hashValue)
+                promise.resolve(hexString)
+            } catch (e: Exception) {
+                bitmap?.recycle()
+                promise.reject("E_CORNER_HASH", "Failed to compute corner hash: ${e.message}", e)
+            }
+        }.start()
+    }
+
+    @ReactMethod
+    fun hashImageEdges(path: String, promise: Promise) {
+        // Computes hash of 5% border from all 4 sides (edges only, not center)
+        // If edges match, photos likely have same background/scene
+        Thread {
+            var bitmap: Bitmap? = null
+            try {
+                val inputStream: InputStream? = if (path.startsWith("content://")) {
+                    reactApplicationContext.contentResolver.openInputStream(Uri.parse(path))
+                } else {
+                    val filePath = if (path.startsWith("file://")) path.removePrefix("file://") else path
+                    java.io.FileInputStream(filePath)
+                }
+
+                if (inputStream == null) {
+                    promise.reject("E_FILE", "Cannot open file: $path")
+                    return@Thread
+                }
+
+                val options = BitmapFactory.Options().apply {
+                    inPreferredConfig = Bitmap.Config.ARGB_8888
+                }
+                bitmap = BitmapFactory.decodeStream(inputStream, null, options)
+                inputStream.close()
+
+                if (bitmap == null) {
+                    promise.reject("E_DECODE", "Cannot decode image: $path")
+                    return@Thread
+                }
+
+                // Apply EXIF orientation
+                try {
+                    val orientation = readExifOrientation(path)
+                    val rotated = applyExifOrientation(bitmap!!, orientation)
+                    if (rotated !== bitmap) {
+                        bitmap!!.recycle()
+                        bitmap = rotated
+                    }
+                } catch (e: Exception) {
+                    // ignore orientation errors
+                }
+
+                val origWidth = bitmap!!.width
+                val origHeight = bitmap!!.height
+
+                // 5% border from each side
+                val borderX = maxOf(1, (origWidth * 0.05).toInt())
+                val borderY = maxOf(1, (origHeight * 0.05).toInt())
+
+                // Sample size for edge hash (8 pixels per edge = 32 total edge samples)
+                val sampleSize = 8
+                val edgeValues = IntArray(32)
+
+                // Helper to get grayscale at (x, y)
+                fun getGray(x: Int, y: Int): Int {
+                    val pixel = bitmap!!.getPixel(x.coerceIn(0, origWidth - 1), y.coerceIn(0, origHeight - 1))
+                    val r = Color.red(pixel)
+                    val g = Color.green(pixel)
+                    val b = Color.blue(pixel)
+                    return (r * 299 + g * 587 + b * 114) / 1000
+                }
+
+                var idx = 0
+
+                // Top edge (within borderY from top)
+                for (i in 0 until sampleSize) {
+                    val x = (origWidth * i) / sampleSize
+                    val y = borderY / 2
+                    edgeValues[idx++] = getGray(x, y)
+                }
+
+                // Bottom edge
+                for (i in 0 until sampleSize) {
+                    val x = (origWidth * i) / sampleSize
+                    val y = origHeight - borderY / 2 - 1
+                    edgeValues[idx++] = getGray(x, y)
+                }
+
+                // Left edge
+                for (i in 0 until sampleSize) {
+                    val x = borderX / 2
+                    val y = (origHeight * i) / sampleSize
+                    edgeValues[idx++] = getGray(x, y)
+                }
+
+                // Right edge
+                for (i in 0 until sampleSize) {
+                    val x = origWidth - borderX / 2 - 1
+                    val y = (origHeight * i) / sampleSize
+                    edgeValues[idx++] = getGray(x, y)
+                }
+
+                bitmap!!.recycle()
+                bitmap = null
+
+                // Compute average of edge values
+                val avgEdge = edgeValues.sum() / edgeValues.size
+
+                // Build 32-bit hash from edge samples (1 if > avg, 0 otherwise)
+                var hashValue = 0
+                for (i in 0 until 32) {
+                    if (edgeValues[i] > avgEdge) {
+                        hashValue = hashValue or (1 shl (31 - i))
+                    }
+                }
+
+                val hexString = String.format("%08x", hashValue)
+                promise.resolve(hexString)
+            } catch (e: Exception) {
+                bitmap?.recycle()
+                promise.reject("E_EDGE_HASH", "Failed to compute edge hash: ${e.message}", e)
+            }
+        }.start()
     }
 
     @ReactMethod

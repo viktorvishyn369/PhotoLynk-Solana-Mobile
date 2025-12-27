@@ -13,7 +13,6 @@ import {
   Image,
   Dimensions,
   Linking,
-  Modal,
   NativeModules,
   PermissionsAndroid,
   Platform,
@@ -27,8 +26,10 @@ import {
   TextInput,
   TouchableOpacity,
   View,
+  Keyboard,
   KeyboardAvoidingView,
 } from 'react-native';
+import Clipboard from '@react-native-clipboard/clipboard';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import FontAwesome5 from '@expo/vector-icons/FontAwesome5';
 import { styles, THEME } from './styles';
@@ -44,9 +45,14 @@ import {
   computeServerUrl,
   formatBytes,
   normalizeFilenameForCompare,
-  normalizeEmailForDeviceUuid
+  normalizeEmailForDeviceUuid,
+  isValidUrl
 } from './utils';
 import {
+  AUTO_UPLOAD_POLL_INTERVAL_SECONDS,
+  AUTO_UPLOAD_MIN_CHECK_INTERVAL_SECONDS,
+  AUTO_UPLOAD_MIN_CHUNK_SIZE,
+  AUTO_UPLOAD_MAX_CHUNK_SIZE,
   AUTO_UPLOAD_KEEP_AWAKE_TAG,
   AUTO_UPLOAD_BACKGROUND_TASK,
   AUTO_UPLOAD_CURSOR_KEY_PREFIX,
@@ -112,31 +118,19 @@ import {
   addSubscriptionListener,
   GRACE_PERIOD_DAYS,
 } from './purchases';
+import {
+  stealthCloudUploadEncryptedChunk,
+  PHOTO_ALBUM_NAME,
+  LEGACY_PHOTO_ALBUM_NAME,
+} from './backupManager';
+import {
+  stealthCloudRestoreCore,
+  localRemoteRestoreCore,
+} from './syncManager';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
-const { PixelHash, MediaDelete } = NativeModules;
-
-// Similar detection thresholds - based on best practices
-const DHASH_EXACT_THRESHOLD = 2;      // dHash ≤2 bits = near-identical (per benhoyt research)
-const DHASH_SIMILAR_THRESHOLD = 5;    // dHash ≤5 bits = visually similar
-const PHASH_EXACT_THRESHOLD = 4;      // pHash ≤4 bits = near-identical
-const PHASH_SIMILAR_THRESHOLD = 8;    // pHash ≤8 bits = visually similar
-const SIMILAR_TIME_WINDOW_MS = 86400000; // ±24 hours for similar detection
-const SIZE_TOLERANCE_PERCENT = 0.15;  // ±15% file size tolerance for similar
-const SIMILARITY_SCORE_THRESHOLD = 50; // Minimum score (0-100) to consider similar
-
-const hammingDistanceHex64 = (a, b) => {
-  if (!a || !b || a.length !== 16 || b.length !== 16) return Number.MAX_SAFE_INTEGER;
-  const x = BigInt('0x' + a) ^ BigInt('0x' + b);
-  let dist = 0;
-  let v = x;
-  while (v) {
-    dist++;
-    v &= v - 1n;
-  }
-  return dist;
-};
+const { MediaDelete } = NativeModules;
 
 const CLIENT_BUILD = `photolynk-mobile-v2/${Application.nativeApplicationVersion || '0'}(${Application.nativeBuildVersion || '0'}) sc-debug-2025-12-13`;
 
@@ -146,10 +140,14 @@ const ensureAutoUploadPolicyAllowsWorkIfBackgrounded = ensureAutoUploadPolicyAll
 const GITHUB_RELEASES_LATEST_URL = 'https://github.com/viktorvishyn369/PhotoLynk/releases/latest';
 const APP_DISPLAY_NAME = 'PhotoLynk';
 const LEGACY_APP_DISPLAY_NAME = 'PhotoSync';
-const PHOTO_ALBUM_NAME = 'PhotoLynk';
-const LEGACY_PHOTO_ALBUM_NAME = 'PhotoSync';
-const RESTORE_HISTORY_KEY = 'restore_history_v1';
+// PHOTO_ALBUM_NAME and LEGACY_PHOTO_ALBUM_NAME are now imported from backupManager.js
+const ANDROID_HW_ID_KEY = 'android_hardware_device_id';
+const IOS_HW_ID_KEY = 'ios_hardware_device_id';
+const RESTORE_HISTORY_KEY = 'restore_history';
 const makeHistoryKey = (type, id) => `${type}:${id}`;
+const PHOTOLYNK_QR_SCHEMA = 'photolynk';
+const LOCAL_SERVER_QR_SCHEMA = 'photolynk_local';
+const REMOTE_SERVER_QR_SCHEMA = 'photolynk_remote';
 
 // Persisted restore history to avoid re-downloading when the OS renames saved assets.
 const loadRestoreHistory = async () => {
@@ -162,6 +160,107 @@ const loadRestoreHistory = async () => {
   } catch (e) {
     return new Set();
   }
+};
+
+// Compute a stable Android hardware ID.
+// Strategy: Use Application.androidId (SSAID) which is stable per app+device combo on Android 8+.
+// For devices where androidId is null (rare, some custom ROMs/emulators), use deterministic hash.
+// This works across: Pixel, Samsung, Xiaomi, Huawei, Oppo, OnePlus, Solana Mobile, etc.
+const computeAndroidHardwareId = async () => {
+  // 1) Primary: Application.androidId (SSAID)
+  // - Unique per app signing key + device combination
+  // - Persists across app reinstalls (same signing key)
+  // - Persists across OS updates
+  // - Available on Android 8.0+ (API 26+), which covers 99%+ of active devices
+  const androidId = Application.androidId;
+  if (androidId) {
+    console.log('Android HW ID: using androidId (SSAID)');
+    return androidId;
+  }
+
+  // 2) Fallback: Deterministic hash from immutable device properties
+  // Used only when androidId is null (emulators, some custom ROMs)
+  // These properties are set at factory and never change:
+  // - brand: Device brand (e.g., "google", "samsung", "xiaomi", "solana")
+  // - manufacturer: Hardware manufacturer
+  // - modelName: Marketing model name (e.g., "Pixel 8", "Galaxy S24", "Seeker")
+  // - productName: Internal product codename (stable across OS updates)
+  const parts = [
+    Device.brand,
+    Device.manufacturer,
+    Device.modelName,
+    Device.productName,
+  ].filter(Boolean);
+
+  // Add Application.applicationId (package name) to make it app-specific
+  // This ensures different apps on same device get different IDs
+  if (Application.applicationId) {
+    parts.push(Application.applicationId);
+  }
+
+  console.log('Android HW ID: androidId null, using device fingerprint:', parts.join('|'));
+
+  if (parts.length >= 3) {
+    const hash = sha256(parts.join('|'));
+    const hwId = `android_hw_${hash.slice(0, 32)}`;
+    console.log('Android HW ID: generated deterministic:', hwId);
+    return hwId;
+  }
+
+  // 3) Last resort: stored UUID (won't survive reinstall, but covers edge cases)
+  try {
+    const stored = await SecureStore.getItemAsync(ANDROID_HW_ID_KEY);
+    if (stored) {
+      console.log('Android HW ID: using stored UUID');
+      return stored;
+    }
+  } catch (e) {
+    console.log('ANDROID_HW_ID_KEY read error:', e);
+  }
+
+  // Generate and store new UUID
+  const hwId = `android_fallback_${uuidv4()}`;
+  console.log('Android HW ID: generated new UUID fallback');
+  try {
+    await SecureStore.setItemAsync(ANDROID_HW_ID_KEY, hwId);
+  } catch (e) {
+    console.log('ANDROID_HW_ID_KEY write error:', e);
+  }
+
+  return hwId;
+};
+
+// Compute a stable iOS hardware ID.
+// Order: return stored keychain value if present; else use IDFV and persist; else generate and persist.
+const computeIosHardwareId = async () => {
+  const secureStoreOpts = {
+    keychainService: 'photolynk_hw_id',
+    accessible: SecureStore.AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY
+  };
+
+  // 1) Prefer previously stored value (persists in keychain across reinstall/reboot)
+  try {
+    const stored = await SecureStore.getItemAsync(IOS_HW_ID_KEY, secureStoreOpts);
+    if (stored) return stored;
+  } catch (e) {
+    console.log('IOS_HW_ID_KEY read error:', e);
+  }
+
+  // 2) Use IDFV if available, and persist it for future reinstall/reboot
+  try {
+    const idfv = await Application.getIosIdForVendorAsync();
+    if (idfv) {
+      try { await SecureStore.setItemAsync(IOS_HW_ID_KEY, idfv, secureStoreOpts); } catch (e) {}
+      return idfv;
+    }
+  } catch (e) {
+    console.log('IDFV error:', e);
+  }
+
+  // 3) Fallback: generate and persist
+  const generated = `ios_hw_${uuidv4()}`;
+  try { await SecureStore.setItemAsync(IOS_HW_ID_KEY, generated, secureStoreOpts); } catch (e) {}
+  return generated;
 };
 
 const saveRestoreHistory = async (set) => {
@@ -218,6 +317,37 @@ const FAST_BATCH_LIMIT = 999999; // Effectively no batch limit
 const FAST_BATCH_COOLDOWN_MS = 0; // No pause between batches
 const FAST_ASSET_COOLDOWN_MS = 0; // No cooldown between assets
 const FAST_CHUNK_COOLDOWN_MS = 0; // No delay between chunks
+
+// MIME type detection from filename (case-insensitive)
+const getMimeFromFilename = (filename, fallbackMediaType) => {
+  const ext = (filename || '').split('.').pop()?.toLowerCase();
+  const mimeMap = {
+    // Photos
+    'heic': 'image/heic', 'heif': 'image/heif',
+    'jpg': 'image/jpeg', 'jpeg': 'image/jpeg',
+    'png': 'image/png', 'gif': 'image/gif',
+    'webp': 'image/webp', 'tiff': 'image/tiff', 'tif': 'image/tiff',
+    'bmp': 'image/bmp', 'ico': 'image/x-icon',
+    'svg': 'image/svg+xml', 'avif': 'image/avif',
+    // RAW formats
+    'raw': 'image/raw', 'dng': 'image/dng',
+    'cr2': 'image/x-canon-cr2', 'cr3': 'image/x-canon-cr3',
+    'nef': 'image/x-nikon-nef', 'nrw': 'image/x-nikon-nrw',
+    'arw': 'image/x-sony-arw', 'srf': 'image/x-sony-srf',
+    'orf': 'image/x-olympus-orf', 'pef': 'image/x-pentax-pef',
+    'raf': 'image/x-fuji-raf', 'rw2': 'image/x-panasonic-rw2',
+    'srw': 'image/x-samsung-srw', 'x3f': 'image/x-sigma-x3f',
+    // Videos
+    'mp4': 'video/mp4', 'mov': 'video/quicktime',
+    'avi': 'video/x-msvideo', 'mkv': 'video/x-matroska',
+    'm4v': 'video/x-m4v', '3gp': 'video/3gpp', '3g2': 'video/3gpp2',
+    'webm': 'video/webm', 'wmv': 'video/x-ms-wmv',
+    'flv': 'video/x-flv', 'mpg': 'video/mpeg', 'mpeg': 'video/mpeg',
+    'mts': 'video/mp2t', 'm2ts': 'video/mp2t',
+  };
+  if (mimeMap[ext]) return mimeMap[ext];
+  return fallbackMediaType === 'video' ? 'video/mp4' : 'application/octet-stream';
+};
 
 const buildLocalFilenameSetPaged = async ({ mediaType, album = null, maxInitialEmptyWaitMs = 30000 }) => {
   const PAGE_SIZE = 500;
@@ -417,10 +547,12 @@ const GradientSpinner = ({ size = 80 }) => {
 
 export default function App() {
   const [view, setView] = useState('loading'); // loading, auth, home, settings
-  const [authMode, setAuthMode] = useState('login'); // login, register
+  const [authMode, setAuthMode] = useState('login'); // login, register, forgot
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [termsAccepted, setTermsAccepted] = useState(false);
   const [serverType, setServerType] = useState('local'); // 'local' | 'remote' | 'stealthcloud'
   const [localHost, setLocalHost] = useState('');
   const [remoteHost, setRemoteHost] = useState('');
@@ -465,6 +597,7 @@ export default function App() {
   const [plansLoading, setPlansLoading] = useState(false);
   const [purchaseLoading, setPurchaseLoading] = useState(false);
   const [subscriptionStatus, setSubscriptionStatus] = useState(null);
+  const [paywallTierGb, setPaywallTierGb] = useState(null);
   const [token, setToken] = useState(null);
   const [userId, setUserId] = useState(null);
   const [deviceUuid, setDeviceUuid] = useState(null);
@@ -559,6 +692,14 @@ export default function App() {
     });
   };
   const closeDarkAlert = () => setCustomAlert(null);
+
+  const openPaywall = (tierGb) => {
+    setPaywallTierGb(tierGb);
+  };
+
+  const closePaywall = () => {
+    setPaywallTierGb(null);
+  };
 
   const persistAutoUploadEnabled = async (enabled) => {
     setAutoUploadEnabledSafe(enabled);
@@ -926,6 +1067,33 @@ export default function App() {
         }
         let already = new Set(existingManifests.map(m => m.manifestId));
 
+        // Build filename set for cross-device duplicate detection (auto-upload has more time)
+        const alreadyFilenames = new Set();
+        if (existingManifests.length > 0) {
+          setStatus('Auto-Backup: Checking existing files...');
+          const masterKey = await getStealthCloudMasterKey();
+          for (const m of existingManifests) {
+            try {
+              const manRes = await axios.get(`${SERVER_URL}/api/cloud/manifests/${m.manifestId}`, { headers: config.headers, timeout: 15000 });
+              const payload = manRes.data;
+              const parsed = typeof payload === 'string' ? JSON.parse(payload) : payload;
+              const enc = JSON.parse(parsed.encryptedManifest);
+              const manifestNonce = naclUtil.decodeBase64(enc.manifestNonce);
+              const manifestBox = naclUtil.decodeBase64(enc.manifestBox);
+              const manifestPlain = nacl.secretbox.open(manifestBox, manifestNonce, masterKey);
+              if (manifestPlain) {
+                const manifest = JSON.parse(naclUtil.encodeUTF8(manifestPlain));
+                if (manifest.filename) {
+                  alreadyFilenames.add(normalizeFilenameForCompare(manifest.filename));
+                }
+              }
+            } catch (e) {
+              // Skip manifests we can't decrypt
+            }
+          }
+          console.log(`AutoUpload: found ${alreadyFilenames.size} existing filenames for cross-device duplicate detection`);
+        }
+
         let after = null;
         try {
           const savedCursor = await SecureStore.getItemAsync(AUTO_UPLOAD_CURSOR_KEY);
@@ -1081,6 +1249,24 @@ export default function App() {
               skipped += 1;
               console.log('AutoUpload: skipping already uploaded asset:', asset.id);
               continue;
+            }
+
+            // Cross-device duplicate detection: check filename before uploading
+            let assetInfo = null;
+            try {
+              assetInfo = Platform.OS === 'android'
+                ? await MediaLibrary.getAssetInfoAsync(asset.id, { shouldDownloadFromNetwork: true })
+                : await MediaLibrary.getAssetInfoAsync(asset.id);
+            } catch (e) {
+              console.warn('AutoUpload: getAssetInfoAsync failed:', asset.id, e?.message);
+            }
+            if (assetInfo) {
+              const assetFilename = normalizeFilenameForCompare(assetInfo.filename || asset.filename);
+              if (assetFilename && alreadyFilenames.has(assetFilename)) {
+                console.log(`AutoUpload: skipping duplicate filename: ${assetFilename}`);
+                skipped += 1;
+                continue;
+              }
             }
 
             console.log('AutoUpload: attempting upload for asset:', asset.id);
@@ -1288,154 +1474,7 @@ export default function App() {
     return () => batteryListener?.remove();
   }, []);
 
-  // Uploads an encrypted chunk to StealthCloud server (moved early for hoisting)
-  const stealthCloudUploadEncryptedChunk = async ({ SERVER_URL, config, chunkId, encryptedBytes }) => {
-    const tmpUri = `${FileSystem.cacheDirectory}sc_${chunkId}.bin`;
-    const b64 = naclUtil.encodeBase64(encryptedBytes);
-    await FileSystem.writeAsStringAsync(tmpUri, b64, { encoding: FileSystem.EncodingType.Base64 });
-
-    const url = `${SERVER_URL}/api/cloud/chunks`;
-
-    const baseHeaders = sanitizeHeaders({
-      'X-Chunk-Id': chunkId,
-      ...(config && config.headers ? config.headers : {})
-    });
-
-    if (Platform.OS === 'ios') {
-      const headers = {
-        ...stripContentType(baseHeaders),
-        'Content-Type': 'application/octet-stream'
-      };
-      await withRetries(async () => {
-        const isHttpsChunk = url.startsWith('https://');
-        const sessionTypeChunk = (Platform.OS === 'ios' && !isHttpsChunk) 
-          ? FileSystem.FileSystemSessionType.FOREGROUND 
-          : FileSystem.FileSystemSessionType.BACKGROUND;
-        const res = await FileSystem.uploadAsync(url, tmpUri, {
-          httpMethod: 'POST',
-          uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT,
-          sessionType: sessionTypeChunk,
-          headers
-        });
-        const status = res && typeof res.status === 'number' ? res.status : 0;
-        if (status >= 300) {
-          const err = new Error(`StealthCloud chunk upload failed: HTTP ${status}`);
-          err.httpStatus = status;
-          throw err;
-        }
-        return res;
-      }, {
-        retries: 10,
-        baseDelayMs: 1000,
-        maxDelayMs: 30000,
-        shouldRetry: shouldRetryChunkUpload
-      });
-
-      await FileSystem.deleteAsync(tmpUri, { idempotent: true });
-      return;
-    }
-
-    let ReactNativeBlobUtil = null;
-    try {
-      const mod = require('react-native-blob-util');
-      ReactNativeBlobUtil = mod && (mod.default || mod);
-    } catch (e) {
-      ReactNativeBlobUtil = null;
-    }
-
-    const headers = stripContentType(baseHeaders);
-
-    if (ReactNativeBlobUtil && ReactNativeBlobUtil.fetch && ReactNativeBlobUtil.wrap) {
-      const filePath = tmpUri.startsWith('file://') ? tmpUri.replace('file://', '') : tmpUri;
-      try {
-        const rawHeaders = {
-          ...headers,
-          'Content-Type': 'application/octet-stream'
-        };
-        const resp = await withRetries(async () => {
-          const r = await ReactNativeBlobUtil.config({ timeout: 5 * 60 * 1000 }).fetch('POST', url, rawHeaders, ReactNativeBlobUtil.wrap(filePath));
-          const status = typeof r?.info === 'function' ? r.info().status : undefined;
-          if (typeof status === 'number' && status >= 300) {
-            let body = '';
-            try {
-              body = typeof r?.text === 'function' ? await r.text() : '';
-            } catch (e) {
-              body = '';
-            }
-            throw new Error(`Chunk upload failed: HTTP ${status}${body ? ` ${body}` : ''}`);
-          }
-          return r;
-        }, {
-          retries: 10,
-          baseDelayMs: 1000,
-          maxDelayMs: 30000,
-          shouldRetry: shouldRetryChunkUpload
-        });
-
-        await FileSystem.deleteAsync(tmpUri, { idempotent: true });
-        return;
-      } catch (e) {
-        console.warn('StealthCloud chunk upload failed (blob-util raw), trying multipart/axios:', e?.message || String(e));
-
-        try {
-          const mpHeaders = stripContentType(baseHeaders);
-          const resp2 = await withRetries(async () => {
-            const r2 = await ReactNativeBlobUtil.config({ timeout: 5 * 60 * 1000 }).fetch('POST', url, mpHeaders, [
-              {
-                name: 'chunk',
-                filename: `${chunkId}.bin`,
-                type: 'application/octet-stream',
-                data: ReactNativeBlobUtil.wrap(filePath)
-              }
-            ]);
-            const status2 = typeof r2?.info === 'function' ? r2.info().status : undefined;
-            if (typeof status2 === 'number' && status2 >= 300) {
-              let body2 = '';
-              try {
-                body2 = typeof r2?.text === 'function' ? await r2.text() : '';
-              } catch (e3) {
-                body2 = '';
-              }
-              throw new Error(`Chunk upload failed (multipart): HTTP ${status2}${body2 ? ` ${body2}` : ''}`);
-            }
-            return r2;
-          }, {
-            retries: 10,
-            baseDelayMs: 1000,
-            maxDelayMs: 30000,
-            shouldRetry: (e2) => {
-              const msg = (e2 && e2.message ? e2.message : '').toLowerCase();
-              if (msg.includes(' 429') || msg.includes(' 503') || msg.includes(' 500') || msg.includes(' 502') || msg.includes(' 504')) return true;
-              if (msg.includes('timeout') || msg.includes('canceled') || msg.includes('cancelled') || msg.includes('network') || msg.includes('connection')) return true;
-              return false;
-            }
-          });
-          await FileSystem.deleteAsync(tmpUri, { idempotent: true });
-          return;
-        } catch (e2) {
-          console.warn('StealthCloud chunk upload failed (blob-util multipart), falling back to axios:', e2?.message || String(e2));
-        }
-      }
-    }
-
-    const formData = new FormData();
-    formData.append('chunk', {
-      uri: tmpUri,
-      name: `${chunkId}.bin`,
-      type: 'application/octet-stream'
-    });
-
-    try {
-      await axios.post(url, formData, {
-        headers: stripContentType(baseHeaders),
-        timeout: 5 * 60 * 1000
-      });
-      await FileSystem.deleteAsync(tmpUri, { idempotent: true });
-    } catch (e) {
-      console.warn('StealthCloud chunk upload failed (axios):', e?.message || String(e));
-      throw e;
-    }
-  };
+  // stealthCloudUploadEncryptedChunk is now imported from backupManager.js
 
   const stealthCloudBackupSelected = async ({ assets }) => {
     const permission = await MediaLibrary.requestPermissionsAsync();
@@ -1480,7 +1519,7 @@ export default function App() {
       }
 
       const masterKey = await getStealthCloudMasterKey();
-      setStatus('Preparing backup...');
+      setStatus('Checking server files...');
       const prepareStartTime = Date.now();
 
       let existingManifests = [];
@@ -1491,6 +1530,32 @@ export default function App() {
         existingManifests = [];
       }
       const already = new Set(existingManifests.map(m => m.manifestId));
+
+      // Build filename set by decrypting manifests (for cross-device duplicate detection)
+      const alreadyFilenames = new Set();
+      if (existingManifests.length > 0) {
+        setStatus('Checking server files...');
+        for (const m of existingManifests) {
+          try {
+            const manRes = await axios.get(`${SERVER_URL}/api/cloud/manifests/${m.manifestId}`, { headers: config.headers, timeout: 15000 });
+            const payload = manRes.data;
+            const parsed = typeof payload === 'string' ? JSON.parse(payload) : payload;
+            const enc = JSON.parse(parsed.encryptedManifest);
+            const manifestNonce = naclUtil.decodeBase64(enc.manifestNonce);
+            const manifestBox = naclUtil.decodeBase64(enc.manifestBox);
+            const manifestPlain = nacl.secretbox.open(manifestBox, manifestNonce, masterKey);
+            if (manifestPlain) {
+              const manifest = JSON.parse(naclUtil.encodeUTF8(manifestPlain));
+              if (manifest.filename) {
+                alreadyFilenames.add(normalizeFilenameForCompare(manifest.filename));
+              }
+            }
+          } catch (e) {
+            // Skip manifests we can't decrypt
+          }
+        }
+        console.log(`StealthCloud: found ${alreadyFilenames.size} existing filenames for cross-device duplicate detection`);
+      }
 
       // Ensure "Preparing backup..." shows for at least 800ms for professional UX
       const prepareElapsed = Date.now() - prepareStartTime;
@@ -1520,7 +1585,7 @@ export default function App() {
             continue;
           }
 
-          setStatus(`Encrypting ${processedIndex}/${totalCount}`);
+          setStatus(`Comparing ${processedIndex}/${totalCount}`);
 
           let assetInfo;
           try {
@@ -1535,6 +1600,16 @@ export default function App() {
             failed += 1;
             continue;
           }
+
+          // Cross-device duplicate detection: skip if filename already exists on server
+          const assetFilename = normalizeFilenameForCompare(assetInfo.filename || asset.filename);
+          if (assetFilename && alreadyFilenames.has(assetFilename)) {
+            console.log(`StealthCloud: skipping duplicate filename: ${assetFilename}`);
+            skipped += 1;
+            continue;
+          }
+
+          setStatus(`Encrypting ${processedIndex}/${totalCount}`);
 
           let filePath, tmpCopied, tmpUri;
           try {
@@ -1629,10 +1704,6 @@ export default function App() {
                 const fileProgress = (processedIndex - 1) / totalCount;
                 const chunkProgress = originalSize ? (position / originalSize) / totalCount : 0;
                 setProgress(Math.min(fileProgress + chunkProgress, 1));
-              }
-
-              if (chunkIndex % 8 === 0) {
-                await yieldToUi();
               }
 
               if (plaintext.length < effectiveBytes) {
@@ -1806,11 +1877,11 @@ export default function App() {
       }
 
       setStatus('Backup complete');
-      showDarkAlert('StealthCloud Backup', `Uploaded: ${uploaded}\nSkipped: ${skipped}\nFailed: ${failed}`);
+      showDarkAlert('Backup Complete', `Uploaded: ${uploaded}\nSkipped: ${skipped}\nFailed: ${failed}`);
     } catch (e) {
       console.error('StealthCloud backup error:', e);
       setStatus('Backup error');
-      showDarkAlert('StealthCloud Backup Error', e && e.message ? e.message : 'Unknown error');
+      showDarkAlert('Backup Error', e && e.message ? e.message : 'Unknown error');
     } finally {
       setLoadingSafe(false);
       setBackgroundWarnEligibleSafe(false);
@@ -1866,6 +1937,7 @@ export default function App() {
       const toUpload = [];
       for (let i = 0; i < list.length; i++) {
         const asset = list[i];
+        setStatus(`Comparing ${i + 1}/${list.length}`);
         if (excludedIds.has(asset.id)) continue;
 
         let actualFilename = normalizeFilenameForCompare(asset && asset.filename ? asset.filename : null);
@@ -1889,6 +1961,10 @@ export default function App() {
         return;
       }
 
+      // Show summary before starting
+      setStatus(`Ready to backup ${toUpload.length} of ${list.length} files...`);
+      await new Promise(resolve => setTimeout(resolve, 1000)); // Brief pause to show message
+
       let successCount = 0;
       let failedCount = 0;
 
@@ -1898,7 +1974,7 @@ export default function App() {
           if (!(await ensureAutoUploadPolicyAllowsWorkIfBackgrounded())) {
             break;
           }
-          setStatus(`Uploading ${i + 1}/${toUpload.length}: ${asset.filename || 'item'}`);
+          setStatus(`Uploading ${i + 1}/${toUpload.length}`);
 
           const assetInfo = await MediaLibrary.getAssetInfoAsync(asset.id);
           const resolved = await resolveReadableFilePath({ assetId: asset.id, assetInfo });
@@ -1909,7 +1985,7 @@ export default function App() {
           }
 
           const actualFilename = assetInfo.filename || asset.filename;
-          const mime = asset.mediaType === 'video' ? 'video/mp4' : 'image/jpeg';
+          const mime = getMimeFromFilename(actualFilename, asset.mediaType);
           const fileUri = filePath.startsWith('file://') ? filePath : `file://${filePath}`;
 
           // iOS: use FOREGROUND for HTTP since background sessions require HTTPS
@@ -1917,7 +1993,7 @@ export default function App() {
           const sessionType = (Platform.OS === 'ios' && !isHttps) 
             ? FileSystem.FileSystemSessionType.FOREGROUND 
             : FileSystem.FileSystemSessionType.BACKGROUND;
-          await FileSystem.uploadAsync(`${SERVER_URL}/api/upload/raw`, fileUri, {
+          const uploadRes = await FileSystem.uploadAsync(`${SERVER_URL}/api/upload/raw`, fileUri, {
             httpMethod: 'POST',
             uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT,
             sessionType,
@@ -1928,19 +2004,22 @@ export default function App() {
             }
           });
 
+          // Check HTTP status - uploadAsync doesn't throw on 4xx/5xx errors
+          if (!uploadRes || uploadRes.status < 200 || uploadRes.status >= 300) {
+            console.error(`✗ Upload failed for ${actualFilename}: HTTP ${uploadRes?.status || 'unknown'} - ${uploadRes?.body || 'no response'}`);
+            failedCount++;
+            continue;
+          }
+
           successCount++;
         } catch (e) {
           failedCount++;
         }
       }
 
-      if (failedCount === 0) {
-        setStatus('Backup complete');
-        showDarkAlert('Success', `Successfully backed up ${successCount} file${successCount !== 1 ? 's' : ''}.`);
-      } else {
-        setStatus('Backup partial');
-        showDarkAlert('Partial Success', `Uploaded ${successCount} file${successCount !== 1 ? 's' : ''}.\n${failedCount} file${failedCount !== 1 ? 's' : ''} failed.`);
-      }
+      const skippedCount = list.length - toUpload.length;
+      setStatus('Backup complete');
+      showDarkAlert('Backup Complete', `Uploaded: ${successCount}\nSkipped: ${skippedCount}\nFailed: ${failedCount}`);
     } catch (error) {
       setStatus('Backup error');
       showDarkAlert('Backup Error', error && error.message ? error.message : 'Unknown error');
@@ -2128,485 +2207,34 @@ export default function App() {
     openSimilarGroup({ groups: g, index: i });
   };
 
-  const scanSimilarShotsOnDevice = async () => {
-    const permission = await MediaLibrary.requestPermissionsAsync();
-    if (permission.status !== 'granted') {
-      throw new Error('Photos permission not granted');
-    }
-
-    if (
-      Platform.OS === 'ios' &&
-      permission &&
-      typeof permission.accessPrivileges === 'string' &&
-      permission.accessPrivileges !== 'all'
-    ) {
-      throw new Error('Limited Photos Access. Please allow Full Access.');
-    }
-
-    const MAX_SCAN = 2000;
-    // No time constraint - compare all photos regardless of when taken
-
-    console.log('Similar Photos: Starting scan...');
-    setStatus('Scanning for similar photos...');
-
-    let after = null;
-    let scanned = 0;
-    let all = [];
-
-    while (scanned < MAX_SCAN) {
-      const page = await MediaLibrary.getAssetsAsync({
-        first: Math.min(500, MAX_SCAN - scanned),
-        after: after || undefined,
-        mediaType: ['photo'],
-      });
-      const assets = page && Array.isArray(page.assets) ? page.assets : [];
-      all = all.concat(assets);
-      scanned += assets.length;
-      after = page && page.endCursor ? page.endCursor : null;
-      if (!page || page.hasNextPage !== true) break;
-      if (assets.length === 0) break;
-    }
-
-    console.log('Similar Photos: Loaded', all.length, 'photos');
-    setStatus(`Analyzing ${all.length} photos...`);
-
-    all = all.filter(a => a && a.id && typeof a.creationTime === 'number');
-    all.sort((a, b) => (a.creationTime || 0) - (b.creationTime || 0));
-
-    // Compute perceptual hashes for all photos
-    const items = [];
-    let simHashed = 0;
-    let simSkippedNoPath = 0;
-    let simHashFailed = 0;
-    const simSampleSkipped = [];
-    for (let i = 0; i < all.length; i++) {
-      const asset = all[i];
-      if (i % 20 === 0) {
-        setStatus(`Deep analysis: ${i + 1}/${all.length} photos...`);
-      }
-      
-      let info = null;
-      let pHash = null;
-      let pHash2 = null;
-      let pHash3 = null;
-      let dHash = null;
-      let dHash2 = null;
-      let dHash3 = null;
-      let avgBrightness = null;
-      let avgBrightness2 = null;
-      let avgBrightness3 = null;
-      let blackRatio = null;
-      let whiteRatio = null;
-      let blackRatio3 = null;
-      let whiteRatio3 = null;
-      let avgRed = null;
-      let avgGreen = null;
-      let avgBlue = null;
-      let avgRed3 = null;
-      let avgGreen3 = null;
-      let avgBlue3 = null;
-      
-      try {
-        info = await MediaLibrary.getAssetInfoAsync(asset.id, Platform.OS === 'ios' ? { shouldDownloadFromNetwork: true } : undefined);
-
-        let tmpCopied = false;
-        let tmpUri = null;
-        let hashPath = null;
-        try {
-          const resolved = await resolveReadableFilePath({ assetId: asset.id, assetInfo: info });
-          hashPath = resolved && resolved.filePath ? resolved.filePath : null;
-          tmpCopied = !!(resolved && resolved.tmpCopied);
-          tmpUri = resolved && resolved.tmpUri ? resolved.tmpUri : null;
-        } catch (e) {
-          hashPath = null;
-        }
-
-        if (hashPath && PixelHash && typeof PixelHash.hashImagePerceptual === 'function') {
-          try {
-            const res = await PixelHash.hashImagePerceptual(hashPath);
-            pHash = res && res.pHash ? String(res.pHash) : null;
-            pHash2 = res && res.pHash2 ? String(res.pHash2) : null;
-            pHash3 = res && res.pHash3 ? String(res.pHash3) : null;
-            dHash = res && res.dHash ? String(res.dHash) : null;
-            dHash2 = res && res.dHash2 ? String(res.dHash2) : null;
-            dHash3 = res && res.dHash3 ? String(res.dHash3) : null;
-            avgBrightness = res && typeof res.avgBrightness === 'number' ? res.avgBrightness : null;
-            avgBrightness2 = res && typeof res.avgBrightness2 === 'number' ? res.avgBrightness2 : null;
-            avgBrightness3 = res && typeof res.avgBrightness3 === 'number' ? res.avgBrightness3 : null;
-            blackRatio = res && typeof res.blackRatio === 'number' ? res.blackRatio : null;
-            whiteRatio = res && typeof res.whiteRatio === 'number' ? res.whiteRatio : null;
-            blackRatio3 = res && typeof res.blackRatio3 === 'number' ? res.blackRatio3 : null;
-            whiteRatio3 = res && typeof res.whiteRatio3 === 'number' ? res.whiteRatio3 : null;
-            avgRed = res && typeof res.avgRed === 'number' ? res.avgRed : null;
-            avgGreen = res && typeof res.avgGreen === 'number' ? res.avgGreen : null;
-            avgBlue = res && typeof res.avgBlue === 'number' ? res.avgBlue : null;
-            avgRed3 = res && typeof res.avgRed3 === 'number' ? res.avgRed3 : null;
-            avgGreen3 = res && typeof res.avgGreen3 === 'number' ? res.avgGreen3 : null;
-            avgBlue3 = res && typeof res.avgBlue3 === 'number' ? res.avgBlue3 : null;
-            if (pHash) simHashed++;
-          } catch (e) {
-            simHashFailed++;
-            if (simSampleSkipped.length < 5) {
-              simSampleSkipped.push({ filename: (info && info.filename) || asset.filename || asset.id, reason: 'hash failed: ' + (e?.message || e) });
-            }
-          } finally {
-            if (tmpCopied && tmpUri) {
-              try { await FileSystem.deleteAsync(tmpUri, { idempotent: true }); } catch (e2) {}
-            }
-          }
-        } else {
-          simSkippedNoPath++;
-          if (simSampleSkipped.length < 5) {
-            simSampleSkipped.push({ filename: (info && info.filename) || asset.filename || asset.id, reason: 'no readable path (cloud?)' });
-          }
-        }
-      } catch (e) {
-        // Info failed, continue
-        simHashFailed++;
-        if (simSampleSkipped.length < 5) {
-          simSampleSkipped.push({ filename: asset.filename || asset.id, reason: 'asset info failed: ' + (e?.message || e) });
-        }
-      }
-      
-      items.push({
-        asset,
-        info,
-        pHash,
-        pHash2,
-        pHash3,
-        dHash,
-        dHash2,
-        dHash3,
-        avgBrightness,
-        avgBrightness2,
-        avgBrightness3,
-        blackRatio,
-        whiteRatio,
-        blackRatio3,
-        whiteRatio3,
-        avgRed,
-        avgGreen,
-        avgBlue,
-        avgRed3,
-        avgGreen3,
-        avgBlue3,
-        createdTs: asset.creationTime || 0,
-        filename: (info && info.filename) || asset.filename || '',
-        fileSize: info && typeof info.fileSize === 'number' ? info.fileSize : 0,
-      });
-    }
-
-    console.log('Similar Photos: Hash summary', {
-      total: all.length,
-      hashed: simHashed,
-      skippedNoPath: simSkippedNoPath,
-      hashFailed: simHashFailed,
-      sampleSkipped: simSampleSkipped.slice(0, 3)
-    });
-
-    console.log('Similar Photos: Analyzed', items.length, 'photos, looking for similar pairs...');
-    setStatus('Finding similar photo groups...');
-
-    // Helper: check if filenames indicate copies
-    const isCopyFilename = (nameA, nameB) => {
-      if (!nameA || !nameB) return false;
-      const normalize = (n) => n.replace(/\s*\(\d+\)\s*/, '').replace(/\s*copy\s*\d*\s*/i, '').replace(/\s*-\s*\d+\s*/, '').replace(/\.[^.]+$/, '').toLowerCase().trim();
-      const baseA = normalize(nameA);
-      const baseB = normalize(nameB);
-      if (!baseA || !baseB) return false;
-      if (baseA === baseB && nameA !== nameB) return true;
-      if (baseA.length > 5 && baseB.length > 5) {
-        if (baseA.startsWith(baseB) || baseB.startsWith(baseA)) return true;
-      }
-      return false;
-    };
-
-    // Helper: check same dimensions
-    const sameDims = (a, b) => {
-      const aw = a.asset && typeof a.asset.width === 'number' ? a.asset.width : null;
-      const ah = a.asset && typeof a.asset.height === 'number' ? a.asset.height : null;
-      const bw = b.asset && typeof b.asset.width === 'number' ? b.asset.width : null;
-      const bh = b.asset && typeof b.asset.height === 'number' ? b.asset.height : null;
-      if (!aw || !ah || !bw || !bh) return false;
-      return aw === bw && ah === bh;
-    };
-
-    // BEST PRACTICE SCORING - combining multiple factors for robust detection
-    const computeSimilarityScore = (a, b) => {
-      let score = 0;
-      const details = [];
-      
-      const pDist1 = hammingDistanceHex64(a.pHash, b.pHash);
-      const pDist2 = hammingDistanceHex64(a.pHash2, b.pHash2);
-      const pDist3 = hammingDistanceHex64(a.pHash3, b.pHash3);
-      const pDist = Math.min(pDist1, pDist2, pDist3);
-      const dDist1 = hammingDistanceHex64(a.dHash, b.dHash);
-      const dDist2 = hammingDistanceHex64(a.dHash2, b.dHash2);
-      const dDist3 = hammingDistanceHex64(a.dHash3, b.dHash3);
-      const dDist = Math.min(dDist1, dDist2, dDist3);
-      const dt = Math.abs((b.createdTs || 0) - (a.createdTs || 0));
-      
-      // 1. ASPECT RATIO (max 20 points) - STRONG: same aspect = same source
-      // Best practice: similar photos must have same aspect ratio
-      const arA = a.asset.width && a.asset.height ? a.asset.width / a.asset.height : 0;
-      const arB = b.asset.width && b.asset.height ? b.asset.width / b.asset.height : 0;
-      const arDiff = (arA > 0 && arB > 0) ? Math.abs(arA - arB) / Math.max(arA, arB) : 1;
-      if (arDiff <= 0.01) { score += 20; details.push('ar=20'); }       // exact match
-      else if (arDiff <= 0.05) { score += 15; details.push('ar=15'); }  // very close
-      else if (arDiff <= 0.10) { score += 10; details.push('ar=10'); }  // close
-      
-      // 2. dHash similarity (max 25 points) - structure/edges
-      // LOOSE: body turns, head turns, hair movement cause big changes
-      if (dDist <= 4) { score += 25; details.push('dHash=25'); }
-      else if (dDist <= 8) { score += 20; details.push('dHash=20'); }
-      else if (dDist <= 12) { score += 15; details.push('dHash=15'); }
-      else if (dDist <= 16) { score += 10; details.push('dHash=10'); }
-      else if (dDist <= 20) { score += 5; details.push('dHash=5'); }
-      
-      // 3. pHash similarity (max 25 points) - frequency content
-      // LOOSE: movement causes frequency changes
-      if (pDist <= 4) { score += 25; details.push('pHash=25'); }
-      else if (pDist <= 8) { score += 20; details.push('pHash=20'); }
-      else if (pDist <= 12) { score += 15; details.push('pHash=15'); }
-      else if (pDist <= 16) { score += 10; details.push('pHash=10'); }
-      
-      // 4. GRAYSCALE BRIGHTNESS similarity (max 20 points) - overall luminance
-      const brightA = typeof a.avgBrightness === 'number' ? a.avgBrightness : -1;
-      const brightB = typeof b.avgBrightness === 'number' ? b.avgBrightness : -1;
-      const brightA2 = typeof a.avgBrightness2 === 'number' ? a.avgBrightness2 : -1;
-      const brightB2 = typeof b.avgBrightness2 === 'number' ? b.avgBrightness2 : -1;
-      const brightA3 = typeof a.avgBrightness3 === 'number' ? a.avgBrightness3 : -1;
-      const brightB3 = typeof b.avgBrightness3 === 'number' ? b.avgBrightness3 : -1;
-      const brightDiff1 = (brightA >= 0 && brightB >= 0) ? Math.abs(brightA - brightB) / 255 : 1;
-      const brightDiff2 = (brightA2 >= 0 && brightB2 >= 0) ? Math.abs(brightA2 - brightB2) / 255 : 1;
-      const brightDiff3 = (brightA3 >= 0 && brightB3 >= 0) ? Math.abs(brightA3 - brightB3) / 255 : 1;
-      const brightDiff = Math.min(brightDiff1, brightDiff2, brightDiff3);
-      if (brightDiff <= 0.03) { score += 20; details.push('gray=20'); }
-      else if (brightDiff <= 0.06) { score += 15; details.push('gray=15'); }
-      else if (brightDiff <= 0.10) { score += 10; details.push('gray=10'); }
-      else if (brightDiff <= 0.15) { score += 5; details.push('gray=5'); }
-      
-      // 5. Time proximity (max 10 points) - bonus for burst shots
-      if (dt <= 1000) { score += 10; details.push('time=10'); }
-      else if (dt <= 5000) { score += 8; details.push('time=8'); }
-      else if (dt <= 30000) { score += 6; details.push('time=6'); }
-      else if (dt <= 60000) { score += 4; details.push('time=4'); }
-      else if (dt <= 300000) { score += 2; details.push('time=2'); }
-      
-      return { score, details: details.join('+'), pDist, dDist, brightDiff, arDiff, dt, pDist1, pDist2, pDist3, dDist1, dDist2, dDist3, brightDiff1, brightDiff2, brightDiff3 };
-    };
-
-    // Find similar pairs using weighted scoring
-    const similarPairs = [];
-    const seen = new Set();
-
-    for (let i = 0; i < items.length; i++) {
-      const a = items[i];
-      for (let j = i + 1; j < items.length; j++) {
-        const b = items[j];
-        
-        // NO time constraint - compare all photos regardless of when taken
-        // Time is only used for scoring bonus, not filtering
-        
-        const { score, details, pDist, dDist, brightDiff, arDiff, dt, pDist1, pDist2, pDist3, dDist1, dDist2, dDist3, brightDiff1, brightDiff2, brightDiff3 } = computeSimilarityScore(a, b);
-
-        // 2-of-3 crop agreement, with crop3 (tight center) required to match.
-        // Add an RGB-signature fallback to be "less precise" for posture changes while avoiding background-only matches.
-        const crop1Ok = (pDist1 <= 22 && dDist1 <= 26);
-        const crop2Ok = (pDist2 <= 22 && dDist2 <= 26);
-        const crop3StrongOk = (pDist3 <= 20 && dDist3 <= 24);
-        const crop3WeakOk = (pDist3 <= 24 && dDist3 <= 30);
-
-        const copyName = isCopyFilename(a.filename, b.filename);
-
-        const rgbStrongMatch = (() => {
-          const aR = typeof a.avgRed3 === 'number' ? a.avgRed3 : (typeof a.avgRed === 'number' ? a.avgRed : null);
-          const aG = typeof a.avgGreen3 === 'number' ? a.avgGreen3 : (typeof a.avgGreen === 'number' ? a.avgGreen : null);
-          const aB = typeof a.avgBlue3 === 'number' ? a.avgBlue3 : (typeof a.avgBlue === 'number' ? a.avgBlue : null);
-          const bR = typeof b.avgRed3 === 'number' ? b.avgRed3 : (typeof b.avgRed === 'number' ? b.avgRed : null);
-          const bG = typeof b.avgGreen3 === 'number' ? b.avgGreen3 : (typeof b.avgGreen === 'number' ? b.avgGreen : null);
-          const bB = typeof b.avgBlue3 === 'number' ? b.avgBlue3 : (typeof b.avgBlue === 'number' ? b.avgBlue : null);
-          if (aR === null || aG === null || aB === null || bR === null || bG === null || bB === null) return false;
-          const dr = Math.abs(aR - bR);
-          const dg = Math.abs(aG - bG);
-          const db = Math.abs(aB - bB);
-          const anyChannelVeryClose = Math.min(dr, dg, db) <= 0.03;
-          const maxDiff = Math.max(dr, dg, db);
-          return maxDiff <= 0.09 || anyChannelVeryClose;
-        })();
-
-        const withinRelaxTime = (typeof dt === 'number' ? dt : Number.MAX_SAFE_INTEGER) <= (2 * 60 * 60 * 1000);
-        const allowRelax = rgbStrongMatch && (withinRelaxTime || copyName);
-
-        // Primary strict gate: crop3 strong + at least one other crop
-        const strictGateOk = crop3StrongOk && (crop1Ok || crop2Ok);
-
-        // Relaxed gate: if RGB matches strongly, accept crop3 weak + one weak other crop
-        const crop1WeakOk = (pDist1 <= 26 && dDist1 <= 32);
-        const crop2WeakOk = (pDist2 <= 26 && dDist2 <= 32);
-        const relaxedGateOk = allowRelax && crop3WeakOk && (crop1WeakOk || crop2WeakOk);
-
-        if (!strictGateOk && !relaxedGateOk) continue;
-
-        // Color anchors (cheap + strong against false positives)
-        const colorOk = (() => {
-          const aR = typeof a.avgRed3 === 'number' ? a.avgRed3 : (typeof a.avgRed === 'number' ? a.avgRed : null);
-          const aG = typeof a.avgGreen3 === 'number' ? a.avgGreen3 : (typeof a.avgGreen === 'number' ? a.avgGreen : null);
-          const aB = typeof a.avgBlue3 === 'number' ? a.avgBlue3 : (typeof a.avgBlue === 'number' ? a.avgBlue : null);
-          const bR = typeof b.avgRed3 === 'number' ? b.avgRed3 : (typeof b.avgRed === 'number' ? b.avgRed : null);
-          const bG = typeof b.avgGreen3 === 'number' ? b.avgGreen3 : (typeof b.avgGreen === 'number' ? b.avgGreen : null);
-          const bB = typeof b.avgBlue3 === 'number' ? b.avgBlue3 : (typeof b.avgBlue === 'number' ? b.avgBlue : null);
-          if (aR === null || aG === null || aB === null || bR === null || bG === null || bB === null) return true;
-          const dr = Math.abs(aR - bR);
-          const dg = Math.abs(aG - bG);
-          const db = Math.abs(aB - bB);
-          const maxDiff = Math.max(dr, dg, db);
-          return allowRelax ? (maxDiff <= 0.16) : (maxDiff <= 0.12);
-        })();
-        if (!colorOk) continue;
-
-        const bwOk = (() => {
-          const aBlack = typeof a.blackRatio3 === 'number' ? a.blackRatio3 : (typeof a.blackRatio === 'number' ? a.blackRatio : null);
-          const bBlack = typeof b.blackRatio3 === 'number' ? b.blackRatio3 : (typeof b.blackRatio === 'number' ? b.blackRatio : null);
-          const aWhite = typeof a.whiteRatio3 === 'number' ? a.whiteRatio3 : (typeof a.whiteRatio === 'number' ? a.whiteRatio : null);
-          const bWhite = typeof b.whiteRatio3 === 'number' ? b.whiteRatio3 : (typeof b.whiteRatio === 'number' ? b.whiteRatio : null);
-          if (aBlack === null || bBlack === null || aWhite === null || bWhite === null) return true;
-          const t = allowRelax ? 0.16 : 0.12;
-          return (Math.abs(aBlack - bBlack) <= t) && (Math.abs(aWhite - bWhite) <= t);
-        })();
-        if (!bwOk) continue;
-        
-        // Anchors: slightly tighter now that we added a more robust crop-consistency gate
-        // dHash ≤28, pHash ≤24, grayscale ≤15%, aspect ratio ≤7%
-        if (arDiff > 0.07 || dDist > 28 || pDist > 24 || brightDiff > 0.15) continue;
-        
-        // Score threshold: higher to reduce false positives
-        if (score < (allowRelax ? 55 : 50)) continue;
-        
-        const key = [a.asset.id, b.asset.id].sort().join('|');
-        if (seen.has(key)) continue;
-        seen.add(key);
-        
-        similarPairs.push({ a, b, score, details });
-        if (similarPairs.length <= 10) {
-          console.log('Similar Photos: Found pair', { 
-            score, 
-            details, 
-            arDiff,
-            brightDiff,
-            pDist,
-            dDist,
-            pDist1,
-            pDist2,
-            pDist3,
-            dDist1,
-            dDist2,
-            dDist3,
-            brightDiff1,
-            brightDiff2,
-            brightDiff3,
-            allowRelax,
-            aName: a.filename, 
-            bName: b.filename,
-            aBlack: a.blackRatio?.toFixed(3),
-            bBlack: b.blackRatio?.toFixed(3),
-            aWhite: a.whiteRatio?.toFixed(3),
-            bWhite: b.whiteRatio?.toFixed(3),
-            aBright: a.avgBrightness?.toFixed(1),
-            bBright: b.avgBrightness?.toFixed(1)
-          });
-        }
-      }
-    }
-    
-    // Sort by score (highest first)
-    similarPairs.sort((x, y) => y.score - x.score);
-
-    console.log('Similar Photos: Found', similarPairs.length, 'similar pairs');
-
-    // UNION-FIND (Disjoint Set Union) for proper clustering
-    // This groups all connected similar images together
-    const parent = new Map();
-    const rank = new Map();
-    
-    const find = (x) => {
-      if (!parent.has(x)) {
-        parent.set(x, x);
-        rank.set(x, 0);
-      }
-      if (parent.get(x) !== x) {
-        parent.set(x, find(parent.get(x))); // Path compression
-      }
-      return parent.get(x);
-    };
-    
-    const union = (x, y) => {
-      const px = find(x);
-      const py = find(y);
-      if (px === py) return;
-      // Union by rank
-      const rx = rank.get(px) || 0;
-      const ry = rank.get(py) || 0;
-      if (rx < ry) {
-        parent.set(px, py);
-      } else if (rx > ry) {
-        parent.set(py, px);
-      } else {
-        parent.set(py, px);
-        rank.set(px, rx + 1);
-      }
-    };
-    
-    // Build asset map for quick lookup
-    const assetMap = new Map();
-    for (const item of items) {
-      assetMap.set(item.asset.id, item.asset);
-    }
-    
-    // Union all similar pairs
-    for (const pair of similarPairs) {
-      union(pair.a.asset.id, pair.b.asset.id);
-    }
-    
-    // Group by root parent
-    const groupMap = new Map();
-    for (const pair of similarPairs) {
-      const rootA = find(pair.a.asset.id);
-      const rootB = find(pair.b.asset.id);
-      // Both should have same root after union
-      if (!groupMap.has(rootA)) groupMap.set(rootA, new Set());
-      groupMap.get(rootA).add(pair.a.asset.id);
-      groupMap.get(rootA).add(pair.b.asset.id);
-    }
-    
-    // Convert to array of assets
-    const finalGroups = [];
-    for (const [root, idSet] of groupMap) {
-      const group = [];
-      for (const id of idSet) {
-        const asset = assetMap.get(id);
-        if (asset) group.push(asset);
-      }
-      if (group.length >= 2) {
-        // Sort by creation time (oldest first)
-        group.sort((a, b) => (a.creationTime || 0) - (b.creationTime || 0));
-        finalGroups.push(group);
-      }
-    }
-    
-    // Sort groups by size (largest first)
-    finalGroups.sort((a, b) => b.length - a.length);
-
-    console.log('Similar Photos: Final groups:', finalGroups.length);
-    return finalGroups;
-  };
-
   const startSimilarShotsReview = async () => {
     setBackgroundWarnEligibleSafe(false); setWasBackgroundedDuringWorkSafe(false); setLoadingSafe(true);
     setStatus('Scanning for similar photos...');
     try {
-      const groups = await scanSimilarShotsOnDevice();
-      if (!groups || groups.length === 0) { setStatus('No similar photos'); showDarkAlert('Similar Photos', 'No similar photo groups found.'); setLoadingSafe(false); return; }
+      // Check permission first
+      const permission = await MediaLibrary.requestPermissionsAsync();
+      if (permission.status !== 'granted') {
+        throw new Error('Photos permission not granted');
+      }
+      if (Platform.OS === 'ios' && permission.accessPrivileges && permission.accessPrivileges !== 'all') {
+        throw new Error('Limited Photos Access. Please allow Full Access.');
+      }
+
+      // Use duplicateScanner module
+      const DuplicateScanner = require('./duplicateScanner').default;
+      const groups = await DuplicateScanner.scanSimilarPhotos({
+        resolveReadableFilePath,
+        onProgress: (current, total, status) => {
+          setStatus(status || `Analyzing ${current}/${total} photos...`);
+        }
+      });
+
+      if (!groups || groups.length === 0) { 
+        setStatus('No similar photos'); 
+        showDarkAlert('Similar Photos', 'No similar photo groups found.'); 
+        setLoadingSafe(false); 
+        return; 
+      }
       setLoadingSafe(false);
       openSimilarGroup({ groups, index: 0 });
     } catch (e) {
@@ -3179,7 +2807,9 @@ export default function App() {
     if (!token) return;
 
     let cancelled = false;
-    (async () => {
+
+    const fetchStealthCloudUsage = async () => {
+      if (serverType !== 'stealthcloud') return null;
       try {
         setStealthUsageLoading(true);
         setStealthUsageError(null);
@@ -3201,7 +2831,9 @@ export default function App() {
         if (cancelled) return;
         setStealthUsageLoading(false);
       }
-    })();
+    };
+
+    fetchStealthCloudUsage();
 
     return () => {
       cancelled = true;
@@ -3214,6 +2846,7 @@ export default function App() {
    * @param {string} url - URL to open
    */
   const openLink = async (url) => {
+    if (!isValidUrl(url)) return;
     try {
       await Linking.openURL(url);
     } catch (error) {
@@ -3319,7 +2952,7 @@ export default function App() {
       }
 
       const masterKey = await getStealthCloudMasterKey();
-      setStatus('Preparing backup...');
+      setStatus('Checking server files...');
       const prepareStartTime = Date.now();
 
       const PAGE_SIZE = 250;
@@ -3327,7 +2960,7 @@ export default function App() {
       let totalCount = null;
       let processedIndex = 0;
 
-      // list manifests so we can skip already-backed up items (by asset id)
+      // list manifests so we can skip already-backed up items (by asset id OR filename)
       let existingManifests = [];
       try {
         const listRes = await axios.get(`${SERVER_URL}/api/cloud/manifests`, config);
@@ -3336,6 +2969,32 @@ export default function App() {
         existingManifests = [];
       }
       const already = new Set(existingManifests.map(m => m.manifestId));
+
+      // Build filename set by decrypting manifests (for cross-device duplicate detection)
+      const alreadyFilenames = new Set();
+      if (existingManifests.length > 0) {
+        setStatus('Checking server files...');
+        for (const m of existingManifests) {
+          try {
+            const manRes = await axios.get(`${SERVER_URL}/api/cloud/manifests/${m.manifestId}`, { headers: config.headers, timeout: 15000 });
+            const payload = manRes.data;
+            const parsed = typeof payload === 'string' ? JSON.parse(payload) : payload;
+            const enc = JSON.parse(parsed.encryptedManifest);
+            const manifestNonce = naclUtil.decodeBase64(enc.manifestNonce);
+            const manifestBox = naclUtil.decodeBase64(enc.manifestBox);
+            const manifestPlain = nacl.secretbox.open(manifestBox, manifestNonce, masterKey);
+            if (manifestPlain) {
+              const manifest = JSON.parse(naclUtil.encodeUTF8(manifestPlain));
+              if (manifest.filename) {
+                alreadyFilenames.add(normalizeFilenameForCompare(manifest.filename));
+              }
+            }
+          } catch (e) {
+            // Skip manifests we can't decrypt (different key, corrupted, etc.)
+          }
+        }
+        console.log(`StealthCloud: found ${alreadyFilenames.size} existing filenames for cross-device duplicate detection`);
+      }
 
       // Ensure "Preparing backup..." shows for at least 800ms for professional UX
       const prepareElapsed = Date.now() - prepareStartTime;
@@ -3423,7 +3082,7 @@ export default function App() {
           continue;
         }
 
-        setStatus(`Encrypting ${processedIndex}/${totalCount || '?'}`);
+        setStatus(`Comparing ${processedIndex}/${totalCount || '?'}`);
 
         let assetInfo;
         try {
@@ -3438,6 +3097,16 @@ export default function App() {
           failed++;
           continue;
         }
+
+        // Cross-device duplicate detection: skip if filename already exists on server
+        const assetFilename = normalizeFilenameForCompare(assetInfo.filename || asset.filename);
+        if (assetFilename && alreadyFilenames.has(assetFilename)) {
+          console.log(`StealthCloud: skipping duplicate filename: ${assetFilename}`);
+          skipped++;
+          continue;
+        }
+
+        setStatus(`Encrypting ${processedIndex}/${totalCount || '?'}`);
 
         let filePath, tmpCopied, tmpUri;
         try {
@@ -3702,11 +3371,11 @@ export default function App() {
       }
 
       setStatus('Backup complete');
-      showDarkAlert('StealthCloud Backup', `Uploaded: ${uploaded}\nSkipped: ${skipped}\nFailed: ${failed}`);
+      showDarkAlert('Backup Complete', `Uploaded: ${uploaded}\nSkipped: ${skipped}\nFailed: ${failed}`);
     } catch (e) {
       console.error('StealthCloud backup error:', e);
       setStatus('Backup error');
-      showDarkAlert('StealthCloud Backup Error', e && e.message ? e.message : 'Unknown error');
+      showDarkAlert('Backup Error', e && e.message ? e.message : 'Unknown error');
     } finally {
       setLoadingSafe(false);
       setBackgroundWarnEligibleSafe(false);
@@ -3755,182 +3424,40 @@ export default function App() {
 
     try {
       const restoreHistory = await loadRestoreHistory();
-
       const config = await getAuthHeaders();
       const SERVER_URL = getServerUrl();
       const masterKey = await getStealthCloudMasterKey();
 
-      setStatus('Indexing local library...');
+      setStatus('Comparing local files...');
       const localIndex = await buildLocalFilenameSetPaged({ mediaType: ['photo', 'video'] });
       const localFilenames = localIndex.set;
 
-      const shouldRetryRestoreDownload = (e) => {
-        const msg = (e && e.message ? e.message : '').toLowerCase();
-        if (msg.includes(' 404') || msg.includes('not found')) return false;
-        return shouldRetryChunkUpload(e);
-      };
-
-      const listRes = await withRetries(async () => {
-        return await axios.get(`${SERVER_URL}/api/cloud/manifests`, { headers: config.headers, timeout: 30000 });
-      }, {
-        retries: 10,
-        baseDelayMs: 1000,
-        maxDelayMs: 30000,
-        shouldRetry: shouldRetryRestoreDownload
+      const result = await stealthCloudRestoreCore({
+        config,
+        SERVER_URL,
+        masterKey,
+        localFilenames,
+        restoreHistory,
+        saveRestoreHistory,
+        makeHistoryKey,
+        manifestIds: opts?.manifestIds || null,
+        fastMode: fastModeEnabledRef.current,
+        onStatus: setStatus,
+        onProgress: setProgress,
       });
 
-      let manifests = (listRes.data && listRes.data.manifests) ? listRes.data.manifests : [];
-
-      if (opts && Array.isArray(opts.manifestIds) && opts.manifestIds.length > 0) {
-        const allowed = new Set(opts.manifestIds.map(v => String(v)));
-        manifests = manifests.filter(m => m && m.manifestId && allowed.has(String(m.manifestId)));
-      }
-
-      if (manifests.length === 0) {
+      if (result.noBackups) {
         setStatus('No backups');
         showDarkAlert('No Backups', 'No StealthCloud backups found for this account.');
         return;
       }
 
-      setStatus('Restoring from StealthCloud...');
-      setProgress(0);
-
-      let restored = 0;
-      for (let i = 0; i < manifests.length; i++) {
-        const mid = manifests[i].manifestId;
-        const manRes = await withRetries(async () => {
-          return await axios.get(`${SERVER_URL}/api/cloud/manifests/${mid}`, { headers: config.headers, timeout: 30000 });
-        }, {
-          retries: 10,
-          baseDelayMs: 1000,
-          maxDelayMs: 30000,
-          shouldRetry: shouldRetryRestoreDownload
-        });
-
-        const payload = manRes.data;
-        const parsed = typeof payload === 'string' ? JSON.parse(payload) : payload;
-        const enc = JSON.parse(parsed.encryptedManifest);
-        const manifestNonce = naclUtil.decodeBase64(enc.manifestNonce);
-        const manifestBox = naclUtil.decodeBase64(enc.manifestBox);
-        const manifestPlain = nacl.secretbox.open(manifestBox, manifestNonce, masterKey);
-        if (!manifestPlain) continue;
-
-        const manifest = JSON.parse(naclUtil.encodeUTF8(manifestPlain));
-
-        const filename = manifest.filename || `${mid}.bin`;
-        const normalizedFilename = normalizeFilenameForCompare(filename);
-        const historyKey = makeHistoryKey('sc', mid);
-        const alreadyRestored = restoreHistory.has(historyKey);
-        if ((normalizedFilename && localFilenames.has(normalizedFilename)) || alreadyRestored) {
-          setProgress((i + 1) / manifests.length);
-          continue;
-        }
-
-        const wrapNonce = naclUtil.decodeBase64(manifest.wrapNonce);
-        const wrappedFileKey = naclUtil.decodeBase64(manifest.wrappedFileKey);
-        const fileKey = nacl.secretbox.open(wrappedFileKey, wrapNonce, masterKey);
-        if (!fileKey) continue;
-
-        const baseNonce16 = naclUtil.decodeBase64(manifest.baseNonce16);
-
-        // Reconstruct plaintext to a temp file (append per chunk)
-        const outUri = `${FileSystem.cacheDirectory}sc_restore_${filename}`;
-        const outPath = normalizeFilePath(outUri);
-        await FileSystem.deleteAsync(outUri, { idempotent: true });
-        await FileSystem.writeAsStringAsync(outUri, '', { encoding: FileSystem.EncodingType.Base64 });
-
-        let ReactNativeBlobUtil = null;
-        try {
-          const mod = require('react-native-blob-util');
-          ReactNativeBlobUtil = mod && (mod.default || mod);
-        } catch (e) {
-          ReactNativeBlobUtil = null;
-        }
-        if (!ReactNativeBlobUtil || !ReactNativeBlobUtil.fs || typeof ReactNativeBlobUtil.fs.appendFile !== 'function') {
-          throw new Error('StealthCloud restore requires a development build (react-native-blob-util).');
-        }
-
-        // Download chunks concurrently (same fast/slow settings as backup), then decrypt+append in order.
-        // Important: keep memory bounded by processing in batches.
-        const restoreOriginalSize = typeof manifest.originalSize === 'number'
-          ? manifest.originalSize
-          : (manifest.originalSize ? Number(manifest.originalSize) : (manifest.size ? Number(manifest.size) : null));
-        const restorePlatform = Platform.OS === 'android' ? 'android' : 'ios';
-        const maxParallel = Math.max(1, chooseStealthCloudMaxParallelChunkUploads({
-          platform: restorePlatform,
-          originalSize: restoreOriginalSize,
-          fastMode: fastModeEnabledRef.current
-        }));
-
-        const downloadChunk = async (chunkIndex) => {
-          const chunkId = manifest.chunkIds[chunkIndex];
-          const tmpChunkPath = `${FileSystem.cacheDirectory}sc_dl_${chunkId}.bin`;
-          await FileSystem.deleteAsync(tmpChunkPath, { idempotent: true });
-          await withRetries(async () => {
-            await FileSystem.downloadAsync(`${SERVER_URL}/api/cloud/chunks/${chunkId}`, tmpChunkPath, { headers: config.headers });
-          }, { retries: 10, baseDelayMs: 1000, maxDelayMs: 30000, shouldRetry: shouldRetryRestoreDownload });
-          const chunkB64 = await FileSystem.readAsStringAsync(tmpChunkPath, { encoding: FileSystem.EncodingType.Base64 });
-          await FileSystem.deleteAsync(tmpChunkPath, { idempotent: true });
-          return chunkB64;
-        };
-
-        for (let batchStart = 0; batchStart < manifest.chunkIds.length; batchStart += maxParallel) {
-          const batchEnd = Math.min(batchStart + maxParallel, manifest.chunkIds.length);
-          const batchMap = new Map(); // chunkIndex -> base64 data (only for this batch)
-
-          const batchPromises = [];
-          for (let c = batchStart; c < batchEnd; c++) {
-            batchPromises.push(
-              (async () => {
-                const chunkB64 = await downloadChunk(c);
-                batchMap.set(c, chunkB64);
-              })()
-            );
-          }
-          await Promise.all(batchPromises);
-
-          // Decrypt and append this batch in order
-          for (let c = batchStart; c < batchEnd; c++) {
-            const chunkB64 = batchMap.get(c);
-            const boxed = naclUtil.decodeBase64(chunkB64);
-            const nonce = makeChunkNonce(baseNonce16, c);
-            await throttleEncryption(c); // CPU throttle to prevent overheating during decryption
-            const plaintext = nacl.secretbox.open(boxed, nonce, fileKey);
-            if (!plaintext) throw new Error('Chunk decrypt failed');
-
-            // append plaintext bytes to file
-            const p64 = naclUtil.encodeBase64(plaintext);
-            await ReactNativeBlobUtil.fs.appendFile(outPath, p64, 'base64');
-          }
-        }
-
-        await MediaLibrary.saveToLibraryAsync(outUri);
-        await FileSystem.deleteAsync(outUri, { idempotent: true });
-        restored += 1;
-        if (normalizedFilename) {
-          localFilenames.add(normalizedFilename);
-        }
-        restoreHistory.add(historyKey);
-        await saveRestoreHistory(restoreHistory);
-        setProgress((i + 1) / manifests.length);
-        
-        // CPU cooldown between files to reduce phone heating
-        const assetCooldown = getThrottleAssetCooldownMs();
-        if (assetCooldown > 0) await sleep(assetCooldown);
-        
-        // Thermal batch limit: long cooling pause every N files
-        const batchLimit = getThrottleBatchLimit();
-        if (restored > 0 && restored % batchLimit === 0) {
-          await thermalCooldownPause(Math.floor(restored / batchLimit));
-        }
-      }
-
       setStatus('Sync complete');
-      showDarkAlert('StealthCloud Sync', `Restored ${restored} file${restored !== 1 ? 's' : ''}.`);
+      showDarkAlert('Sync Complete', `Downloaded: ${result.restored}\nSkipped: ${result.skipped}\nFailed: ${result.failed}`);
     } catch (e) {
       console.error('StealthCloud restore error:', e);
       setStatus('Sync error');
-      showDarkAlert('StealthCloud Sync Error', e && e.message ? e.message : 'Unknown error');
+      showDarkAlert('Sync Error', e && e.message ? e.message : 'Unknown error');
     } finally {
       setLoadingSafe(false);
       setBackgroundWarnEligibleSafe(false);
@@ -4012,9 +3539,16 @@ export default function App() {
     if (savedType) setServerType(savedType);
 
     if (savedLocalHost) setLocalHost(savedLocalHost);
-    if (savedRemoteHost) setRemoteHost(savedRemoteHost);
-    else if (savedRemoteUrl) setRemoteHost(savedRemoteUrl);
-    else if (savedRemoteIp) setRemoteHost(savedRemoteIp);
+    // Normalize any persisted remote values to a plain host (no scheme/port/path)
+    const persistedRemoteRaw = savedRemoteHost || savedRemoteUrl || savedRemoteIp;
+    if (persistedRemoteRaw) {
+      const normalized = normalizeHostInput(persistedRemoteRaw);
+      setRemoteHost(normalized);
+      // Prefer remote_host going forward; clean up legacy keys that may include https:// and break iOS.
+      try { await SecureStore.setItemAsync('remote_host', normalized); } catch (e) {}
+      try { if (savedRemoteUrl) await SecureStore.deleteItemAsync('remote_url'); } catch (e) {}
+      try { if (savedRemoteIp) await SecureStore.deleteItemAsync('remote_ip'); } catch (e) {}
+    }
 
     // Auto Upload UI is hidden for now; prevent auto-start on app relaunch.
     // Force it OFF even if it was previously enabled.
@@ -4043,7 +3577,24 @@ export default function App() {
     const storedUserId = await SecureStore.getItemAsync('user_id');
 
     // Load persisted device UUID for this email (cannot regenerate without password)
-    const uuid = await getDeviceUUID(storedEmail);
+    let uuid = await getDeviceUUID(storedEmail);
+    if (!uuid && storedEmail) {
+      // iOS may have a valid cached device UUID but a missing per-email key.
+      // Fall back to the cached value so About always shows the Device ID.
+      try {
+        const cached = await SecureStore.getItemAsync('device_uuid');
+        if (cached) {
+          uuid = cached;
+          try {
+            await SecureStore.setItemAsync(`device_uuid_v3:${storedEmail}`, cached);
+          } catch (e) {
+            // ignore
+          }
+        }
+      } catch (e) {
+        // ignore
+      }
+    }
     setDeviceUuid(uuid);
 
     if (storedToken) {
@@ -4204,6 +3755,7 @@ export default function App() {
       }
     }
     
+    Keyboard.dismiss();
     setAuthLoadingLabel('Signing in...');
     setLoadingSafe(true);
     resetAuthLoadingLabel(loginStatusTimerRef, loginLabelTimerRef, setAuthLoadingLabel, 'Signing in...');
@@ -4258,6 +3810,21 @@ export default function App() {
       }
       const endpoint = type === 'register' ? '/api/register' : '/api/login';
       const authBaseUrl = computeServerUrl(effectiveType, effectiveLocalHost, effectiveRemoteHost);
+      
+      // Get persistent hardware device ID for device-bound password reset (StealthCloud only)
+      // Use only stable device-derived ID so it survives reinstall. Do not use SecureStore/uuid.
+      let hardwareDeviceId = null;
+      if (type === 'register' && effectiveType === 'stealthcloud') {
+        try {
+          if (Platform.OS === 'ios') {
+            hardwareDeviceId = await computeIosHardwareId();
+          } else if (Platform.OS === 'android') {
+            hardwareDeviceId = await computeAndroidHardwareId();
+          }
+        } catch (e) {
+          console.log('Could not get hardware device ID:', e);
+        }
+      }
       const payload = {
         email: normalizedEmail,
         password,
@@ -4266,13 +3833,28 @@ export default function App() {
         device_name: Platform.OS + ' ' + Platform.Version,
       };
 
+      // Include hardware_device_id during registration for password reset capability
+      if (type === 'register' && hardwareDeviceId) {
+        payload.hardware_device_id = hardwareDeviceId;
+      }
+
       if (type === 'register' && effectiveType === 'stealthcloud' && selectedStealthPlanGb) {
         payload.plan_gb = selectedStealthPlanGb;
       }
 
-      const res = await axios.post(authBaseUrl + endpoint, payload);
+      const authUrl = authBaseUrl + endpoint;
+      console.log('Auth request:', {
+        type,
+        effectiveType,
+        authUrl,
+        localHost: effectiveLocalHost,
+        remoteHost: effectiveRemoteHost,
+        platform: Platform.OS,
+      });
 
-      console.log('Attempting auth:', type, `${authBaseUrl}${endpoint}`, {
+      const res = await axios.post(authUrl, payload);
+
+      console.log('Attempting auth:', type, authUrl, {
         email,
         password,
         device_uuid: deviceId,
@@ -4344,7 +3926,13 @@ export default function App() {
         console.error('Auth Error:', error.response.status, error.response.data);
         showDarkAlert('Error', error.response?.data?.error || 'Connection failed');
       } else if (error.request) {
-        console.error('Network Error - cannot reach server');
+        console.error('Network Error - cannot reach server', {
+          message: error?.message,
+          code: error?.code,
+          url: error?.config?.url,
+          method: error?.config?.method,
+          baseURL: error?.config?.baseURL,
+        });
         showDarkAlert('Error', 'Cannot reach server. Check your connection.');
       }
     } finally {
@@ -4356,15 +3944,90 @@ export default function App() {
   };
 
   /**
-   * Scans device for duplicate photos/videos and offers to delete them.
-   * Duplicates are identified by matching filename and file size.
+   * Device-bound password reset using hardware device ID
+   * Allows password reset if the user is on the same physical device that created the account.
+   * Uses iOS Vendor ID or Android ID which persists across app reinstalls.
+   */
+  const handleResetPassword = async () => {
+    if (!email || !newPassword) {
+      showDarkAlert('Error', 'Please enter your email and new password');
+      return;
+    }
+    if (newPassword.length < 6) {
+      showDarkAlert('Error', 'Password must be at least 6 characters');
+      return;
+    }
+
+    const normalizedEmail = normalizeEmailForDeviceUuid(email);
+    if (!normalizedEmail) {
+      showDarkAlert('Error', 'Please enter a valid email address');
+      return;
+    }
+
+    Keyboard.dismiss();
+    setLoadingSafe(true);
+    setAuthLoadingLabel('Verifying device...');
+
+    try {
+      // Get persistent hardware device ID (StealthCloud only) using deterministic device-derived ID
+      let hardwareDeviceId = null;
+      try {
+        if (Platform.OS === 'ios') {
+          hardwareDeviceId = await computeIosHardwareId();
+        } else if (Platform.OS === 'android') {
+          hardwareDeviceId = await computeAndroidHardwareId();
+        }
+      } catch (e) {
+        console.log('Could not get hardware device ID:', e);
+      }
+      
+      if (!hardwareDeviceId) {
+        showDarkAlert(
+          'Device ID Unavailable', 
+          'Could not retrieve device identifier. Password reset requires device verification. Please ensure you registered on this device.'
+        );
+        setLoadingSafe(false);
+        return;
+      }
+
+      setAuthLoadingLabel('Resetting password...');
+      const baseUrl = computeServerUrl(serverType, localHost, remoteHost);
+      await axios.post(`${baseUrl}/api/reset-password-device`, {
+        email: normalizedEmail,
+        hardware_device_id: hardwareDeviceId,
+        newPassword
+      });
+      
+      showDarkAlert('Success', 'Your password has been reset. Please login with your new password.');
+      setPassword(newPassword);
+      setAuthMode('login');
+      setNewPassword('');
+    } catch (error) {
+      console.error('Reset password error:', error);
+      const hint = error.response?.data?.hint;
+      if (hint === 'device_mismatch') {
+        showDarkAlert(
+          'Different Device',
+          'Password reset is only available on the device where you created your account. This appears to be a different device.'
+        );
+      } else if (hint === 'no_hardware_id_stored') {
+        showDarkAlert(
+          'Feature Not Available',
+          'Password reset is not available for accounts created before this feature was added. Please contact support.'
+        );
+      } else {
+        showDarkAlert('Error', error.response?.data?.error || 'Failed to reset password');
+      }
+    } finally {
+      setLoadingSafe(false);
+      setAuthLoadingLabel('Signing in...');
+    }
+  };
+
+  /**
+   * Scans device for exact duplicate photos using pixel-based hashing.
+   * Uses DuplicateScanner module for the heavy lifting.
    * @platform Both
-   * 
-   * Process:
-   * 1. Scans all photos/videos in media library
-   * 2. Groups by filename + size to find duplicates
-   * 3. Keeps the oldest copy, offers to delete newer duplicates
-   * 4. Shows confirmation dialog before deletion
    */
   const cleanDeviceDuplicates = async () => {
     setBackgroundWarnEligibleSafe(false);
@@ -4373,576 +4036,70 @@ export default function App() {
     setStatus('Scanning for duplicates...');
 
     try {
-      // Check for development build with react-native-blob-util first
-      const blobModulePresent = !!(
-        NativeModules.ReactNativeBlobUtil ||
-        NativeModules.RNBlobUtil ||
-        NativeModules.RNFetchBlob
-      );
-
-      let ReactNativeBlobUtil = null;
-      let useAdvancedDetection = false;
-
-      if (blobModulePresent) {
-        try {
-          const mod = require('react-native-blob-util');
-          ReactNativeBlobUtil = mod && (mod.default || mod);
-          useAdvancedDetection = ReactNativeBlobUtil && ReactNativeBlobUtil.fs && typeof ReactNativeBlobUtil.fs.hash === 'function';
-        } catch (e) {
-          useAdvancedDetection = false;
-        }
-      }
-
-      // Request permission to access media library
+      // Request permission
       const permission = await MediaLibrary.requestPermissionsAsync();
-      console.log('Clean Duplicates permission result:', permission);
       if (permission.status !== 'granted') {
         showDarkAlert('Permission needed', 'We need access to photos to safely scan for duplicates.');
         setLoadingSafe(false);
         return;
       }
 
-      // iOS: if user selected "Limited" photo access, we cannot reliably compare filenames or sync.
-      if (
-        Platform.OS === 'ios' &&
-        permission &&
-        typeof permission.accessPrivileges === 'string' &&
-        permission.accessPrivileges !== 'all'
-      ) {
-        console.log('Clean Duplicates: iOS limited access detected, accessPrivileges:', permission.accessPrivileges);
-        setStatus('Limited photo access. Please allow full access to scan for duplicates.');
+      // iOS: require full access
+      if (Platform.OS === 'ios' && permission.accessPrivileges && permission.accessPrivileges !== 'all') {
         showDarkAlert(
           'Limited Photos Access',
-          `Clean Duplicates needs Full Access to your Photos library to scan for duplicates.\n\nGo to Settings → ${APP_DISPLAY_NAME} → Photos → Full Access.`
+          `Clean Duplicates needs Full Access to your Photos library.\n\nGo to Settings → ${APP_DISPLAY_NAME} → Photos → Full Access.`
         );
         setLoadingSafe(false);
         return;
       }
 
-      console.log('Clean Duplicates: permission granted, proceeding with scan');
+      // Import scanner module
+      const DuplicateScanner = require('./duplicateScanner').default;
 
-      // Collect assets from ALL albums to include Screenshots, Downloads, etc.
-      let allAssetsArray = [];
-      const seenIds = new Set();
-      
-      // First get assets without album filter (main camera roll) - photos only, videos cause OOM
-      let mainAssets = null;
-      for (let attempt = 0; attempt < 6; attempt++) {
-        mainAssets = await MediaLibrary.getAssetsAsync({
-          first: 10000,
-          mediaType: ['photo'],
-        });
-        if (mainAssets && mainAssets.assets && mainAssets.assets.length > 0) break;
-        await new Promise((resolve) => setTimeout(resolve, 500));
-      }
-      if (mainAssets && mainAssets.assets) {
-        for (const asset of mainAssets.assets) {
-          if (!seenIds.has(asset.id)) {
-            seenIds.add(asset.id);
-            allAssetsArray.push(asset);
-          }
-        }
-      }
-      
-      // Scan all albums to catch Screenshots, Downloads, WhatsApp, etc.
-      try {
-        const albums = await MediaLibrary.getAlbumsAsync({ includeSmartAlbums: true });
-        for (const album of albums) {
-          try {
-            const albumAssets = await MediaLibrary.getAssetsAsync({
-              first: 5000,
-              album: album.id,
-              mediaType: ['photo'],
-            });
-            if (albumAssets && albumAssets.assets) {
-              for (const asset of albumAssets.assets) {
-                if (!seenIds.has(asset.id)) {
-                  seenIds.add(asset.id);
-                  allAssetsArray.push(asset);
-                }
-              }
-            }
-          } catch (e) {
-            // Skip albums that fail
-          }
-        }
-      } catch (e) {
-        console.log('Clean Duplicates: Could not scan albums:', e?.message || e);
-      }
-      
-      const allAssets = { assets: allAssetsArray };
+      // Collect all photos
+      setStatus('Collecting photos...');
+      const assets = await DuplicateScanner.collectAllPhotoAssets();
 
-      if (!allAssets.assets || allAssets.assets.length === 0) {
-        setStatus('No photos found on this device.');
+      if (!assets || assets.length === 0) {
         showDarkAlert('No Media', 'No photos were found on this device.');
         setLoadingSafe(false);
         return;
       }
 
-      setStatus(`Analyzing ${allAssets.assets.length} photos for duplicates...`);
+      setStatus(`Analyzing ${assets.length} photos...`);
 
-      const getUriForHashing = (assetInfo) => {
-        const uri = (assetInfo && (assetInfo.localUri || assetInfo.uri)) || null;
-        if (!uri) return null;
-        // iOS can return ph:// which isn't directly readable by FileSystem
-        if (typeof uri === 'string' && uri.startsWith('ph://')) return null;
-        return uri;
-      };
-
-      // Production-compatible duplicate detection
-      const duplicateGroups = [];
-      let totalProcessed = 0;
-      let skippedAssets = 0;
-
-      if (useAdvancedDetection) {
-        // ADVANCED MODE: Ignores filenames, metadata, and file paths
-        // Only hashes actual file CONTENT (bytes) for true duplicate detection
-        console.log('Clean Duplicates: Using ADVANCED mode (SHA256) - BEST for true duplicates');
-        console.log('Clean Duplicates: Ignores filenames/metadata, hashes only file content');
-        setStatus(`Deep analysis: ${allAssets.assets.length} photos...`);
-
-        const normalizePathForHashing = (uri) => {
-          if (!uri || typeof uri !== 'string') return null;
-          let u = uri.trim();
-          // Some iOS file URIs can include a #fragment or ?query (e.g. "...mp4#<token>")
-          // which breaks native hashing. Remove those parts.
-          const hashIdx = u.indexOf('#');
-          if (hashIdx !== -1) u = u.slice(0, hashIdx);
-          const qIdx = u.indexOf('?');
-          if (qIdx !== -1) u = u.slice(0, qIdx);
-          // Decode percent-encoding if present
-          try {
-            u = decodeURI(u);
-          } catch (e) {
-            // ignore
-          }
-          // iOS usually provides file:// URIs for local assets.
-          if (u.startsWith('file://')) return u.replace('file://', '');
-          // Android often uses content://; react-native-blob-util supports hashing URIs.
-          return u;
-        };
-
-        const hashGroups = {};
-        const perceptualItems = [];
-        let hashedCount = 0;
-        let inspectFailed = 0;
-        let hashSkipped = 0;
-        let hashSkippedLarge = 0;
-        let skippedPhUri = 0;
-        let skippedNoUri = 0;
-        let hashFailed = 0;
-        const sampleSkipped = [];
-
-        for (let i = 0; i < allAssets.assets.length; i++) {
-          const asset = allAssets.assets[i];
-          let info;
-          try {
-            // On iOS, request download from network to get local file
-            info = Platform.OS === 'ios' 
-              ? await MediaLibrary.getAssetInfoAsync(asset.id, { shouldDownloadFromNetwork: true })
-              : await MediaLibrary.getAssetInfoAsync(asset.id);
-          } catch (e) {
-            inspectFailed++;
-            continue;
-          }
-
-          const isImage = (() => {
-            const mt = (info && info.mediaType) || asset.mediaType;
-            if (mt === 'photo' || mt === 'image') return true;
-            const name = (info && info.filename) || asset.filename || '';
-            return /\.(jpe?g|png|heic|heif|webp)$/i.test(name);
-          })();
-
-          // Photos-only: skip anything that isn't an image BEFORE staging/copying to temp
-          if (!isImage) {
-            hashSkipped++;
-            if (sampleSkipped.length < 5) {
-              sampleSkipped.push({ filename: info?.filename || asset.filename, reason: 'skipped' });
-            }
-            continue;
-          }
-
-          // Get a readable file path - handle ph://, content://, file:// URIs
-          let hashTarget = null;
-          let tmpCopied = false;
-          let tmpUri = null;
-          const rawUri = (info && (info.localUri || info.uri)) || null;
-          
-          // First try direct file path if available
-          if (rawUri && typeof rawUri === 'string') {
-            if (rawUri.startsWith('file://') || rawUri.startsWith('/')) {
-              // Direct file path - use as-is
-              hashTarget = rawUri.startsWith('file://') ? rawUri.replace('file://', '') : rawUri;
-              // Clean up query/fragment
-              const hashIdx = hashTarget.indexOf('#');
-              if (hashIdx !== -1) hashTarget = hashTarget.slice(0, hashIdx);
-              const qIdx = hashTarget.indexOf('?');
-              if (qIdx !== -1) hashTarget = hashTarget.slice(0, qIdx);
-              try { hashTarget = decodeURI(hashTarget); } catch (e) {}
-            } else if (rawUri.startsWith('ph://') || rawUri.startsWith('content://')) {
-              // Need to stage to temp file
-              try {
-                const resolved = await resolveReadableFilePath({ assetId: asset.id, assetInfo: info });
-                hashTarget = resolved && resolved.filePath ? resolved.filePath : null;
-                tmpCopied = resolved && resolved.tmpCopied ? resolved.tmpCopied : false;
-                tmpUri = resolved && resolved.tmpUri ? resolved.tmpUri : null;
-              } catch (e) {
-                // iOS fallback: try with shouldDownloadFromNetwork
-                if (Platform.OS === 'ios') {
-                  try {
-                    const infoDownloaded = await MediaLibrary.getAssetInfoAsync(asset.id, { shouldDownloadFromNetwork: true });
-                    const dlUri = (infoDownloaded && (infoDownloaded.localUri || infoDownloaded.uri)) || null;
-                    if (dlUri && typeof dlUri === 'string' && (dlUri.startsWith('file://') || dlUri.startsWith('/'))) {
-                      hashTarget = dlUri.startsWith('file://') ? dlUri.replace('file://', '') : dlUri;
-                      info = infoDownloaded;
-                    } else {
-                      const resolved = await resolveReadableFilePath({ assetId: asset.id, assetInfo: infoDownloaded });
-                      hashTarget = resolved && resolved.filePath ? resolved.filePath : null;
-                      tmpCopied = resolved && resolved.tmpCopied ? resolved.tmpCopied : false;
-                      tmpUri = resolved && resolved.tmpUri ? resolved.tmpUri : null;
-                      info = infoDownloaded;
-                    }
-                  } catch (e2) {
-                    if (sampleSkipped.length < 5) {
-                      sampleSkipped.push({ filename: info && info.filename ? info.filename : asset.filename, reason: 'staging failed: ' + (e2?.message || e2), uri: rawUri });
-                    }
-                  }
-                } else {
-                  if (sampleSkipped.length < 5) {
-                    sampleSkipped.push({ filename: info && info.filename ? info.filename : asset.filename, reason: 'staging failed: ' + (e?.message || e), uri: rawUri });
-                  }
-                }
-              }
-            }
-          }
-          
-          if (!hashTarget) {
-            hashSkipped++;
-            skippedNoUri++;
-            if (sampleSkipped.length < 5 && !sampleSkipped.find(s => s.filename === (info?.filename || asset.filename))) {
-              sampleSkipped.push({ filename: info && info.filename ? info.filename : asset.filename, reason: 'no readable path', uri: rawUri || '' });
-            }
-            continue;
-          }
-
-          try {
-            let hashHex = null;
-            let pHash = null;
-            let pHash2 = null;
-            let dHash = null;
-            let dHash2 = null;
-            if (PixelHash && typeof PixelHash.hashImagePixels === 'function') {
-              hashHex = await PixelHash.hashImagePixels(hashTarget);
-              if (hashedCount < 3) {
-                console.log('Clean Duplicates: Pixel hash used (metadata ignored)', {
-                  filename: info && info.filename ? info.filename : asset.filename,
-                  hashStart: hashHex ? hashHex.substring(0, 8) + '...' : 'none',
-                });
-              }
-            } else {
-              throw new Error('Native pixel hash unavailable for images');
-            }
-
-            let avgBrightness = null;
-            let avgBrightness2 = null;
-            let blackRatio = null;
-            let whiteRatio = null;
-            if (isImage && PixelHash && typeof PixelHash.hashImagePerceptual === 'function') {
-              try {
-                const res = await PixelHash.hashImagePerceptual(hashTarget);
-                pHash = res && res.pHash ? String(res.pHash) : null;
-                pHash2 = res && res.pHash2 ? String(res.pHash2) : null;
-                dHash = res && res.dHash ? String(res.dHash) : null;
-                dHash2 = res && res.dHash2 ? String(res.dHash2) : null;
-                avgBrightness = res && typeof res.avgBrightness === 'number' ? res.avgBrightness : null;
-                avgBrightness2 = res && typeof res.avgBrightness2 === 'number' ? res.avgBrightness2 : null;
-                blackRatio = res && typeof res.blackRatio === 'number' ? res.blackRatio : null;
-                whiteRatio = res && typeof res.whiteRatio === 'number' ? res.whiteRatio : null;
-                if (pHash && hashedCount < 3) {
-                  console.log('Clean Duplicates: Perceptual analysis computed', { filename: info && info.filename ? info.filename : asset.filename, pHashStart: pHash.substring(0, 8) + '...', avgBrightness, blackRatio, whiteRatio });
-                }
-              } catch (err) {
-                console.log('Clean Duplicates: Perceptual analysis failed (non-fatal)', err?.message || err);
-              }
-            }
-
-            hashedCount++;
-
-            // Debug: Show proof of file processing
-            if (hashedCount <= 3) {
-              console.log(`Clean Duplicates: Hashed file ${hashedCount}:`, {
-                filename: info.filename,
-                hashStart: hashHex.substring(0, 8) + '...',
-                fileSize: info.fileSize || 'unknown',
-                uriType: hashTarget ? hashTarget.substring(0, 30) + '...' : 'none'
-              });
-            }
-
-            if (hashedCount % 10 === 0) {
-              setStatus(`Deep analysis: ${hashedCount}/${allAssets.assets.length} files...`);
-              console.log(`Clean Duplicates: Progress ${hashedCount}/${allAssets.assets.length} - last hash: ${hashHex.substring(0, 12)}...`);
-            }
-
-            const key = hashHex;
-            if (!hashGroups[key]) hashGroups[key] = [];
-            hashGroups[key].push({ asset, info });
-
-            const createdTs = (info && info.creationTime) || asset.creationTime || 0;
-            perceptualItems.push({ asset, info, hashHex, pHash, pHash2, dHash, dHash2, avgBrightness, avgBrightness2, blackRatio, whiteRatio, createdTs });
-          } catch (e) {
-            hashSkipped++;
-            hashFailed++;
-            if (sampleSkipped.length < 5) {
-              sampleSkipped.push({ filename: info?.filename || asset.filename, reason: 'hash failed: ' + (e?.message || e) });
-            }
-          } finally {
-            if (tmpCopied && tmpUri) {
-              try {
-                await FileSystem.deleteAsync(tmpUri, { idempotent: true });
-              } catch (e2) {
-                // ignore
-              }
-            }
-          }
+      // Scan for duplicates
+      const { duplicateGroups, stats } = await DuplicateScanner.scanExactDuplicates({
+        assets,
+        resolveReadableFilePath,
+        onProgress: (hashedCount, totalCount, lastHash) => {
+          setStatus(`Analyzing: ${hashedCount}/${totalCount} photos...`);
         }
+      });
 
-        console.log('Clean Duplicates ADVANCED results:', {
-          totalAssets: allAssets.assets.length,
-          hashedCount,
-          hashSkipped,
-          inspectFailed,
-          hashGroupsCount: Object.keys(hashGroups).length
-        });
-
-        // Convert hash groups to duplicate groups (EXACT pixel hash matches ONLY)
-        // Sort each group by creation time: oldest first (keep oldest, delete newer duplicates)
-        Object.values(hashGroups).forEach(group => {
-          if (group.length > 1) {
-            // Sort by creation time ascending (oldest first = keep, newer = delete)
-            group.sort((a, b) => {
-              const aTime = (a.info && a.info.creationTime) || a.asset.creationTime || 0;
-              const bTime = (b.info && b.info.creationTime) || b.asset.creationTime || 0;
-              return aTime - bTime;
-            });
-            duplicateGroups.push(group);
-            console.log('Clean Duplicates: Found EXACT duplicate group, size:', group.length, 
-              'keeping oldest:', (group[0].info?.filename || group[0].asset.filename));
-          }
-        });
-
-        totalProcessed = hashedCount;
-        skippedAssets = hashSkipped;
-
-        if (duplicateGroups.length === 0) {
-          const noteParts = [];
-          noteParts.push(`Analyzed ${hashedCount} photos.`);
-          if (hashSkipped > 0) noteParts.push(`Skipped: ${hashSkipped}`);
-          if (hashFailed > 0) noteParts.push(`Analysis failures: ${hashFailed}`);
-          if (inspectFailed > 0) noteParts.push(`Asset-info failures: ${inspectFailed}`);
-          if (sampleSkipped.length > 0) {
-            noteParts.push('Examples (max 3):');
-            sampleSkipped.slice(0, 3).forEach(s => {
-              noteParts.push(`- ${s.filename}${s.reason ? ' — ' + s.reason : ''}`);
-            });
-          }
-          const note = noteParts.length > 0 ? `\n${noteParts.join('\n')}` : '';
-          setStatus('No exact duplicates found');
-          showDarkAlert('Exact Shots', 'No exact duplicates found.' + note);
-          setLoadingSafe(false);
-          setBackgroundWarnEligibleSafe(false);
-          setWasBackgroundedDuringWorkSafe(false);
-          return;
-        }
-
-      } else {
-        console.log('Clean Duplicates: Using BASIC mode (filename/size + similar)');
-        setStatus(`Basic analysis: grouping ${allAssets.assets.length} photos...`);
-
-        const filenameGroups = {};
-        const sizeGroups = {};
-
-        for (let i = 0; i < allAssets.assets.length; i++) {
-          const asset = allAssets.assets[i];
-          try {
-            const info = await MediaLibrary.getAssetInfoAsync(asset.id);
-            totalProcessed++;
-
-            if (totalProcessed % 50 === 0) {
-              setStatus(`Basic analysis: ${totalProcessed}/${allAssets.assets.length} processed`);
-            }
-
-            // Group by normalized filename
-            const normalizedName = normalizeFilenameForCompare(info && info.filename ? info.filename : asset.filename);
-            if (normalizedName) {
-              if (!filenameGroups[normalizedName]) filenameGroups[normalizedName] = [];
-              filenameGroups[normalizedName].push({ asset, info });
-            }
-
-            // Group by file size (for same filename groups)
-            const size = info && typeof info.fileSize === 'number' ? info.fileSize : null;
-            if (size !== null) {
-              const sizeKey = `${normalizedName || 'unknown'}_${size}`;
-              if (!sizeGroups[sizeKey]) sizeGroups[sizeKey] = [];
-              sizeGroups[sizeKey].push({ asset, info });
-            }
-
-          } catch (e) {
-            skippedAssets++;
-            continue;
-          }
-        }
-
-        console.log('Clean Duplicates BASIC filename groups:', Object.keys(filenameGroups).length);
-        console.log('Clean Duplicates BASIC size groups:', Object.keys(sizeGroups).length);
-
-        // Find duplicates: same filename + same size = likely duplicates
-        Object.keys(sizeGroups).forEach(sizeKey => {
-          const group = sizeGroups[sizeKey];
-          if (group.length > 1) {
-            duplicateGroups.push(group);
-            console.log('Clean Duplicates: Found EXACT duplicate group, size:', group.length, 'key:', sizeKey);
-          }
-        });
-
-        // Add similar detection: filename patterns + size proximity
-        const localSimilarGroups = [];
-        
-        // Group screenshots by similar names (e.g., "Screenshot 2024-12-21 at X.png")
-        const screenshotPattern = /^Screenshot\s+\d{4}-\d{2}-\d{2}\s+at\s+[\d:]+\s*(AM|PM)?\./i;
-        const screenGroups = {};
-        
-        console.log('Clean Duplicates: Checking for similar screenshots...');
-        
-        Object.keys(filenameGroups).forEach(filename => {
-          const group = filenameGroups[filename];
-          if (group.length > 1) {
-            // Already exact duplicates, skip
-            return;
-          }
-          
-          if (screenshotPattern.test(filename)) {
-            // Group similar screenshot names by date
-            const dateMatch = filename.match(/(\d{4}-\d{2}-\d{2})/);
-            if (dateMatch) {
-              const dateKey = dateMatch[1];
-              if (!screenGroups[dateKey]) screenGroups[dateKey] = [];
-              screenGroups[dateKey].push(...group);
-              console.log('Clean Duplicates: Added screenshot to date group:', dateKey, 'filename:', filename);
-            }
-          }
-        });
-        
-        console.log('Clean Duplicates: Screenshot date groups found:', Object.keys(screenGroups).length);
-        
-        // Convert screenshot groups to similar groups
-        Object.keys(screenGroups).forEach(dateKey => {
-          const group = screenGroups[dateKey];
-          console.log('Clean Duplicates: Processing date group:', dateKey, 'items:', group.length);
-          if (group.length > 1) {
-            // Sort by creation time and size proximity
-            const sorted = [...group].sort((a, b) => {
-              const aTime = a.info && a.info.creationTime ? a.info.creationTime : a.asset.creationTime || 0;
-              const bTime = b.info && b.info.creationTime ? b.info.creationTime : b.asset.creationTime || 0;
-              return aTime - bTime;
-            });
-            
-            // Group items within 30 seconds of each other and similar sizes (±5%)
-            const timeGroups = [];
-            let currentGroup = [sorted[0]];
-            
-            for (let i = 1; i < sorted.length; i++) {
-              const prev = sorted[i-1];
-              const curr = sorted[i];
-              const prevTime = prev.info && prev.info.creationTime ? prev.info.creationTime : prev.asset.creationTime || 0;
-              const currTime = curr.info && curr.info.creationTime ? curr.info.creationTime : curr.asset.creationTime || 0;
-              const timeDiff = Math.abs(currTime - prevTime);
-              
-              const prevSize = prev.info && prev.info.fileSize ? prev.info.fileSize : 0;
-              const currSize = curr.info && curr.info.fileSize ? curr.info.fileSize : 0;
-              const sizeDiff = prevSize > 0 ? Math.abs(currSize - prevSize) / prevSize : 1;
-              
-              console.log('Clean Duplicates: Comparing items:', {
-                timeDiff: timeDiff / 1000,
-                sizeDiff: sizeDiff * 100,
-                within30s: timeDiff <= 30 * 1000,
-                within5pct: sizeDiff <= 0.05
-              });
-              
-              // Within 30 seconds and size difference < 5%
-              if (timeDiff <= 30 * 1000 && sizeDiff <= 0.05) {
-                currentGroup.push(curr);
-                console.log('Clean Duplicates: Added to current group, size now:', currentGroup.length);
-              } else {
-                if (currentGroup.length > 1) {
-                  timeGroups.push([...currentGroup]);
-                  console.log('Clean Duplicates: Created time group with', currentGroup.length, 'items');
-                }
-                currentGroup = [curr];
-              }
-            }
-            
-            if (currentGroup.length > 1) {
-              timeGroups.push(currentGroup);
-              console.log('Clean Duplicates: Final time group with', currentGroup.length, 'items');
-            }
-            
-            timeGroups.forEach(tGroup => {
-              if (tGroup.length > 1) {
-                localSimilarGroups.push(tGroup);
-                console.log('Clean Duplicates: Added SIMILAR group, size:', tGroup.length);
-              }
-            });
-          }
-        });
-        
-        // Add similar groups to duplicate groups
-        duplicateGroups.push(...localSimilarGroups);
-        console.log('Clean Duplicates: Total duplicate groups found:', duplicateGroups.length, '(exact + similar)');
-
-        if (duplicateGroups.length === 0) {
-          const note = totalProcessed > 0 ? `\nAnalyzed ${totalProcessed} photos.` : '';
-          setStatus('No duplicates found');
-          showDarkAlert('Similar Photos', 'No similar photos found.' + note);
-          setLoadingSafe(false);
-          setBackgroundWarnEligibleSafe(false);
-          setWasBackgroundedDuringWorkSafe(false);
-          return;
-        }
+      if (duplicateGroups.length === 0) {
+        const note = DuplicateScanner.buildNoResultsNote(stats);
+        setStatus('No exact duplicates found');
+        showDarkAlert('Exact Shots', 'No exact duplicates found.' + note);
+        setLoadingSafe(false);
+        setBackgroundWarnEligibleSafe(false);
+        setWasBackgroundedDuringWorkSafe(false);
+        return;
       }
 
-      let duplicateCount = 0;
-      duplicateGroups.forEach(group => {
-        duplicateCount += (group.length - 1);
-      });
-
-      const mode = useAdvancedDetection ? 'advanced (exact + strict similar)' : 'basic (filename/size + similar)';
-
-      const reviewGroups = duplicateGroups.map((group, idx) => {
-        const sorted = [...group].sort((a, b) => {
-          const at = a.info && a.info.creationTime ? a.info.creationTime : a.asset.creationTime || 0;
-          const bt = b.info && b.info.creationTime ? b.info.creationTime : b.asset.creationTime || 0;
-          return at - bt;
-        });
-        const hasPHash = sorted.some(it => it.pHash);
-        const items = sorted.map((it, itemIdx) => ({
-          id: it.asset.id,
-          filename: (it.info && it.info.filename) || it.asset.filename || it.asset.id,
-          created: (it.info && it.info.creationTime) || it.asset.creationTime || 0,
-          size: (it.info && it.info.fileSize) || null,
-          uri: (it.info && (it.info.localUri || it.info.uri)) || it.asset.uri || '',
-          delete: itemIdx > 0 // keep oldest (index 0)
-        }));
-        return { type: hasPHash ? 'similar' : 'exact', groupIndex: idx + 1, items };
-      });
+      // Format for review UI
+      const duplicateCount = DuplicateScanner.countDuplicates(duplicateGroups);
+      const reviewGroups = DuplicateScanner.formatDuplicateGroupsForReview(duplicateGroups);
 
       setDuplicateReview({
-        mode,
+        mode: 'pixel-hash',
         duplicateCount,
         groupCount: duplicateGroups.length,
         groups: reviewGroups
       });
 
-      setStatus(`Reviewing ${duplicateCount} items in ${duplicateGroups.length} group${duplicateGroups.length !== 1 ? 's' : ''} (${mode})`);
+      setStatus(`Found ${duplicateCount} exact duplicates in ${duplicateGroups.length} group${duplicateGroups.length !== 1 ? 's' : ''}`);
     } catch (error) {
       console.error('Clean duplicates error:', error);
       setStatus('Error during duplicate cleanup: ' + error.message);
@@ -5110,7 +4267,6 @@ export default function App() {
       }
 
       // 3. Scan local assets (paged) and decide which are missing on the server
-      setStatus('Loading photos...');
       let after = null;
       let totalCount = null;
       let checkedCount = 0;
@@ -5145,7 +4301,7 @@ export default function App() {
         for (const asset of pageAssets) {
           if (excludedIds.has(asset.id)) continue;
           checkedCount += 1;
-          setStatus(`Checking ${checkedCount}/${totalCount || '?'}`);
+          setStatus(`Comparing ${checkedCount}/${totalCount || '?'}`);
 
           let actualFilename = normalizeFilenameForCompare(asset && asset.filename ? asset.filename : null);
           if (Platform.OS === 'ios' || !actualFilename) {
@@ -5223,7 +4379,7 @@ export default function App() {
           if (!(await ensureAutoUploadPolicyAllowsWorkIfBackgrounded())) {
             break;
           }
-          setStatus(`Uploading ${i + 1}/${toUpload.length}: ${asset.filename}`);
+          setStatus(`Uploading ${i + 1}/${toUpload.length}`);
           
           // Get file info
           const assetInfo = await MediaLibrary.getAssetInfoAsync(asset.id);
@@ -5241,14 +4397,11 @@ export default function App() {
           // assetInfo.filename contains the real name like "IMG_0001.HEIC"
           const actualFilename = assetInfo.filename || asset.filename;
 
-          const mime = asset.mediaType === 'video' ? 'video/mp4' : 'image/jpeg';
+          const mime = getMimeFromFilename(actualFilename, asset.mediaType);
           const fileUri = filePath.startsWith('file://') ? filePath : `file://${filePath}`;
 
-          // Use FOREGROUND session for HTTP (local servers) since iOS background sessions don't work with HTTP
-          const isHttpsUpload = SERVER_URL.startsWith('https://');
-          const sessionTypeUpload = (Platform.OS === 'ios' && !isHttpsUpload) 
-            ? FileSystem.FileSystemSessionType.FOREGROUND 
-            : FileSystem.FileSystemSessionType.BACKGROUND;
+          // Mobile: use FOREGROUND uploads (background + proxies/CDN can fail with -1 unknown error)
+          const sessionTypeUpload = FileSystem.FileSystemSessionType.FOREGROUND;
           const uploadRes = await FileSystem.uploadAsync(`${SERVER_URL}/api/upload/raw`, fileUri, {
             httpMethod: 'POST',
             uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT,
@@ -5259,6 +4412,14 @@ export default function App() {
               'X-Filename': actualFilename,
             }
           });
+
+          // Check HTTP status - uploadAsync doesn't throw on 4xx/5xx errors
+          if (!uploadRes || uploadRes.status < 200 || uploadRes.status >= 300) {
+            console.error(`✗ Upload failed for ${actualFilename}: HTTP ${uploadRes?.status || 'unknown'} - ${uploadRes?.body || 'no response'}`);
+            failedCount++;
+            failedFiles.push(actualFilename);
+            continue;
+          }
 
           let parsed = null;
           try {
@@ -5294,18 +4455,15 @@ export default function App() {
       console.log(`Failed: ${failedCount}`);
       console.log('===== END BACKUP TRACE =====\n');
       
-      if (failedCount === 0) {
-        setStatus('Backup complete');
-        showDarkAlert('Success', `Successfully backed up ${successCount} file${successCount !== 1 ? 's' : ''}.`);
-      } else {
-        setStatus('Backup partial');
-        showDarkAlert('Partial Success', `Uploaded ${successCount} file${successCount !== 1 ? 's' : ''}.\n${failedCount} file${failedCount !== 1 ? 's' : ''} failed.`);
-      }
+      const skippedCount = checkedCount - toUpload.length + duplicateCount;
+      setStatus('Backup complete');
+      showDarkAlert('Backup Complete', `Uploaded: ${successCount}\nSkipped: ${skippedCount}\nFailed: ${failedCount}`);
       setProgress(0); // Reset progress after completion
     } catch (error) {
       console.error(error);
-      setStatus('Error during backup: ' + error.message);
+      setStatus('Backup error');
       setProgress(0); // Reset progress on error
+      showDarkAlert('Backup Error', error && error.message ? error.message : 'Unknown error');
     } finally {
       setLoadingSafe(false);
       setBackgroundWarnEligibleSafe(false);
@@ -5382,7 +4540,7 @@ export default function App() {
       console.log(`☁️  Server has ${serverFiles.length} files`);
 
       // 2. Get local device photos to check what already exists
-      setStatus('Checking local photos...');
+      setStatus('Comparing local files...');
       const localIndex = await buildLocalFilenameSetPaged({ mediaType: ['photo', 'video'] });
       const localFilenames = localIndex.set;
       console.log(`📱 Scanned assets on device: ${localIndex.scanned}${localIndex.totalCount ? `/${localIndex.totalCount}` : ''}`);
@@ -5431,7 +4589,7 @@ export default function App() {
       
       for (const file of toDownload) {
         try {
-          setStatus(`Downloading ${count + 1}/${toDownload.length}: ${file.filename}`);
+          setStatus(`Downloading ${count + 1}/${toDownload.length}`);
           console.log(`Downloading: ${file.filename}`);
           
           const downloadPath = FileSystem.cacheDirectory + file.filename;
@@ -5526,18 +4684,15 @@ export default function App() {
       setStatus('Sync complete');
       setProgress(0); // Reset progress after completion
       
-      if (successCount > 0) {
-        showDarkAlert(
-          'Download Complete!', 
-          `Successfully downloaded ${successCount} file${successCount > 1 ? 's' : ''}!\n\nFiles were saved to your device's ${Platform.OS === 'android' ? 'Gallery' : 'Photos'} app.`
-        );
-      }
+      const skippedCount = serverFiles.length - toDownload.length;
+      const failedCount = toDownload.length - successCount;
+      showDarkAlert('Sync Complete', `Downloaded: ${successCount}\nSkipped: ${skippedCount}\nFailed: ${failedCount}`);
 
     } catch (error) {
       console.error('Restore error:', error);
       setStatus('Error during restore: ' + error.message);
       setProgress(0); // Reset progress on error
-      showDarkAlert('Restore Error', error.message);
+      showDarkAlert('Sync Error', error.message);
     } finally {
       setLoadingSafe(false);
       setBackgroundWarnEligibleSafe(false);
@@ -5554,25 +4709,30 @@ export default function App() {
 
   if (view === 'auth') {
     return (
-      <>
-      <KeyboardAvoidingView 
-        style={styles.container}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}>
-        <ScrollView 
-          contentContainerStyle={{paddingBottom: 20}}
-          showsVerticalScrollIndicator={false}
-          keyboardShouldPersistTaps="handled">
-        <View style={styles.authHeader}>
-          <Image 
-            source={require('./assets/icon.png')} 
-            style={styles.appIcon}
-          />
-          <Text style={styles.title}>{APP_DISPLAY_NAME}</Text>
-          <Text style={styles.subtitle}>Secure Cloud Backup for Your Memories</Text>
-        </View>
+      <SafeAreaView style={styles.container}>
+        <StatusBar barStyle="light-content" backgroundColor="#0A0A0A" />
+        <KeyboardAvoidingView 
+          style={{ flex: 1 }}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}>
+          <ScrollView 
+            contentContainerStyle={{ flexGrow: 1, justifyContent: 'center', alignItems: 'center', paddingVertical: 20 }}
+            style={{ flex: 1 }}
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+            bounces={true}
+            alwaysBounceVertical={true}
+            centerContent={true}>
+            <View style={styles.authHeader}>
+              <Image 
+                source={require('./assets/splash-icon.png')} 
+                style={styles.appIcon}
+              />
+              <Text style={styles.title}>{APP_DISPLAY_NAME}</Text>
+              <Text style={styles.subtitle}>Secure Cloud Backup for Your Memories</Text>
+            </View>
         
-        <View style={styles.form}>
+            <View style={styles.form}>
           <View style={styles.serverConfig}>
             <Text style={styles.serverLabel}>Server Type</Text>
             <View style={styles.serverToggle}>
@@ -5603,13 +4763,13 @@ export default function App() {
               <>
                 <TextInput 
                   style={[styles.input, {marginTop: 12}]} 
-                  placeholder="Enter remote domain or IP" 
+                  placeholder="Enter remote domain (recommended)" 
                   placeholderTextColor="#666666"
                   value={remoteHost}
                   onChangeText={(t) => setRemoteHost(normalizeHostInput(t))}
                   autoCapitalize="none"
                 />
-                <Text style={styles.inputHint}>Enter IP or domain manually</Text>
+                <Text style={styles.inputHint}>Use your HTTPS domain (e.g. remote.example.com).</Text>
               </>
             )}
 
@@ -5763,7 +4923,7 @@ export default function App() {
                       <Text style={styles.codeHint}>Tap to copy • Long-press to open</Text>
                     </TouchableOpacity>
                     <Text style={styles.serverHelpText}>2) Install and run it</Text>
-                    <Text style={styles.serverHelpText}>3) System tray → click on PhotoLynk Server v... → Connect Mobile (QR Code)</Text>
+                    <Text style={styles.serverHelpText}>3) System tray → Local Server → Pair Mobile Device (QR)</Text>
                     <Text style={[styles.serverHelpText, styles.boldText]}>On your phone:</Text>
                     <Text style={styles.serverHelpText}>4) Scan the QR code on your computer (or paste IP if needed)</Text>
                     <Text style={styles.serverHelpText}>5) Create account and log in</Text>
@@ -5787,9 +4947,9 @@ export default function App() {
                       <Text style={styles.codeLine} numberOfLines={2} ellipsizeMode="middle">sudo curl -fsSL https://raw.githubusercontent.com/viktorvishyn369/PhotoLynk/main/install-server.sh | bash</Text>
                       <Text style={styles.codeHint}>Tap to copy • Long-press to view script</Text>
                     </TouchableOpacity>
-                    <Text style={styles.serverHelpText}>3) Port 3000 must be reachable from outside (HTTPS)</Text>
+                    <Text style={styles.serverHelpText}>3) Use an HTTPS domain (Cloudflare/Certbot).</Text>
                     <Text style={[styles.serverHelpText, styles.boldText]}>On your phone:</Text>
-                    <Text style={styles.serverHelpText}>4) Enter your domain or IP (no https://, no port)</Text>
+                    <Text style={styles.serverHelpText}>4) Enter your domain (no https://, no port). Example: remote.example.com</Text>
                     <Text style={styles.serverHelpText}>5) Create account and log in</Text>
                     <Text style={styles.serverHelpText}>6) Start backing up to your server</Text>
                   </>
@@ -5818,16 +4978,18 @@ export default function App() {
             autoComplete="email"
             textContentType="username"
           />
-          <TextInput 
-            style={styles.input} 
-            placeholder="Password" 
-            placeholderTextColor="#888888"
-            value={password}
-            onChangeText={setPassword}
-            secureTextEntry
-            autoComplete="password"
-            textContentType="password"
-          />
+          {(authMode === 'login' || authMode === 'register') && (
+            <TextInput 
+              style={styles.input} 
+              placeholder="Password" 
+              placeholderTextColor="#888888"
+              value={password}
+              onChangeText={setPassword}
+              secureTextEntry
+              autoComplete="password"
+              textContentType="password"
+            />
+          )}
 
           {authMode === 'register' && (
             <TextInput 
@@ -5842,7 +5004,7 @@ export default function App() {
             />
           )}
           
-          {authMode === 'login' ? (
+          {authMode === 'login' && (
             <>
               <TouchableOpacity style={[styles.btnPrimary, loading && { opacity: 0.7 }]} onPress={() => handleAuth('login')} disabled={loading}>
                 {loading ? (
@@ -5855,20 +5017,83 @@ export default function App() {
                 )}
               </TouchableOpacity>
               
-              <TouchableOpacity
-                style={styles.btnSecondary}
-                onPress={() => {
-                  setAuthMode('register');
-                  setConfirmPassword('');
-                }}
-                disabled={loading}
-              >
-                <Text style={styles.btnTextSec}>Create Account</Text>
-              </TouchableOpacity>
+              <View style={{
+                flexDirection: 'row',
+                justifyContent: serverType === 'stealthcloud' ? 'space-between' : 'center',
+                alignItems: 'center',
+                marginTop: 12
+              }}>
+                <TouchableOpacity
+                  onPress={() => {
+                    setAuthMode('register');
+                    setConfirmPassword('');
+                    setTermsAccepted(false);
+                  }}
+                  disabled={loading}
+                >
+                  <Text style={{ color: '#a78bfa', fontSize: 14 }}>Create Account</Text>
+                </TouchableOpacity>
+
+                {serverType === 'stealthcloud' && (
+                  <TouchableOpacity
+                    onPress={() => setAuthMode('forgot')}
+                    disabled={loading}
+                  >
+                    <Text style={{ color: '#888', fontSize: 14 }}>Forgot Password?</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
             </>
-          ) : (
+          )}
+
+          {authMode === 'register' && (
             <>
-              <TouchableOpacity style={[styles.btnPrimary, loading && { opacity: 0.7 }]} onPress={() => handleAuth('register')} disabled={loading}>
+              <View style={{ flexDirection: 'row', alignItems: 'flex-start', marginBottom: 16, paddingHorizontal: 4 }}>
+                <TouchableOpacity
+                  onPress={() => setTermsAccepted(!termsAccepted)}
+                  style={{ marginRight: 10, marginTop: 2 }}
+                  activeOpacity={0.7}
+                >
+                  <View style={{
+                    width: 22,
+                    height: 22,
+                    borderRadius: 4,
+                    borderWidth: 2,
+                    borderColor: termsAccepted ? '#a78bfa' : '#555',
+                    backgroundColor: termsAccepted ? '#a78bfa' : 'transparent',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}>
+                    {termsAccepted && (
+                      <Text style={{ color: '#fff', fontSize: 14, fontWeight: '700' }}>✓</Text>
+                    )}
+                  </View>
+                </TouchableOpacity>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ color: '#AAA', fontSize: 13, lineHeight: 18 }}>
+                    I agree to the{' '}
+                    <Text
+                      style={{ color: '#a78bfa', textDecorationLine: 'underline' }}
+                      onPress={() => Linking.openURL('https://viktorvishyn369.github.io/PhotoLynk/terms.html')}
+                    >
+                      Terms of Service
+                    </Text>
+                    {' '}and{' '}
+                    <Text
+                      style={{ color: '#a78bfa', textDecorationLine: 'underline' }}
+                      onPress={() => Linking.openURL('https://viktorvishyn369.github.io/PhotoLynk/privacy-policy.html')}
+                    >
+                      Privacy Policy
+                    </Text>
+                  </Text>
+                </View>
+              </View>
+
+              <TouchableOpacity 
+                style={[styles.btnPrimary, (loading || !termsAccepted) && { opacity: 0.5 }]} 
+                onPress={() => handleAuth('register')} 
+                disabled={loading || !termsAccepted}
+              >
                 {loading ? (
                   <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
                     <ActivityIndicator size="small" color="#fff" style={{ marginRight: 8 }} />
@@ -5884,6 +5109,48 @@ export default function App() {
                 onPress={() => {
                   setAuthMode('login');
                   setConfirmPassword('');
+                  setTermsAccepted(false);
+                }}
+                disabled={loading}
+              >
+                <Text style={styles.btnTextSec}>Back to Login</Text>
+              </TouchableOpacity>
+            </>
+          )}
+
+          {authMode === 'forgot' && (
+            <>
+              <Text style={{ color: '#CCC', fontSize: 14, textAlign: 'center', marginBottom: 16, lineHeight: 20 }}>
+                If you created your account on this device, you can reset your password below.
+              </Text>
+              
+              <TextInput 
+                style={styles.input} 
+                placeholder="New Password (min 6 characters)" 
+                placeholderTextColor="#888888"
+                value={newPassword}
+                onChangeText={setNewPassword}
+                secureTextEntry
+                autoComplete="new-password"
+                textContentType="newPassword"
+              />
+              
+              <TouchableOpacity style={[styles.btnPrimary, loading && { opacity: 0.7 }]} onPress={handleResetPassword} disabled={loading}>
+                {loading ? (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
+                    <ActivityIndicator size="small" color="#fff" style={{ marginRight: 8 }} />
+                    <Text style={styles.btnText}>{authLoadingLabel}</Text>
+                  </View>
+                ) : (
+                  <Text style={styles.btnText}>Reset Password</Text>
+                )}
+              </TouchableOpacity>
+              
+              <TouchableOpacity
+                style={styles.btnSecondary}
+                onPress={() => {
+                  setAuthMode('login');
+                  setNewPassword('');
                 }}
                 disabled={loading}
               >
@@ -5893,11 +5160,21 @@ export default function App() {
           )}
         </View>
         
-        <View style={styles.authFooter}>
-          <Text style={styles.footerText}>🔒 End-to-end encrypted • Device-bound security</Text>
+            <View style={styles.authFooter}>
+              <Text style={styles.footerText}>🔒 End-to-end encrypted • Device-bound security</Text>
+            </View>
+          </ScrollView>
+        </KeyboardAvoidingView>
+
+        {loading && (
+        <View style={[styles.overlay, { backgroundColor: '#000' }]}>
+          <View style={{ alignItems: 'center', justifyContent: 'center' }}>
+            <GradientSpinner size={70} />
+            <Text style={{ color: '#fff', fontSize: 16, fontWeight: '600', marginTop: 20 }}>{authLoadingLabel}</Text>
+            <Text style={{ color: '#888', fontSize: 13, marginTop: 8 }}>Please wait...</Text>
+          </View>
         </View>
-        </ScrollView>
-      </KeyboardAvoidingView>
+      )}
 
       {customAlert && (
         <View style={styles.overlay}>
@@ -5964,7 +5241,7 @@ export default function App() {
           </View>
         </View>
       )}
-      </>
+      </SafeAreaView>
     );
   }
 
@@ -6042,14 +5319,46 @@ export default function App() {
             )}
 
             {serverType === 'local' && (
-              <TextInput 
-                style={[styles.input, {marginTop: 12}]} 
-                placeholder="Local server IP" 
-                placeholderTextColor="#666666"
-                value={localHost}
-                onChangeText={(t) => setLocalHost(normalizeHostInput(t))}
-                autoCapitalize="none"
-              />
+              <View style={{flexDirection: 'row', alignItems: 'center', marginTop: 12}}>
+                <TextInput 
+                  style={[styles.input, {flex: 1, marginTop: 0, marginRight: 8}]} 
+                  placeholder="Local server IP" 
+                  placeholderTextColor="#666666"
+                  value={localHost}
+                  onChangeText={(t) => setLocalHost(normalizeHostInput(t))}
+                  autoCapitalize="none"
+                />
+                <TouchableOpacity
+                  style={{
+                    width: 44,
+                    height: 44,
+                    borderRadius: 8,
+                    backgroundColor: '#1f1f1f',
+                    borderWidth: 1,
+                    borderColor: '#2f2f2f',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                  onPress={async () => {
+                    if (!cameraPermission?.granted) {
+                      const result = await requestCameraPermission();
+                      if (!result.granted) {
+                        Alert.alert('Camera Permission', 'Camera access is needed to scan QR codes.');
+                        return;
+                      }
+                    }
+                    setQrScannerOpen(true);
+                  }}
+                >
+                  <View style={{width: 22, height: 22}}>
+                    <View style={{position: 'absolute', top: 0, left: 0, width: 10, height: 10, borderWidth: 2, borderColor: '#fff', borderRadius: 2}} />
+                    <View style={{position: 'absolute', top: 0, right: 0, width: 10, height: 10, borderWidth: 2, borderColor: '#fff', borderRadius: 2}} />
+                    <View style={{position: 'absolute', bottom: 0, left: 0, width: 10, height: 10, borderWidth: 2, borderColor: '#fff', borderRadius: 2}} />
+                    <View style={{position: 'absolute', bottom: 0, right: 0, width: 10, height: 10, borderWidth: 2, borderColor: '#fff', borderRadius: 2}} />
+                    <View style={{position: 'absolute', top: 8, left: 8, width: 6, height: 6, backgroundColor: '#fff', borderRadius: 1}} />
+                  </View>
+                </TouchableOpacity>
+              </View>
             )}
             
             <View style={styles.serverInfo}>
@@ -6132,23 +5441,25 @@ export default function App() {
           )}
           */}
 
-          <View style={styles.settingsCard}>
-            <Text style={styles.settingsTitle}>Performance</Text>
-            <View style={{flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between'}}>
-              <Text style={styles.inputLabel}>{fastModeEnabled ? 'Fast Mode' : 'Slow Mode'}</Text>
-              <Switch
-                value={fastModeEnabled}
-                onValueChange={persistFastModeEnabled}
-                trackColor={{ false: '#CCCCCC', true: '#FF4444' }}
-                thumbColor='#FFFFFF'
-              />
+          {serverType === 'stealthcloud' && (
+            <View style={styles.settingsCard}>
+              <Text style={styles.settingsTitle}>Performance</Text>
+              <View style={{flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between'}}>
+                <Text style={styles.inputLabel}>{fastModeEnabled ? 'Fast Mode' : 'Slow Mode'}</Text>
+                <Switch
+                  value={fastModeEnabled}
+                  onValueChange={persistFastModeEnabled}
+                  trackColor={{ false: '#CCCCCC', true: '#FF4444' }}
+                  thumbColor='#FFFFFF'
+                />
+              </View>
+              <Text style={styles.settingsDescription}>
+                {fastModeEnabled
+                  ? 'Faster uploads but uses more CPU and battery.\nRecommended when speed is a priority.'
+                  : 'Safe for phone CPU and battery. Uploads will be significantly slower but your device stays cool.'}
+              </Text>
             </View>
-            <Text style={styles.settingsDescription}>
-              {fastModeEnabled
-                ? 'Faster uploads but uses more CPU and battery.\nRecommended when speed is a priority.'
-                : 'Safe for phone CPU and battery. Uploads will be significantly slower but your device stays cool.'}
-            </Text>
-          </View>
+          )}
 
           {serverType === 'stealthcloud' ? (
             <View style={styles.settingsCard}>
@@ -6320,9 +5631,9 @@ export default function App() {
                 style={styles.uuidBox}
                 onPress={() => {
                   Clipboard.setString(deviceUuid);
-                  showDarkAlert('Copied!', 'Device ID copied to clipboard');
+                  showDarkAlert('Copied!', 'User ID copied to clipboard');
                 }}>
-                <Text style={styles.uuidLabel}>Device ID (tap to copy):</Text>
+                <Text style={styles.uuidLabel}>User ID (tap to copy):</Text>
                 <Text style={styles.uuidText}>{deviceUuid}</Text>
               </TouchableOpacity>
             )}
@@ -6411,6 +5722,7 @@ export default function App() {
               {/* Subscription Management */}
               <View style={{ marginTop: 16, borderTopWidth: 1, borderTopColor: '#333', paddingTop: 16 }}>
                 <Text style={styles.serverInfoLabel}>Manage Subscription</Text>
+                <Text style={[styles.inputHint, { marginTop: 6 }]}>Prices are shown in your local currency from Apple/Google.</Text>
                 
                 <View style={styles.stealthPlanGrid}>
                   {STEALTH_PLAN_TIERS.map((gb) => {
@@ -6434,14 +5746,7 @@ export default function App() {
                             showDarkAlert('Current Plan', 'This is your current plan.');
                             return;
                           }
-                          showDarkAlert(
-                            gb === 1000 ? 'Upgrade to 1 TB?' : `Upgrade to ${gb} GB?`,
-                            `${priceStr}/month. Your new plan will start immediately.`,
-                            [
-                              { text: 'Cancel', style: 'cancel' },
-                              { text: 'Subscribe', onPress: () => handlePurchase(gb) }
-                            ]
-                          );
+                          openPaywall(gb);
                         }}>
                         <Text style={styles.stealthPlanGb}>{gb === 1000 ? '1 TB' : `${gb} GB`}</Text>
                         <Text style={styles.stealthPlanPrice}>{priceStr}</Text>
@@ -6480,11 +5785,6 @@ export default function App() {
               <Text style={styles.resourceArrow}>→</Text>
             </TouchableOpacity>
             
-            <View style={styles.openSourceBadge}>
-              <Text style={styles.openSourceText}>
-                ⭐ Server Tray is Open Source • Available for Security Review
-              </Text>
-            </View>
           </View>
           
           <View style={styles.settingsFooter}>
@@ -6510,6 +5810,64 @@ export default function App() {
                   </TouchableOpacity>
                 ))}
               </View>
+            </View>
+          </View>
+        )}
+
+        {paywallTierGb && (
+          <View style={styles.overlay}>
+            <View style={[styles.overlayCard, { backgroundColor: '#1E1E1E', maxWidth: 340 }]}>
+              {(() => {
+                const gb = paywallTierGb;
+                const plan = availablePlans.find(p => p.tierGb === gb);
+                const priceStr = plan ? plan.priceString : '—';
+                const currentPlan = stealthUsage?.planGb || stealthUsage?.plan_gb;
+                const isCurrent = currentPlan === gb;
+                const canSubscribe = !purchaseLoading && !isCurrent && plan && priceStr && priceStr !== '—';
+                const title = gb === 1000 ? '1 TB Monthly' : `${gb} GB Monthly`;
+
+                return (
+                  <>
+                    <Text style={[styles.overlayTitle, { fontSize: 18, marginBottom: 8 }]}>{title}</Text>
+                    <Text style={{ color: '#CCC', fontSize: 14, textAlign: 'center', marginBottom: 14, lineHeight: 20 }}>
+                      {priceStr !== '—' ? `${priceStr} / month` : 'Pricing unavailable. Please try again later.'}
+                    </Text>
+                    <Text style={[styles.inputHint, { textAlign: 'center', marginBottom: 14 }]}>Price shown in your local currency from Apple/Google. Taxes may apply. Cancel anytime.</Text>
+                    <View style={{ flexDirection: 'row', justifyContent: 'center', gap: 12, flexWrap: 'wrap' }}>
+                      <TouchableOpacity
+                        style={[styles.overlayBtnPrimary, { paddingVertical: 10, paddingHorizontal: 24, minWidth: 90, opacity: purchaseLoading ? 0.6 : 1 }]}
+                        onPress={closePaywall}
+                        disabled={purchaseLoading}
+                      >
+                        <Text style={styles.overlayBtnPrimaryText}>Close</Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        style={[styles.overlayBtnPrimary, { paddingVertical: 10, paddingHorizontal: 24, minWidth: 110, opacity: canSubscribe ? 1 : 0.5 }]}
+                        onPress={() => {
+                          if (!canSubscribe) return;
+                          closePaywall();
+                          handlePurchase(gb);
+                        }}
+                        disabled={!canSubscribe}
+                      >
+                        <Text style={styles.overlayBtnPrimaryText}>{isCurrent ? 'Current' : 'Subscribe'}</Text>
+                      </TouchableOpacity>
+                    </View>
+
+                    <TouchableOpacity
+                      style={[styles.restorePurchasesBtn, { marginTop: 14 }]}
+                      onPress={() => {
+                        closePaywall();
+                        handleRestorePurchases();
+                      }}
+                      disabled={purchaseLoading}
+                    >
+                      <Text style={styles.restorePurchasesText}>Restore Purchases</Text>
+                    </TouchableOpacity>
+                  </>
+                );
+              })()}
             </View>
           </View>
         )}
@@ -7074,7 +6432,7 @@ export default function App() {
                       console.log('Clean Duplicates: Using native MediaDelete for', idsToDelete.length, 'items');
                       const result = await MediaDelete.deleteAssets(idsToDelete);
                       if (result === true) {
-                        showDarkAlert('Deleted', `Deleted ${idsToDelete.length} item${idsToDelete.length !== 1 ? 's' : ''}.`);
+                        showDarkAlert('Clean Complete', `Deleted: ${idsToDelete.length}`);
                         setStatus(`Deleted ${idsToDelete.length} item${idsToDelete.length !== 1 ? 's' : ''}`);
                       } else {
                         setStatus('Deletion cancelled');
@@ -7083,14 +6441,14 @@ export default function App() {
                       // iOS or fallback
                       const result = await MediaLibrary.deleteAssetsAsync(idsToDelete);
                       if (result === true) {
-                        showDarkAlert('Deleted', `Deleted ${idsToDelete.length} item${idsToDelete.length !== 1 ? 's' : ''}.`);
+                        showDarkAlert('Clean Complete', `Deleted: ${idsToDelete.length}`);
                         setStatus(`Deleted ${idsToDelete.length} item${idsToDelete.length !== 1 ? 's' : ''}`);
                       } else {
                         setStatus('Deletion cancelled or partial');
                       }
                     }
                   } catch (err) {
-                    showDarkAlert('Delete failed', err.message || 'Could not delete items.');
+                    showDarkAlert('Clean Error', err.message || 'Could not delete items.');
                     setStatus('Delete failed');
                   } finally {
                     setDuplicateReview(null);

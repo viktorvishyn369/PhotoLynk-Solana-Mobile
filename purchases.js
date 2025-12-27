@@ -98,7 +98,7 @@ export const initializePurchases = async (appUserId = null) => {
  */
 export const identifyUser = async (appUserId) => {
   if (!appUserId) return;
-  if (!purchasesAvailable || !Purchases) return;
+  if (!purchasesAvailable || !Purchases || !isInitialized) return;
   
   try {
     await Purchases.logIn(appUserId);
@@ -113,7 +113,7 @@ export const identifyUser = async (appUserId) => {
  * Call this when user logs out
  */
 export const logoutUser = async () => {
-  if (!purchasesAvailable || !Purchases) return;
+  if (!purchasesAvailable || !Purchases || !isInitialized) return;
   try {
     await Purchases.logOut();
     console.log('RevenueCat user logged out');
@@ -127,7 +127,7 @@ export const logoutUser = async () => {
  * @returns {Object} offerings with packages
  */
 export const getOfferings = async () => {
-  if (!purchasesAvailable || !Purchases) return null;
+  if (!purchasesAvailable || !Purchases || !isInitialized) return null;
   try {
     const offerings = await Purchases.getOfferings();
     return offerings;
@@ -142,7 +142,7 @@ export const getOfferings = async () => {
  * @returns {Object} { isActive, isInGracePeriod, expiresAt, tierGb, productId }
  */
 export const getSubscriptionStatus = async () => {
-  if (!purchasesAvailable || !Purchases) {
+  if (!purchasesAvailable || !Purchases || !isInitialized) {
     return { isActive: false, isInGracePeriod: false, expiresAt: null, tierGb: null, productId: null };
   }
   try {
@@ -200,8 +200,8 @@ export const getSubscriptionStatus = async () => {
  * @returns {Object} { success, customerInfo, error }
  */
 export const purchaseSubscription = async (tierGb) => {
-  if (!purchasesAvailable || !Purchases) {
-    return { success: false, error: 'In-app purchases not available (native rebuild required)' };
+  if (!purchasesAvailable || !Purchases || !isInitialized) {
+    return { success: false, error: 'In-app purchases not available' };
   }
   try {
     const offerings = await Purchases.getOfferings();
@@ -255,8 +255,8 @@ export const purchaseSubscription = async (tierGb) => {
  * @returns {Object} { success, customerInfo, error }
  */
 export const restorePurchases = async () => {
-  if (!purchasesAvailable || !Purchases) {
-    return { success: false, error: 'In-app purchases not available (native rebuild required)' };
+  if (!purchasesAvailable || !Purchases || !isInitialized) {
+    return { success: false, error: 'In-app purchases not available' };
   }
   try {
     const customerInfo = await Purchases.restorePurchases();
@@ -279,7 +279,7 @@ export const restorePurchases = async () => {
  * @returns {string} Formatted price string or null
  */
 export const getPriceForTier = async (tierGb) => {
-  if (!purchasesAvailable || !Purchases) return null;
+  if (!purchasesAvailable || !Purchases || !isInitialized) return null;
   try {
     const offerings = await Purchases.getOfferings();
     if (!offerings || !offerings.current) return null;
@@ -305,7 +305,7 @@ export const getPriceForTier = async (tierGb) => {
  * @returns {Array} [{ tierGb, productId, price, priceString, title }]
  */
 export const getAvailablePlans = async () => {
-  if (!purchasesAvailable || !Purchases) return [];
+  if (!purchasesAvailable || !Purchases || !isInitialized) return [];
   try {
     const offerings = await Purchases.getOfferings();
     if (!offerings || !offerings.current) return [];
@@ -379,7 +379,7 @@ export const checkUploadAccess = async () => {
  * @returns {Function} Unsubscribe function
  */
 export const addSubscriptionListener = (callback) => {
-  if (!purchasesAvailable || !Purchases) {
+  if (!purchasesAvailable || !Purchases || !isInitialized) {
     return () => {}; // Return no-op unsubscribe function
   }
   const listener = Purchases.addCustomerInfoUpdateListener((customerInfo) => {

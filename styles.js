@@ -26,8 +26,7 @@ export const styles = StyleSheet.create({
   // Auth Screen
   authHeader: {
     alignItems: 'center',
-    marginTop: Math.max(40, SCREEN_HEIGHT * 0.08),
-    marginBottom: Math.max(30, SCREEN_HEIGHT * 0.04),
+    marginBottom: Math.max(20, SCREEN_HEIGHT * 0.03),
   },
   appIcon: {
     width: Math.min(100, SCREEN_WIDTH * 0.25),
@@ -115,8 +114,8 @@ export const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 20,
-    paddingTop: 60,
-    paddingBottom: 20,
+    paddingTop: Math.min(60, SCREEN_HEIGHT * 0.04 + 20),
+    paddingBottom: 16,
     backgroundColor: '#0A0A0A',
   },
   headerTitle: {
@@ -196,7 +195,7 @@ export const styles = StyleSheet.create({
     padding: 16,
     borderRadius: 16,
     borderWidth: 2,
-    justifyContent: 'center',
+    minHeight: 80,
   },
   backupCard: {
     backgroundColor: '#2A1A3A',
