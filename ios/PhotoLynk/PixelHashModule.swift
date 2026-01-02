@@ -51,11 +51,31 @@ class PixelHashModule: NSObject {
         
         // Apply orientation transform to canonicalize image
         // This ensures iOS HEIC = Desktop HEIC = Android HEIC regardless of orientation flags
+        // IMPORTANT: Must render UIImage to actually apply orientation, cgImage property doesn't transform
         let uiImage = UIImage(cgImage: cgImage, scale: 1.0, orientation: orientation)
-        guard let orientedCGImage = uiImage.cgImage else {
+        
+        // Render UIImage to new CGImage with orientation applied
+        let orientedWidth: Int
+        let orientedHeight: Int
+        
+        // Orientation 5,6,7,8 swap width/height
+        if orientation == .left || orientation == .right || 
+           orientation == .leftMirrored || orientation == .rightMirrored {
+          orientedWidth = cgImage.height
+          orientedHeight = cgImage.width
+        } else {
+          orientedWidth = cgImage.width
+          orientedHeight = cgImage.height
+        }
+        
+        UIGraphicsBeginImageContextWithOptions(CGSize(width: orientedWidth, height: orientedHeight), false, 1.0)
+        uiImage.draw(in: CGRect(x: 0, y: 0, width: orientedWidth, height: orientedHeight))
+        guard let orientedCGImage = UIGraphicsGetImageFromCurrentImageContext()?.cgImage else {
+          UIGraphicsEndImageContext()
           reject("E_ORIENT", "Cannot apply orientation", nil)
           return
         }
+        UIGraphicsEndImageContext()
         
         // Get oriented dimensions and pixel data
         let srcWidth = orientedCGImage.width
