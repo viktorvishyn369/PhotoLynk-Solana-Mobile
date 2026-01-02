@@ -16,70 +16,48 @@ class PixelHashModule: NSObject {
   func hashImagePixels(_ path: String, resolver resolve: @escaping RCTPromiseResolveBlock, rejecter reject: @escaping RCTPromiseRejectBlock) {
     // Uses 9x8 dHash (difference hash) - more resistant to compression/transcoding than aHash
     // Compares adjacent horizontal pixels, producing 64-bit hash
-    // 
-    // HEIC CANONICALIZATION STRATEGY:
-    // Different decoders (iOS ImageIO, Android ImageDecoder, desktop heic-decode) produce
-    // slightly different pixel values for the same HEIC file. To ensure cross-platform
-    // consistency, we:
-    // 1. Decode HEIC to raw pixels (platform-specific)
-    // 2. Resize to FIXED 64x64 canonical size using platform's native high-quality scaler
-    // 3. Extract pixels from canonical 64x64 buffer (normalizes decoder differences)
-    // 4. Compute dHash from canonical pixels
-    //
-    // The 64x64 intermediate step acts as a "normalization layer" that smooths out
-    // the small pixel-level differences between decoders.
     DispatchQueue.global(qos: .userInitiated).async { [weak self] in
       autoreleasepool {
         let cleanPath = path.replacingOccurrences(of: "file://", with: "")
-        let url = URL(fileURLWithPath: cleanPath)
         
-        // Load image using UIImage which handles HEIC natively
-        guard let uiImage = UIImage(contentsOfFile: cleanPath) else {
+        // Use ImageIO to load raw pixels WITHOUT applying EXIF orientation
+        // This matches Android's BitmapFactory.decodeStream() behavior
+        let url = URL(fileURLWithPath: cleanPath)
+        guard let imageSource = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let cgImage = CGImageSourceCreateImageAtIndex(imageSource, 0, nil) else {
           reject("E_LOAD", "Cannot load image: \(path)", nil)
           return
         }
         
-        // STEP 1: Resize to fixed 64x64 canonical size using iOS native scaler
-        // This normalizes decoder differences across platforms
-        let canonicalSize = CGSize(width: 64, height: 64)
-        UIGraphicsBeginImageContextWithOptions(canonicalSize, true, 1.0)
-        uiImage.draw(in: CGRect(origin: .zero, size: canonicalSize))
-        guard let canonicalImage = UIGraphicsGetImageFromCurrentImageContext(),
-              let canonicalCGImage = canonicalImage.cgImage else {
-          UIGraphicsEndImageContext()
-          reject("E_CANONICAL", "Cannot create canonical image", nil)
-          return
-        }
-        UIGraphicsEndImageContext()
+        // Get source image dimensions and pixel data (raw, no EXIF rotation)
+        let srcWidth = cgImage.width
+        let srcHeight = cgImage.height
+        let srcBytesPerPixel = 4
+        let srcBytesPerRow = srcBytesPerPixel * srcWidth
+        var srcPixelData = [UInt8](repeating: 0, count: srcWidth * srcHeight * srcBytesPerPixel)
         
-        // STEP 2: Extract pixels from canonical 64x64 image
-        let canonicalWidth = 64
-        let canonicalHeight = 64
-        let bytesPerPixel = 4
-        let bytesPerRow = bytesPerPixel * canonicalWidth
-        var canonicalPixels = [UInt8](repeating: 0, count: canonicalWidth * canonicalHeight * bytesPerPixel)
-        
-        guard let context = CGContext(
-          data: &canonicalPixels,
-          width: canonicalWidth,
-          height: canonicalHeight,
+        guard let srcContext = CGContext(
+          data: &srcPixelData,
+          width: srcWidth,
+          height: srcHeight,
           bitsPerComponent: 8,
-          bytesPerRow: bytesPerRow,
+          bytesPerRow: srcBytesPerRow,
           space: CGColorSpaceCreateDeviceRGB(),
           bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
         ) else {
-          reject("E_CONTEXT", "Cannot create context", nil)
+          reject("E_CONTEXT", "Cannot create source context", nil)
           return
         }
-        context.draw(canonicalCGImage, in: CGRect(x: 0, y: 0, width: canonicalWidth, height: canonicalHeight))
         
-        // STEP 3: Bilinear scale from 64x64 canonical to 9x8 for dHash
+        srcContext.draw(cgImage, in: CGRect(x: 0, y: 0, width: srcWidth, height: srcHeight))
+        
+        // Custom bilinear scaling to 9x8 (identical to Android implementation)
         let hashWidth = 9
         let hashHeight = 8
-        var scaledPixelData = [UInt8](repeating: 0, count: hashWidth * hashHeight * bytesPerPixel)
+        var scaledPixelData = [UInt8](repeating: 0, count: hashWidth * hashHeight * srcBytesPerPixel)
         
-        let xRatio = Float(canonicalWidth - 1) / Float(hashWidth - 1)
-        let yRatio = Float(canonicalHeight - 1) / Float(hashHeight - 1)
+        let xRatio = Float(srcWidth - 1) / Float(hashWidth - 1)
+        let yRatio = Float(srcHeight - 1) / Float(hashHeight - 1)
         
         for y in 0..<hashHeight {
           for x in 0..<hashWidth {
@@ -88,25 +66,25 @@ class PixelHashModule: NSObject {
             
             let x1 = Int(srcX)
             let y1 = Int(srcY)
-            let x2 = min(x1 + 1, canonicalWidth - 1)
-            let y2 = min(y1 + 1, canonicalHeight - 1)
+            let x2 = min(x1 + 1, srcWidth - 1)
+            let y2 = min(y1 + 1, srcHeight - 1)
             
             let xWeight = srcX - Float(x1)
             let yWeight = srcY - Float(y1)
             
             for c in 0..<3 {
-              let p11 = Float(canonicalPixels[(y1 * canonicalWidth + x1) * bytesPerPixel + c])
-              let p21 = Float(canonicalPixels[(y1 * canonicalWidth + x2) * bytesPerPixel + c])
-              let p12 = Float(canonicalPixels[(y2 * canonicalWidth + x1) * bytesPerPixel + c])
-              let p22 = Float(canonicalPixels[(y2 * canonicalWidth + x2) * bytesPerPixel + c])
+              let p11 = Float(srcPixelData[(y1 * srcWidth + x1) * srcBytesPerPixel + c])
+              let p21 = Float(srcPixelData[(y1 * srcWidth + x2) * srcBytesPerPixel + c])
+              let p12 = Float(srcPixelData[(y2 * srcWidth + x1) * srcBytesPerPixel + c])
+              let p22 = Float(srcPixelData[(y2 * srcWidth + x2) * srcBytesPerPixel + c])
               
               let top = p11 * (1.0 - xWeight) + p21 * xWeight
               let bottom = p12 * (1.0 - xWeight) + p22 * xWeight
               let value = top * (1.0 - yWeight) + bottom * yWeight
               
-              scaledPixelData[(y * hashWidth + x) * bytesPerPixel + c] = UInt8(value + 0.5)
+              scaledPixelData[(y * hashWidth + x) * srcBytesPerPixel + c] = UInt8(value + 0.5)
             }
-            scaledPixelData[(y * hashWidth + x) * bytesPerPixel + 3] = 255
+            scaledPixelData[(y * hashWidth + x) * srcBytesPerPixel + 3] = 255
           }
         }
         
@@ -115,6 +93,7 @@ class PixelHashModule: NSObject {
         // Compute grayscale values in 2D array for easier adjacent pixel comparison
         var grayValues = [[UInt8]](repeating: [UInt8](repeating: 0, count: hashWidth), count: hashHeight)
         
+        let bytesPerPixel = 4
         for y in 0..<hashHeight {
           for x in 0..<hashWidth {
             let offset = (y * hashWidth + x) * bytesPerPixel

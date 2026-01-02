@@ -21,23 +21,11 @@ class PixelHashModule(reactContext: ReactApplicationContext) : ReactContextBaseJ
     fun hashImagePixels(path: String, promise: Promise) {
         // Uses 9x8 dHash (difference hash) - more resistant to compression/transcoding than aHash
         // Compares adjacent horizontal pixels, producing 64-bit hash
-        //
-        // HEIC CANONICALIZATION STRATEGY:
-        // Different decoders (iOS ImageIO, Android ImageDecoder, desktop heic-decode) produce
-        // slightly different pixel values for the same HEIC file. To ensure cross-platform
-        // consistency, we:
-        // 1. Decode HEIC to raw pixels (platform-specific)
-        // 2. Resize to FIXED 64x64 canonical size using platform's native high-quality scaler
-        // 3. Extract pixels from canonical 64x64 buffer (normalizes decoder differences)
-        // 4. Compute dHash from canonical pixels
-        //
-        // The 64x64 intermediate step acts as a "normalization layer" that smooths out
-        // the small pixel-level differences between decoders.
         Thread {
             var bitmap: Bitmap? = null
-            var canonicalBitmap: Bitmap? = null
+            var normalized: Bitmap? = null
             try {
-                // Decode image - use ImageDecoder for Android 9+ (better HEIC support)
+                // Decode image - use ImageDecoder for Android 9+ (better GIF/animated support)
                 val filePath = if (path.startsWith("file://")) path.removePrefix("file://") else path
                 val isContentUri = path.startsWith("content://")
                 
@@ -83,21 +71,16 @@ class PixelHashModule(reactContext: ReactApplicationContext) : ReactContextBaseJ
                     return@Thread
                 }
 
-                // STEP 1: Resize to fixed 64x64 canonical size using Android's native scaler
-                // This normalizes decoder differences across platforms
-                val canonicalSize = 64
-                canonicalBitmap = Bitmap.createScaledBitmap(bitmap!!, canonicalSize, canonicalSize, true)
-                bitmap!!.recycle()
-                bitmap = null
-                
-                // STEP 2: Bilinear scale from 64x64 canonical to 9x8 for dHash
+                // Custom bilinear scaling to 9x8 (identical to iOS implementation)
                 val hashWidth = 9
                 val hashHeight = 8
+                val srcWidth = bitmap!!.width
+                val srcHeight = bitmap!!.height
                 
                 val scaledPixels = IntArray(hashWidth * hashHeight)
                 
-                val xRatio = (canonicalSize - 1).toFloat() / (hashWidth - 1).toFloat()
-                val yRatio = (canonicalSize - 1).toFloat() / (hashHeight - 1).toFloat()
+                val xRatio = (srcWidth - 1).toFloat() / (hashWidth - 1).toFloat()
+                val yRatio = (srcHeight - 1).toFloat() / (hashHeight - 1).toFloat()
                 
                 for (y in 0 until hashHeight) {
                     for (x in 0 until hashWidth) {
@@ -106,16 +89,16 @@ class PixelHashModule(reactContext: ReactApplicationContext) : ReactContextBaseJ
                         
                         val x1 = srcX.toInt()
                         val y1 = srcY.toInt()
-                        val x2 = minOf(x1 + 1, canonicalSize - 1)
-                        val y2 = minOf(y1 + 1, canonicalSize - 1)
+                        val x2 = minOf(x1 + 1, srcWidth - 1)
+                        val y2 = minOf(y1 + 1, srcHeight - 1)
                         
                         val xWeight = srcX - x1.toFloat()
                         val yWeight = srcY - y1.toFloat()
                         
-                        val p11 = canonicalBitmap!!.getPixel(x1, y1)
-                        val p21 = canonicalBitmap!!.getPixel(x2, y1)
-                        val p12 = canonicalBitmap!!.getPixel(x1, y2)
-                        val p22 = canonicalBitmap!!.getPixel(x2, y2)
+                        val p11 = bitmap!!.getPixel(x1, y1)
+                        val p21 = bitmap!!.getPixel(x2, y1)
+                        val p12 = bitmap!!.getPixel(x1, y2)
+                        val p22 = bitmap!!.getPixel(x2, y2)
                         
                         // Match iOS two-step bilinear interpolation exactly
                         // Step 1: Interpolate horizontally (top and bottom rows)
@@ -135,8 +118,7 @@ class PixelHashModule(reactContext: ReactApplicationContext) : ReactContextBaseJ
                     }
                 }
                 
-                canonicalBitmap!!.recycle()
-                canonicalBitmap = null
+                bitmap!!.recycle()
                 bitmap = null
 
                 // Compute grayscale values in 2D array for easier adjacent pixel comparison
