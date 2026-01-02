@@ -303,12 +303,24 @@ export const autoUploadStealthCloudUploadOneAsset = async ({
   if (!filePath) return { uploaded: 0, skipped: 0, failed: 1 };
 
   // Get file size for stable manifestId
+  // CRITICAL: Use original asset size from MediaLibrary, not temporary copy size
+  // Temporary copies may have different sizes (metadata stripped, compression, etc.)
+  // which would create different manifestIds and cause duplicate uploads
   let originalSize = null;
-  const fileUri = filePath.startsWith('/') ? `file://${filePath}` : filePath;
   try {
-    const info = await FileSystem.getInfoAsync(fileUri);
-    originalSize = info?.size || null;
-  } catch (e) {}
+    originalSize = assetInfo && typeof assetInfo.fileSize === 'number' ? Number(assetInfo.fileSize) : null;
+  } catch (e) {
+    originalSize = null;
+  }
+  
+  // Fallback to file system size if assetInfo.fileSize not available
+  if (!originalSize) {
+    const fileUri = filePath.startsWith('/') ? `file://${filePath}` : filePath;
+    try {
+      const info = await FileSystem.getInfoAsync(fileUri);
+      originalSize = info?.size || null;
+    } catch (e) {}
+  }
 
   // Compute stable cross-device manifestId from filename + size
   const filename = assetInfo.filename || asset.filename || null;

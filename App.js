@@ -1866,26 +1866,38 @@ export default function App() {
           }
 
           // Get file size first for stable manifestId
+          // CRITICAL: Use original asset size from MediaLibrary, not temporary copy size
+          // Temporary copies may have different sizes (metadata stripped, compression, etc.)
+          // which would create different manifestIds and cause duplicate uploads
           let originalSize = null;
-          if (Platform.OS === 'ios') {
-            const fileUri = filePath.startsWith('/') ? `file://${filePath}` : (filePath || tmpUri);
-            try {
-              const info = await FileSystem.getInfoAsync(fileUri);
-              originalSize = info && typeof info.size === 'number' ? Number(info.size) : null;
-            } catch (e) {
-              originalSize = null;
-            }
-          } else {
-            let ReactNativeBlobUtil = null;
-            try {
-              const mod = require('react-native-blob-util');
-              ReactNativeBlobUtil = mod && (mod.default || mod);
-            } catch (e) {}
-            if (ReactNativeBlobUtil?.fs?.stat) {
+          try {
+            originalSize = assetInfo && typeof assetInfo.fileSize === 'number' ? Number(assetInfo.fileSize) : null;
+          } catch (e) {
+            originalSize = null;
+          }
+          
+          // Fallback to file system size if assetInfo.fileSize not available
+          if (!originalSize) {
+            if (Platform.OS === 'ios') {
+              const fileUri = filePath.startsWith('/') ? `file://${filePath}` : (filePath || tmpUri);
               try {
-                const stat = await ReactNativeBlobUtil.fs.stat(filePath);
-                originalSize = stat && stat.size ? Number(stat.size) : null;
+                const info = await FileSystem.getInfoAsync(fileUri);
+                originalSize = info && typeof info.size === 'number' ? Number(info.size) : null;
+              } catch (e) {
+                originalSize = null;
+              }
+            } else {
+              let ReactNativeBlobUtil = null;
+              try {
+                const mod = require('react-native-blob-util');
+                ReactNativeBlobUtil = mod && (mod.default || mod);
               } catch (e) {}
+              if (ReactNativeBlobUtil?.fs?.stat) {
+                try {
+                  const stat = await ReactNativeBlobUtil.fs.stat(filePath);
+                  originalSize = stat && stat.size ? Number(stat.size) : null;
+                } catch (e) {}
+              }
             }
           }
 
@@ -3621,26 +3633,38 @@ export default function App() {
         }
 
         // Get file size first for stable manifestId
+        // CRITICAL: Use original asset size from MediaLibrary, not temporary copy size
+        // Temporary copies may have different sizes (metadata stripped, compression, etc.)
+        // which would create different manifestIds and cause duplicate uploads
         let originalSize = null;
-        if (Platform.OS === 'ios') {
-          const fileUri = filePath.startsWith('/') ? `file://${filePath}` : (filePath || tmpUri);
-          try {
-            const info = await FileSystem.getInfoAsync(fileUri);
-            originalSize = info && typeof info.size === 'number' ? Number(info.size) : null;
-          } catch (e) {
-            originalSize = null;
-          }
-        } else {
-          let ReactNativeBlobUtil = null;
-          try {
-            const mod = require('react-native-blob-util');
-            ReactNativeBlobUtil = mod && (mod.default || mod);
-          } catch (e) {}
-          if (ReactNativeBlobUtil?.fs?.stat) {
+        try {
+          originalSize = assetInfo && typeof assetInfo.fileSize === 'number' ? Number(assetInfo.fileSize) : null;
+        } catch (e) {
+          originalSize = null;
+        }
+        
+        // Fallback to file system size if assetInfo.fileSize not available
+        if (!originalSize) {
+          if (Platform.OS === 'ios') {
+            const fileUri = filePath.startsWith('/') ? `file://${filePath}` : (filePath || tmpUri);
             try {
-              const stat = await ReactNativeBlobUtil.fs.stat(filePath);
-              originalSize = stat && stat.size ? Number(stat.size) : null;
+              const info = await FileSystem.getInfoAsync(fileUri);
+              originalSize = info && typeof info.size === 'number' ? Number(info.size) : null;
+            } catch (e) {
+              originalSize = null;
+            }
+          } else {
+            let ReactNativeBlobUtil = null;
+            try {
+              const mod = require('react-native-blob-util');
+              ReactNativeBlobUtil = mod && (mod.default || mod);
             } catch (e) {}
+            if (ReactNativeBlobUtil?.fs?.stat) {
+              try {
+                const stat = await ReactNativeBlobUtil.fs.stat(filePath);
+                originalSize = stat && stat.size ? Number(stat.size) : null;
+              } catch (e) {}
+            }
           }
         }
 
