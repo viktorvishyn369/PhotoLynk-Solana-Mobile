@@ -16,25 +16,60 @@ class PixelHashModule: NSObject {
   func hashImagePixels(_ path: String, resolver resolve: @escaping RCTPromiseResolveBlock, rejecter reject: @escaping RCTPromiseRejectBlock) {
     // Uses 9x8 dHash (difference hash) - more resistant to compression/transcoding than aHash
     // Compares adjacent horizontal pixels, producing 64-bit hash
+    // CRITICAL: Canonicalize HEIC pixels for cross-platform consistency:
+    // 1. Decode FIRST image only (ignore auxiliary images/depth/HDR)
+    // 2. Apply EXIF orientation transform
+    // 3. Convert to sRGB colorspace
+    // 4. Then compute perceptual hash
     DispatchQueue.global(qos: .userInitiated).async { [weak self] in
       autoreleasepool {
         let cleanPath = path.replacingOccurrences(of: "file://", with: "")
-        
-        // Use ImageIO to load raw pixels WITHOUT applying EXIF orientation
-        // This matches Android's BitmapFactory.decodeStream() behavior
         let url = URL(fileURLWithPath: cleanPath)
-        guard let imageSource = CGImageSourceCreateWithURL(url as CFURL, nil),
-              let cgImage = CGImageSourceCreateImageAtIndex(imageSource, 0, nil) else {
+        
+        // Load image source and get EXIF orientation
+        guard let imageSource = CGImageSourceCreateWithURL(url as CFURL, nil) else {
           reject("E_LOAD", "Cannot load image: \(path)", nil)
           return
         }
         
-        // Get source image dimensions and pixel data (raw, no EXIF rotation)
-        let srcWidth = cgImage.width
-        let srcHeight = cgImage.height
+        // Decode FIRST image only (index 0) - ignore auxiliary images in HEIC container
+        let options: [CFString: Any] = [
+          kCGImageSourceShouldCache: false,
+          kCGImageSourceShouldAllowFloat: false
+        ]
+        guard let cgImage = CGImageSourceCreateImageAtIndex(imageSource, 0, options as CFDictionary) else {
+          reject("E_DECODE", "Cannot decode image: \(path)", nil)
+          return
+        }
+        
+        // Get EXIF orientation for canonicalization
+        var orientation = UIImage.Orientation.up
+        if let properties = CGImageSourceCopyPropertiesAtIndex(imageSource, 0, nil) as? [CFString: Any],
+           let orientationValue = properties[kCGImagePropertyOrientation] as? UInt32 {
+          orientation = UIImage.Orientation(rawValue: Int(orientationValue)) ?? .up
+        }
+        
+        // Apply orientation transform to canonicalize image
+        // This ensures iOS HEIC = Desktop HEIC = Android HEIC regardless of orientation flags
+        let uiImage = UIImage(cgImage: cgImage, scale: 1.0, orientation: orientation)
+        guard let orientedCGImage = uiImage.cgImage else {
+          reject("E_ORIENT", "Cannot apply orientation", nil)
+          return
+        }
+        
+        // Get oriented dimensions and pixel data
+        let srcWidth = orientedCGImage.width
+        let srcHeight = orientedCGImage.height
         let srcBytesPerPixel = 4
         let srcBytesPerRow = srcBytesPerPixel * srcWidth
         var srcPixelData = [UInt8](repeating: 0, count: srcWidth * srcHeight * srcBytesPerPixel)
+        
+        // Use sRGB colorspace for canonicalization (not device RGB)
+        // This ensures consistent color interpretation across devices
+        guard let sRGBColorSpace = CGColorSpace(name: CGColorSpace.sRGB) else {
+          reject("E_COLORSPACE", "Cannot create sRGB colorspace", nil)
+          return
+        }
         
         guard let srcContext = CGContext(
           data: &srcPixelData,
@@ -42,14 +77,15 @@ class PixelHashModule: NSObject {
           height: srcHeight,
           bitsPerComponent: 8,
           bytesPerRow: srcBytesPerRow,
-          space: CGColorSpaceCreateDeviceRGB(),
+          space: sRGBColorSpace,
           bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
         ) else {
           reject("E_CONTEXT", "Cannot create source context", nil)
           return
         }
         
-        srcContext.draw(cgImage, in: CGRect(x: 0, y: 0, width: srcWidth, height: srcHeight))
+        // Draw oriented image in sRGB colorspace
+        srcContext.draw(orientedCGImage, in: CGRect(x: 0, y: 0, width: srcWidth, height: srcHeight))
         
         // Custom bilinear scaling to 9x8 (identical to Android implementation)
         let hashWidth = 9

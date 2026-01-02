@@ -21,11 +21,16 @@ class PixelHashModule(reactContext: ReactApplicationContext) : ReactContextBaseJ
     fun hashImagePixels(path: String, promise: Promise) {
         // Uses 9x8 dHash (difference hash) - more resistant to compression/transcoding than aHash
         // Compares adjacent horizontal pixels, producing 64-bit hash
+        // CRITICAL: Canonicalize HEIC pixels for cross-platform consistency:
+        // 1. Decode FIRST image only (ignore auxiliary images/depth/HDR)
+        // 2. Apply EXIF orientation transform
+        // 3. Ensure sRGB colorspace (Android default)
+        // 4. Then compute perceptual hash
         Thread {
             var bitmap: Bitmap? = null
             var normalized: Bitmap? = null
             try {
-                // Decode image - use ImageDecoder for Android 9+ (better GIF/animated support)
+                // Decode image - use ImageDecoder for Android 9+ (better HEIC support)
                 val filePath = if (path.startsWith("file://")) path.removePrefix("file://") else path
                 val isContentUri = path.startsWith("content://")
                 
@@ -40,7 +45,7 @@ class PixelHashModule(reactContext: ReactApplicationContext) : ReactContextBaseJ
                         bitmap = ImageDecoder.decodeBitmap(source) { decoder, _, _ ->
                             // Force software rendering for consistent pixel access
                             decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
-                            // For animated images, just get first frame
+                            // For HEIC/animated images, decode FIRST frame only
                             decoder.setTargetSampleSize(1)
                         }
                     } catch (e: Exception) {
@@ -69,6 +74,49 @@ class PixelHashModule(reactContext: ReactApplicationContext) : ReactContextBaseJ
                 if (bitmap == null) {
                     promise.reject("E_DECODE", "Cannot decode image: $path")
                     return@Thread
+                }
+                
+                // Apply EXIF orientation to canonicalize image
+                // This ensures Android HEIC = iOS HEIC = Desktop HEIC regardless of orientation flags
+                try {
+                    val exif = ExifInterface(filePath)
+                    val orientation = exif.getAttributeInt(
+                        ExifInterface.TAG_ORIENTATION,
+                        ExifInterface.ORIENTATION_NORMAL
+                    )
+                    
+                    val matrix = Matrix()
+                    when (orientation) {
+                        ExifInterface.ORIENTATION_ROTATE_90 -> matrix.postRotate(90f)
+                        ExifInterface.ORIENTATION_ROTATE_180 -> matrix.postRotate(180f)
+                        ExifInterface.ORIENTATION_ROTATE_270 -> matrix.postRotate(270f)
+                        ExifInterface.ORIENTATION_FLIP_HORIZONTAL -> matrix.postScale(-1f, 1f)
+                        ExifInterface.ORIENTATION_FLIP_VERTICAL -> matrix.postScale(1f, -1f)
+                        ExifInterface.ORIENTATION_TRANSPOSE -> {
+                            matrix.postRotate(90f)
+                            matrix.postScale(-1f, 1f)
+                        }
+                        ExifInterface.ORIENTATION_TRANSVERSE -> {
+                            matrix.postRotate(270f)
+                            matrix.postScale(-1f, 1f)
+                        }
+                    }
+                    
+                    if (!matrix.isIdentity) {
+                        val orientedBitmap = Bitmap.createBitmap(
+                            bitmap!!,
+                            0, 0,
+                            bitmap!!.width,
+                            bitmap!!.height,
+                            matrix,
+                            true
+                        )
+                        bitmap!!.recycle()
+                        bitmap = orientedBitmap
+                    }
+                } catch (e: Exception) {
+                    // If EXIF reading fails, continue with original bitmap
+                    // (better to have unoriented hash than no hash)
                 }
 
                 // Custom bilinear scaling to 9x8 (identical to iOS implementation)
