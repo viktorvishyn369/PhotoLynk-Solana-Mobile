@@ -3,10 +3,13 @@ package com.photosync.app
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Color
+import android.graphics.ImageDecoder
 import android.graphics.Matrix
 import android.net.Uri
+import android.os.Build
 import androidx.exifinterface.media.ExifInterface
 import com.facebook.react.bridge.*
+import java.io.File
 import java.io.InputStream
 import java.security.MessageDigest
 
@@ -16,42 +19,159 @@ class PixelHashModule(reactContext: ReactApplicationContext) : ReactContextBaseJ
 
     @ReactMethod
     fun hashImagePixels(path: String, promise: Promise) {
-        // Uses 16x16 average hash (aHash) - tolerant to compression/upload/download changes
-        // Similar to image-hash library approach
+        // Uses 9x8 dHash (difference hash) - more resistant to compression/transcoding than aHash
+        // Compares adjacent horizontal pixels, producing 64-bit hash
         Thread {
             var bitmap: Bitmap? = null
             var normalized: Bitmap? = null
             try {
-                // First pass: read dimensions only (avoid decoding full-res)
-                val bounds = BitmapFactory.Options().apply {
-                    inJustDecodeBounds = true
+                // Decode image - use ImageDecoder for Android 9+ (better GIF/animated support)
+                val filePath = if (path.startsWith("file://")) path.removePrefix("file://") else path
+                val isContentUri = path.startsWith("content://")
+                
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    // Android 9+ - use ImageDecoder for better format support
+                    try {
+                        val source = if (isContentUri) {
+                            ImageDecoder.createSource(reactApplicationContext.contentResolver, Uri.parse(path))
+                        } else {
+                            ImageDecoder.createSource(File(filePath))
+                        }
+                        bitmap = ImageDecoder.decodeBitmap(source) { decoder, _, _ ->
+                            // Force software rendering for consistent pixel access
+                            decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+                            // For animated images, just get first frame
+                            decoder.setTargetSampleSize(1)
+                        }
+                    } catch (e: Exception) {
+                        // Fallback to BitmapFactory if ImageDecoder fails
+                        bitmap = null
+                    }
                 }
-                val inputStreamBounds: InputStream? = if (path.startsWith("content://")) {
-                    reactApplicationContext.contentResolver.openInputStream(Uri.parse(path))
-                } else {
-                    val filePath = if (path.startsWith("file://")) path.removePrefix("file://") else path
-                    java.io.FileInputStream(filePath)
+                
+                // Fallback to BitmapFactory (Android 8 and below, or if ImageDecoder failed)
+                if (bitmap == null) {
+                    val inputStream: InputStream? = if (isContentUri) {
+                        reactApplicationContext.contentResolver.openInputStream(Uri.parse(path))
+                    } else {
+                        java.io.FileInputStream(filePath)
+                    }
+
+                    if (inputStream == null) {
+                        promise.reject("E_FILE", "Cannot open file: $path")
+                        return@Thread
+                    }
+                    
+                    bitmap = BitmapFactory.decodeStream(inputStream)
+                    inputStream.close()
                 }
-                if (inputStreamBounds == null) {
-                    promise.reject("E_FILE", "Cannot open file: $path")
+
+                if (bitmap == null) {
+                    promise.reject("E_DECODE", "Cannot decode image: $path")
                     return@Thread
                 }
-                BitmapFactory.decodeStream(inputStreamBounds, null, bounds)
-                inputStreamBounds.close()
 
-                // Choose a conservative decode target size; final hash is 16x16 anyway
-                val maxDim = maxOf(bounds.outWidth, bounds.outHeight)
-                var sampleSize = 1
-                while (maxDim / sampleSize > 1024) {
-                    sampleSize *= 2
+                // Custom bilinear scaling to 9x8 (identical to iOS implementation)
+                val hashWidth = 9
+                val hashHeight = 8
+                val srcWidth = bitmap!!.width
+                val srcHeight = bitmap!!.height
+                
+                val scaledPixels = IntArray(hashWidth * hashHeight)
+                
+                val xRatio = (srcWidth - 1).toFloat() / (hashWidth - 1).toFloat()
+                val yRatio = (srcHeight - 1).toFloat() / (hashHeight - 1).toFloat()
+                
+                for (y in 0 until hashHeight) {
+                    for (x in 0 until hashWidth) {
+                        val srcX = x.toFloat() * xRatio
+                        val srcY = y.toFloat() * yRatio
+                        
+                        val x1 = srcX.toInt()
+                        val y1 = srcY.toInt()
+                        val x2 = minOf(x1 + 1, srcWidth - 1)
+                        val y2 = minOf(y1 + 1, srcHeight - 1)
+                        
+                        val xWeight = srcX - x1.toFloat()
+                        val yWeight = srcY - y1.toFloat()
+                        
+                        val p11 = bitmap!!.getPixel(x1, y1)
+                        val p21 = bitmap!!.getPixel(x2, y1)
+                        val p12 = bitmap!!.getPixel(x1, y2)
+                        val p22 = bitmap!!.getPixel(x2, y2)
+                        
+                        // Match iOS two-step bilinear interpolation exactly
+                        // Step 1: Interpolate horizontally (top and bottom rows)
+                        val topR = Color.red(p11) * (1f - xWeight) + Color.red(p21) * xWeight
+                        val bottomR = Color.red(p12) * (1f - xWeight) + Color.red(p22) * xWeight
+                        val topG = Color.green(p11) * (1f - xWeight) + Color.green(p21) * xWeight
+                        val bottomG = Color.green(p12) * (1f - xWeight) + Color.green(p22) * xWeight
+                        val topB = Color.blue(p11) * (1f - xWeight) + Color.blue(p21) * xWeight
+                        val bottomB = Color.blue(p12) * (1f - xWeight) + Color.blue(p22) * xWeight
+                        
+                        // Step 2: Interpolate vertically
+                        val r = (topR * (1f - yWeight) + bottomR * yWeight + 0.5f).toInt()
+                        val g = (topG * (1f - yWeight) + bottomG * yWeight + 0.5f).toInt()
+                        val b = (topB * (1f - yWeight) + bottomB * yWeight + 0.5f).toInt()
+                        
+                        scaledPixels[y * hashWidth + x] = Color.rgb(r, g, b)
+                    }
+                }
+                
+                bitmap!!.recycle()
+                bitmap = null
+
+                // Compute grayscale values in 2D array for easier adjacent pixel comparison
+                val grayValues = Array(hashHeight) { IntArray(hashWidth) }
+
+                for (y in 0 until hashHeight) {
+                    for (x in 0 until hashWidth) {
+                        val pixel = scaledPixels[y * hashWidth + x]
+                        val r = Color.red(pixel)
+                        val g = Color.green(pixel)
+                        val b = Color.blue(pixel)
+                        // Standard grayscale conversion
+                        val gray = (r * 299 + g * 587 + b * 114) / 1000
+                        grayValues[y][x] = gray
+                    }
                 }
 
-                // Second pass: decode with sampling
-                val options = BitmapFactory.Options().apply {
-                    inPreferredConfig = Bitmap.Config.ARGB_8888
-                    inSampleSize = sampleSize
-                    inJustDecodeBounds = false
+                // Build dHash: compare each pixel to its right neighbor
+                // 8 rows × 8 comparisons = 64 bits = 8 bytes = 16 hex chars
+                val hashBytes = ByteArray(8)
+                var bitIndex = 0
+
+                for (y in 0 until hashHeight) {
+                    for (x in 0 until (hashWidth - 1)) {
+                        // If left pixel < right pixel, set bit to 1
+                        if (grayValues[y][x] < grayValues[y][x + 1]) {
+                            val byteIndex = bitIndex / 8
+                            val bitPos = 7 - (bitIndex % 8)
+                            hashBytes[byteIndex] = (hashBytes[byteIndex].toInt() or (1 shl bitPos)).toByte()
+                        }
+                        bitIndex++
+                    }
                 }
+
+                val hexString = hashBytes.joinToString("") { "%02x".format(it) }
+                promise.resolve(hexString)
+            } catch (e: Exception) {
+                bitmap?.recycle()
+                normalized?.recycle()
+                promise.reject("E_HASH", "Failed to hash image: ${e.message}", e)
+            }
+        }.start()
+    }
+
+    @ReactMethod
+    fun hashPixelBufferSHA256(path: String, promise: Promise) {
+        // Decodes image, scales to 256x256, and computes SHA-256 of the pixel buffer
+        // This is pixel-exact at normalized resolution: ignores metadata, filename, format
+        // 256x256 = 65536 pixels = 256KB to hash (fast) while still detecting any visual difference
+        Thread {
+            var bitmap: Bitmap? = null
+            var scaled: Bitmap? = null
+            try {
                 val inputStream: InputStream? = if (path.startsWith("content://")) {
                     reactApplicationContext.contentResolver.openInputStream(Uri.parse(path))
                 } else {
@@ -63,7 +183,8 @@ class PixelHashModule(reactContext: ReactApplicationContext) : ReactContextBaseJ
                     promise.reject("E_FILE", "Cannot open file: $path")
                     return@Thread
                 }
-                bitmap = BitmapFactory.decodeStream(inputStream, null, options)
+                
+                bitmap = BitmapFactory.decodeStream(inputStream)
                 inputStream.close()
 
                 if (bitmap == null) {
@@ -71,64 +192,40 @@ class PixelHashModule(reactContext: ReactApplicationContext) : ReactContextBaseJ
                     return@Thread
                 }
 
-                // Apply EXIF orientation
-                try {
-                    val orientation = readExifOrientation(path)
-                    val rotated = applyExifOrientation(bitmap!!, orientation)
-                    if (rotated !== bitmap) {
-                        bitmap!!.recycle()
-                        bitmap = rotated
-                    }
-                } catch (e: Exception) {
-                    // ignore orientation errors
-                }
-
-                // Resize to 16x16 (matching image-hash library HASH_SIZE=16)
-                val hashSize = 16
-                normalized = Bitmap.createScaledBitmap(bitmap!!, hashSize, hashSize, true)
+                // Scale to fixed 256x256 for fast hashing while maintaining pixel-exactness
+                val hashSize = 256
+                scaled = Bitmap.createScaledBitmap(bitmap!!, hashSize, hashSize, true)
                 bitmap!!.recycle()
                 bitmap = null
-
-                // Compute grayscale values and average
-                val pixelCount = hashSize * hashSize
-                val grayValues = IntArray(pixelCount)
-                var totalGray = 0
-
+                
+                val totalPixels = hashSize * hashSize
+                
+                // Extract RGBA pixel data from scaled bitmap
+                val pixelBuffer = ByteArray(totalPixels * 4)
                 for (y in 0 until hashSize) {
                     for (x in 0 until hashSize) {
-                        val pixel = normalized!!.getPixel(x, y)
-                        val r = Color.red(pixel)
-                        val g = Color.green(pixel)
-                        val b = Color.blue(pixel)
-                        // Standard grayscale conversion
-                        val gray = (r * 299 + g * 587 + b * 114) / 1000
-                        grayValues[y * hashSize + x] = gray
-                        totalGray += gray
+                        val pixel = scaled!!.getPixel(x, y)
+                        val offset = (y * hashSize + x) * 4
+                        pixelBuffer[offset] = Color.red(pixel).toByte()
+                        pixelBuffer[offset + 1] = Color.green(pixel).toByte()
+                        pixelBuffer[offset + 2] = Color.blue(pixel).toByte()
+                        pixelBuffer[offset + 3] = Color.alpha(pixel).toByte()
                     }
                 }
-                normalized!!.recycle()
-                normalized = null
+                
+                scaled!!.recycle()
+                scaled = null
 
-                val avgGray = totalGray / pixelCount
-
-                // Build binary hash: 1 if pixel > average, 0 otherwise
-                // 16x16 = 256 bits = 32 bytes = 64 hex chars
-                val hashBytes = ByteArray(32)
-
-                for (i in 0 until pixelCount) {
-                    if (grayValues[i] > avgGray) {
-                        val byteIndex = i / 8
-                        val bitIndex = 7 - (i % 8)
-                        hashBytes[byteIndex] = (hashBytes[byteIndex].toInt() or (1 shl bitIndex)).toByte()
-                    }
-                }
-
+                // Compute SHA-256 of the scaled pixel buffer
+                val digest = MessageDigest.getInstance("SHA-256")
+                val hashBytes = digest.digest(pixelBuffer)
+                
                 val hexString = hashBytes.joinToString("") { "%02x".format(it) }
                 promise.resolve(hexString)
             } catch (e: Exception) {
                 bitmap?.recycle()
-                normalized?.recycle()
-                promise.reject("E_HASH", "Failed to hash image: ${e.message}", e)
+                scaled?.recycle()
+                promise.reject("E_HASH", "Failed to hash pixel buffer: ${e.message}", e)
             }
         }.start()
     }

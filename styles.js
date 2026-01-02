@@ -8,7 +8,7 @@ export const THEME = {
   card: '#1E1E1E',
   text: '#FFFFFF',
   textSec: '#AAAAAA',
-  primary: '#BB86FC',
+  primary: '#3B82F6',
   secondary: '#03DAC6',
   error: '#CF6679'
 };
@@ -27,6 +27,7 @@ export const styles = StyleSheet.create({
   authHeader: {
     alignItems: 'center',
     marginBottom: Math.max(20, SCREEN_HEIGHT * 0.03),
+    marginTop: Platform.OS === 'android' ? Math.max(40, SCREEN_HEIGHT * 0.08) : 0,
   },
   appIcon: {
     width: Math.min(100, SCREEN_WIDTH * 0.25),
@@ -64,7 +65,9 @@ export const styles = StyleSheet.create({
     borderColor: '#333333',
   },
   btnPrimary: {
-    backgroundColor: '#BB86FC',
+    backgroundColor: '#2A2A2A',
+    borderWidth: 2,
+    borderColor: '#3B82F6',
     padding: 18,
     borderRadius: 12,
     alignItems: 'center',
@@ -76,7 +79,7 @@ export const styles = StyleSheet.create({
     alignItems: 'center',
   },
   btnText: {
-    color: '#000000',
+    color: '#FFFFFF',
     fontWeight: 'bold',
     fontSize: 16,
   },
@@ -157,6 +160,21 @@ export const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#2A2A2A',
   },
+  statusCardGlass: {
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    borderColor: 'rgba(255, 255, 255, 0.25)',
+    ...Platform.select({
+      ios: {
+        shadowColor: '#fff',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 8,
+      },
+      android: {
+        elevation: 3,
+      },
+    }),
+  },
   statusHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -198,16 +216,61 @@ export const styles = StyleSheet.create({
     minHeight: 80,
   },
   backupCard: {
-    backgroundColor: '#2A1A3A',
-    borderColor: '#BB86FC',
+    backgroundColor: '#1A2A3A',
+    borderColor: '#4A9FE8',
+  },
+  backupCardGlass: {
+    backgroundColor: 'rgba(26, 42, 58, 0.7)',
+    borderColor: 'rgba(74, 159, 232, 0.6)',
+    ...Platform.select({
+      ios: {
+        shadowColor: '#4A9FE8',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.25,
+        shadowRadius: 8,
+      },
+      android: {
+        elevation: 4,
+      },
+    }),
   },
   syncCard: {
     backgroundColor: '#0A2A2A',
     borderColor: '#03DAC6',
   },
+  syncCardGlass: {
+    backgroundColor: 'rgba(10, 42, 42, 0.7)',
+    borderColor: 'rgba(3, 218, 198, 0.6)',
+    ...Platform.select({
+      ios: {
+        shadowColor: '#03DAC6',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.25,
+        shadowRadius: 8,
+      },
+      android: {
+        elevation: 4,
+      },
+    }),
+  },
   cleanupCard: {
-    backgroundColor: '#2A240A',
-    borderColor: '#FFB74D',
+    backgroundColor: '#1E1B2E',
+    borderColor: '#6366F1',
+  },
+  cleanupCardGlass: {
+    backgroundColor: 'rgba(30, 27, 46, 0.7)',
+    borderColor: 'rgba(99, 102, 241, 0.6)',
+    ...Platform.select({
+      ios: {
+        shadowColor: '#6366F1',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.25,
+        shadowRadius: 8,
+      },
+      android: {
+        elevation: 4,
+      },
+    }),
   },
   disabledCard: {
     opacity: 0.5,
@@ -223,6 +286,9 @@ export const styles = StyleSheet.create({
     alignItems: 'center',
     padding: 20,
   },
+  overlayGlass: {
+    backgroundColor: 'rgba(0,0,0,0.7)',
+  },
   overlayCard: {
     width: '100%',
     maxWidth: 400,
@@ -236,6 +302,21 @@ export const styles = StyleSheet.create({
     shadowOpacity: 0.4,
     shadowRadius: 16,
     elevation: 12,
+  },
+  overlayCardGlass: {
+    backgroundColor: 'rgba(30, 30, 30, 0.85)',
+    borderColor: 'rgba(255, 255, 255, 0.2)',
+    ...Platform.select({
+      ios: {
+        shadowColor: '#fff',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.15,
+        shadowRadius: 12,
+      },
+      android: {
+        elevation: 6,
+      },
+    }),
   },
   overlayTitle: {
     color: '#FFFFFF',
@@ -252,30 +333,57 @@ export const styles = StyleSheet.create({
     textAlign: 'center',
   },
   overlayBtnPrimary: {
-    backgroundColor: THEME.primary,
+    backgroundColor: '#2A2A2A',
+    borderWidth: 2,
+    borderColor: THEME.primary,
     paddingVertical: 16,
     borderRadius: 14,
     alignItems: 'center',
     marginTop: 8,
-    shadowColor: THEME.primary,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 4,
+  },
+  overlayBtnPrimaryGlass: {
+    backgroundColor: 'rgba(59, 130, 246, 0.2)',
+    borderColor: 'rgba(59, 130, 246, 0.6)',
+    ...Platform.select({
+      ios: {
+        shadowColor: '#3B82F6',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.3,
+        shadowRadius: 6,
+      },
+      android: {
+        elevation: 3,
+      },
+    }),
   },
   overlayBtnPrimaryText: {
-    color: '#000000',
+    color: '#FFFFFF',
     fontWeight: '700',
     fontSize: 16,
   },
   overlayBtnSecondary: {
-    backgroundColor: '#252525',
+    backgroundColor: '#2A2A2A',
     paddingVertical: 16,
     borderRadius: 14,
     alignItems: 'center',
     marginTop: 8,
-    borderWidth: 1,
-    borderColor: '#3A3A3A',
+    borderWidth: 2,
+    borderColor: '#444444',
+  },
+  overlayBtnSecondaryGlass: {
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    borderColor: 'rgba(255, 255, 255, 0.3)',
+    ...Platform.select({
+      ios: {
+        shadowColor: '#fff',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.15,
+        shadowRadius: 6,
+      },
+      android: {
+        elevation: 2,
+      },
+    }),
   },
   overlayBtnSecondaryText: {
     color: '#FFFFFF',
@@ -286,6 +394,10 @@ export const styles = StyleSheet.create({
     paddingVertical: 14,
     alignItems: 'center',
     marginTop: 12,
+  },
+  overlayBtnGhostGlass: {
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    borderRadius: 10,
   },
   overlayBtnGhostText: {
     color: '#666666',
@@ -301,6 +413,21 @@ export const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#2A2A2A',
     overflow: 'hidden',
+  },
+  pickerCardGlass: {
+    backgroundColor: 'rgba(18, 18, 18, 0.92)',
+    borderColor: 'rgba(255, 255, 255, 0.15)',
+    ...Platform.select({
+      ios: {
+        shadowColor: '#fff',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.12,
+        shadowRadius: 12,
+      },
+      android: {
+        elevation: 5,
+      },
+    }),
   },
   pickerHeader: {
     flexDirection: 'row',
@@ -471,6 +598,9 @@ export const styles = StyleSheet.create({
     borderLeftWidth: 4,
     borderLeftColor: '#03DAC6',
   },
+  infoCardGlass: {
+    backgroundColor: 'rgba(3, 218, 198, 0.1)',
+  },
   infoText: {
     color: '#AAAAAA',
     fontSize: 13,
@@ -517,8 +647,8 @@ export const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   toggleBtnActive: {
-    backgroundColor: '#5E35B1',
-    borderColor: '#BB86FC',
+    backgroundColor: '#1A1A1A',
+    borderColor: '#3B82F6',
   },
   toggleText: {
     color: '#888888',
@@ -544,6 +674,22 @@ export const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#2A2A2A',
     marginBottom: 16,
+  },
+  glassCard: {
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    borderColor: 'rgba(255, 255, 255, 0.25)',
+    borderWidth: 1.5,
+    ...Platform.select({
+      ios: {
+        shadowColor: '#fff',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.12,
+        shadowRadius: 10,
+      },
+      android: {
+        elevation: 4,
+      },
+    }),
   },
   settingsTitle: {
     fontSize: 24,
@@ -766,7 +912,7 @@ export const styles = StyleSheet.create({
     width: 32,
     height: 32,
     borderRadius: 16,
-    backgroundColor: '#5E35B1',
+    backgroundColor: '#3B3B3B',
     color: '#FFFFFF',
     fontSize: 16,
     fontWeight: 'bold',
@@ -921,7 +1067,7 @@ export const styles = StyleSheet.create({
     fontSize: 12,
   },
   resourceArrow: {
-    color: '#5E35B1',
+    color: '#666666',
     fontSize: 20,
     fontWeight: 'bold',
   },
@@ -931,11 +1077,11 @@ export const styles = StyleSheet.create({
     paddingHorizontal: 12,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#5E35B1',
+    borderColor: '#444444',
     marginTop: 6,
   },
   openSourceText: {
-    color: '#BB86FC',
+    color: '#888888',
     fontSize: 12,
     textAlign: 'center',
     fontWeight: '600',

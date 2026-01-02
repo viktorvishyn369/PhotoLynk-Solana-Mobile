@@ -205,7 +205,7 @@ const uploadOneAssetToStealthCloud = async ({
   asset, config, SERVER_URL, masterKey, already, fastModeEnabled,
   processedIndex, totalCount, onStatus, onProgress,
 }) => {
-  onStatus(`Encrypting ${processedIndex}/${totalCount || '?'}`);
+  onStatus(`Backing up ${processedIndex} of ${totalCount || '?'}`);
 
   let assetInfo;
   try {
@@ -285,7 +285,7 @@ const uploadOneAssetToStealthCloud = async ({
       await throttleEncryption(chunkIndex, fastModeEnabled);
       const boxed = nacl.secretbox(plaintext, nonce, fileKey);
       const chunkId = sha256.create().update(boxed).hex();
-      if (chunkIndex === 0) onStatus(`Uploading ${processedIndex}/${totalCount || '?'}`);
+      // Status already set at start of file processing
       await trackInFlightPromise(chunkUploadsInFlight, runChunkUpload(() => stealthCloudUploadEncryptedChunk({ SERVER_URL, config, chunkId, encryptedBytes: boxed })), maxChunkUploadsInFlight);
       chunkIds.push(chunkId); chunkSizes.push(plaintext.length);
       chunkIndex++; position += plaintext.length;
@@ -322,7 +322,7 @@ const uploadOneAssetToStealthCloud = async ({
               await throttleEncryption(chunkIndex, fastModeEnabled);
               const boxed = nacl.secretbox(plaintext, nonce, fileKey);
               const chunkId = sha256.create().update(boxed).hex();
-              if (chunkIndex === 0) onStatus(`Uploading ${processedIndex}/${totalCount || '?'}`);
+              // Status already set at start of file processing
               await trackInFlightPromise(chunkUploadsInFlight, runChunkUpload(() => stealthCloudUploadEncryptedChunk({ SERVER_URL, config, chunkId, encryptedBytes: boxed })), maxChunkUploadsInFlight);
               chunkIds.push(chunkId); chunkSizes.push(plaintext.length); chunkIndex++;
               if (totalCount) onProgress(processedIndex / totalCount);

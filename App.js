@@ -32,6 +32,7 @@ import {
 import Clipboard from '@react-native-clipboard/clipboard';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import FontAwesome5 from '@expo/vector-icons/FontAwesome5';
+import { BlurView } from 'expo-blur';
 import { styles, THEME } from './styles';
 import {
   sleep,
@@ -128,6 +129,7 @@ import {
   stealthCloudRestoreCore,
   localRemoteRestoreCore,
 } from './syncManager';
+import { computeExactFileHash, computePerceptualHash, findPerceptualHashMatch, extractBaseFilename, normalizeDateForCompare, normalizeFullTimestamp, extractExifForDedup, generateExifDedupKeys, CROSS_PLATFORM_DHASH_THRESHOLD } from './duplicateScanner';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -287,14 +289,48 @@ const computeIosHardwareId = async () => {
 
 const saveRestoreHistory = async (set) => {
   try {
+    const data = JSON.stringify([...set]);
+    const dataSize = new Blob([data]).size; // Approximate size in bytes
+
+    // Always try FileSystem first (handles large data)
     try {
-      await FileSystem.writeAsStringAsync(RESTORE_HISTORY_FILE, JSON.stringify([...set]));
+      await FileSystem.writeAsStringAsync(RESTORE_HISTORY_FILE, data);
     } catch (e) {
-      // ignore
+      console.warn('FileSystem save failed:', e.message);
     }
-    await SecureStore.setItemAsync(RESTORE_HISTORY_KEY, JSON.stringify([...set]));
+
+    // Only use SecureStore for small data to avoid 2048 byte limit
+    if (dataSize <= 1800) { // Leave some buffer below 2048 limit
+      try {
+        await SecureStore.setItemAsync(RESTORE_HISTORY_KEY, data);
+      } catch (e) {
+        console.warn('SecureStore save failed (size limit?):', e.message);
+      }
+    } else {
+      // For large data, try to save a compressed version or clear SecureStore
+      try {
+        await SecureStore.deleteItemAsync(RESTORE_HISTORY_KEY);
+      } catch (e) {
+        // ignore
+      }
+    }
   } catch (e) {
-    // ignore
+    console.warn('saveRestoreHistory failed:', e.message);
+  }
+};
+
+const clearRestoreHistory = async () => {
+  try {
+    await FileSystem.deleteAsync(RESTORE_HISTORY_FILE, { idempotent: true });
+    console.log('Cleared restore history file');
+  } catch (e) {
+    console.warn('Failed to clear restore history file:', e.message);
+  }
+  try {
+    await SecureStore.deleteItemAsync(RESTORE_HISTORY_KEY);
+    console.log('Cleared restore history from SecureStore');
+  } catch (e) {
+    console.warn('Failed to clear restore history from SecureStore:', e.message);
   }
 };
 
@@ -309,19 +345,7 @@ const clearLoginTimers = (timerRef) => {
 };
 
 const scheduleAuthProgressLabels = (loginLabelTimerRef, setAuthLoadingLabel) => {
-  clearLoginTimers(loginLabelTimerRef);
-  const timers = [];
-  setAuthLoadingLabel('Bonding...');
-
-  timers.push(setTimeout(() => {
-    setAuthLoadingLabel('Securing credentials...');
-  }, 2000));
-
-  timers.push(setTimeout(() => {
-    setAuthLoadingLabel('Generating operational token...');
-  }, 3000));
-
-  loginLabelTimerRef.current = timers;
+  // Removed - status messages now sync with actual operations
 };
 
 const resetAuthLoadingLabel = (loginStatusTimerRef, loginLabelTimerRef, setAuthLoadingLabel, label = 'Signing in...') => {
@@ -522,7 +546,7 @@ const fetchAllManifestsPaged = async (serverUrl, config) => {
 const GradientSpinner = ({ size = 80 }) => {
   const spinValue = useRef(new Animated.Value(0)).current;
   const pulseValue = useRef(new Animated.Value(0)).current;
-  
+
   useEffect(() => {
     const spin = Animated.loop(
       Animated.timing(spinValue, {
@@ -552,18 +576,18 @@ const GradientSpinner = ({ size = 80 }) => {
     pulse.start();
     return () => { spin.stop(); pulse.stop(); };
   }, [spinValue, pulseValue]);
-  
+
   const rotate = spinValue.interpolate({
     inputRange: [0, 1],
     outputRange: ['0deg', '360deg'],
   });
-  
+
   const scale = pulseValue.interpolate({
     inputRange: [0, 1],
     outputRange: [1, 1.1],
   });
-  // Petal spinner: soft purple “flower”
-  const colors = ['#a855f7', '#8b5cf6', '#7c3aed', '#6d28d9'];
+  // Petal spinner: soft blue “flower”
+  const colors = ['#60A5FA', '#3B82F6', '#2563EB', '#1D4ED8'];
   const petalCount = 8;
   const petals = [];
   for (let i = 0; i < petalCount; i++) {
@@ -597,7 +621,7 @@ const GradientSpinner = ({ size = 80 }) => {
       />
     );
   }
-  
+
   return (
     <Animated.View style={{ width: size, height: size, transform: [{ rotate }, { scale }] }}>
       {petals}
@@ -620,6 +644,32 @@ const GradientSpinner = ({ size = 80 }) => {
   );
 };
 
+// GlassCard component - conditionally renders BlurView or regular View based on glass mode
+const GlassCard = ({ children, style, glassEnabled, intensity = 80, tint = 'dark' }) => {
+  if (glassEnabled) {
+    return (
+      <BlurView
+        intensity={intensity}
+        tint={tint}
+        style={[
+          {
+            overflow: 'hidden',
+            borderRadius: 16,
+            borderWidth: 1,
+            borderColor: 'rgba(255, 255, 255, 0.15)',
+          },
+          style,
+        ]}
+      >
+        <View style={{ backgroundColor: 'rgba(0, 0, 0, 0.3)', flex: 1 }}>
+          {children}
+        </View>
+      </BlurView>
+    );
+  }
+  return <View style={style}>{children}</View>;
+};
+
 export default function App() {
   const [view, setView] = useState('loading'); // loading, auth, home, settings
   const [authMode, setAuthMode] = useState('login'); // login, register, forgot
@@ -633,6 +683,7 @@ export default function App() {
   const [remoteHost, setRemoteHost] = useState('');
   const [autoUploadEnabled, setAutoUploadEnabled] = useState(false);
   const [fastModeEnabled, setFastModeEnabled] = useState(false);
+  const [glassModeEnabled, setGlassModeEnabled] = useState(false);
   const [backupModeOpen, setBackupModeOpen] = useState(false);
   const [backupPickerOpen, setBackupPickerOpen] = useState(false);
   const [backupPickerAssets, setBackupPickerAssets] = useState([]);
@@ -736,21 +787,20 @@ export default function App() {
         setLocalHost(serverIp);
         setServerType('local');
         setQrScannerOpen(false);
-        
+
         // Save to SecureStore
         await SecureStore.setItemAsync('local_host', serverIp);
         await SecureStore.setItemAsync('server_type', 'local');
-        
-        Alert.alert(
+
+        showDarkAlert(
           'Connected!',
-          'Server IP set to ' + serverIp + ':' + parsed.port + (parsed.name ? '\n\nServer: ' + parsed.name : ''),
-          [{ text: 'OK' }]
+          'Server IP set to ' + serverIp + ':' + parsed.port + (parsed.name ? '\n\nServer: ' + parsed.name : '')
         );
       } else {
-        Alert.alert('Invalid QR Code', 'This QR code is not from PhotoLynk Server.');
+        showDarkAlert('Invalid QR Code', 'This QR code is not from PhotoLynk Server.');
       }
     } catch (e) {
-      Alert.alert('Invalid QR Code', 'Could not parse QR code data.');
+      showDarkAlert('Invalid QR Code', 'Could not parse QR code data.');
     }
   };
 
@@ -768,6 +818,42 @@ export default function App() {
   };
   const closeDarkAlert = () => setCustomAlert(null);
 
+  // Standardized result popup for backup/sync/cleanup operations
+  const showResultAlert = (type, stats) => {
+    const titles = {
+      backup: { success: 'Backup Complete', error: 'Backup Failed' },
+      sync: { success: 'Sync Complete', error: 'Sync Failed' },
+      clean: { success: 'Cleanup Complete', error: 'Cleanup Failed' },
+      delete: { success: 'Delete Complete', error: 'Delete Failed' },
+    };
+    const isError = stats.error;
+    const title = titles[type]?.[isError ? 'error' : 'success'] || (isError ? 'Error' : 'Complete');
+
+    let message = '';
+    if (isError) {
+      message = stats.error;
+    } else {
+      const lines = [];
+      if (type === 'backup') {
+        if (typeof stats.uploaded === 'number') lines.push(`✓ Uploaded: ${stats.uploaded}`);
+        if (typeof stats.skipped === 'number') lines.push(`○ Skipped: ${stats.skipped}`);
+        if (typeof stats.failed === 'number' && stats.failed > 0) lines.push(`✗ Failed: ${stats.failed}`);
+      } else if (type === 'sync') {
+        if (typeof stats.downloaded === 'number') lines.push(`✓ Downloaded: ${stats.downloaded}`);
+        if (typeof stats.skipped === 'number') lines.push(`○ Skipped: ${stats.skipped}`);
+        if (typeof stats.failed === 'number' && stats.failed > 0) lines.push(`✗ Failed: ${stats.failed}`);
+      } else if (type === 'clean') {
+        if (typeof stats.deleted === 'number') lines.push(`✓ Deleted: ${stats.deleted}`);
+        if (typeof stats.kept === 'number') lines.push(`○ Kept: ${stats.kept}`);
+      } else if (type === 'delete') {
+        if (typeof stats.deleted === 'number') lines.push(`✓ Deleted: ${stats.deleted}`);
+      }
+      message = lines.join('\n');
+    }
+
+    showDarkAlert(title, message);
+  };
+
   const openPaywall = (tierGb) => {
     setPaywallTierGb(tierGb);
   };
@@ -784,6 +870,11 @@ export default function App() {
   const persistFastModeEnabled = async (enabled) => {
     setFastModeEnabledSafe(enabled);
     try { await SecureStore.setItemAsync('fast_mode_enabled', enabled ? 'true' : 'false'); } catch (e) {}
+  };
+
+  const persistGlassModeEnabled = (enabled) => {
+    setGlassModeEnabled(enabled);
+    SecureStore.setItemAsync('glass_mode_enabled', enabled ? 'true' : 'false').catch(() => {});
   };
 
   useEffect(() => { autoUploadEnabledRef.current = !!autoUploadEnabled; }, [autoUploadEnabled]);
@@ -825,9 +916,9 @@ export default function App() {
     try {
       setPurchaseLoading(true);
       setStatus('Processing purchase...');
-      
+
       const result = await purchaseSubscription(tierGb);
-      
+
       if (result.success) {
         showDarkAlert('Success!', `Your ${tierGb === 1000 ? '1 TB' : tierGb + ' GB'} plan is now active.`);
         await refreshSubscriptionStatus();
@@ -849,9 +940,9 @@ export default function App() {
     try {
       setPurchaseLoading(true);
       setStatus('Restoring purchases...');
-      
+
       const result = await restorePurchases();
-      
+
       if (result.success && result.hasActiveSubscription) {
         showDarkAlert('Restored!', 'Your subscription has been restored.');
         await refreshSubscriptionStatus();
@@ -961,7 +1052,7 @@ export default function App() {
       return;
     }
     autoUploadNightRunnerStartingRef.current = true;
-    
+
     try {
       const now = Date.now();
       const canLog = (!autoUploadDebugLastLogMsRef.current || (now - autoUploadDebugLastLogMsRef.current) > 8000);
@@ -1141,10 +1232,20 @@ export default function App() {
         }
         let already = new Set(existingManifests.map(m => m.manifestId));
 
-        // Build filename set for cross-device duplicate detection (auto-upload has more time)
+        // Build deduplication sets for cross-device duplicate detection (auto-upload has more time)
         const alreadyFilenames = new Set();
+        const alreadyBaseFilenames = new Set();
+        const alreadyBaseNameSizes = new Map(); // baseFilename -> Set of sizes
+        const alreadyBaseNameDates = new Map(); // baseFilename -> Set of date strings (YYYY-MM-DD)
+        const alreadyBaseNameTimestamps = new Map(); // baseFilename -> Set of full timestamps (YYYY-MM-DDTHH:MM:SS) for HEIC
+        const alreadyPerceptualHashes = new Set();
+        const alreadyFileHashes = new Set();
+        // EXIF-based deduplication sets for cross-platform HEIC matching
+        const alreadyExifFull = new Set(); // captureTime|make|model (highest confidence)
+        const alreadyExifTimeModel = new Set(); // captureTime|model
+        const alreadyExifTimeMake = new Set(); // captureTime|make
         if (existingManifests.length > 0) {
-          setStatus('Auto-Backup: Checking existing files...');
+          setStatus('Auto-Backup: Preparing...');
           const masterKey = await getStealthCloudMasterKey();
           for (const m of existingManifests) {
             try {
@@ -1159,13 +1260,60 @@ export default function App() {
                 const manifest = JSON.parse(naclUtil.encodeUTF8(manifestPlain));
                 if (manifest.filename) {
                   alreadyFilenames.add(normalizeFilenameForCompare(manifest.filename));
+                  // Add base filename for variant matching
+                  const baseName = extractBaseFilename(manifest.filename);
+                  if (baseName) {
+                    alreadyBaseFilenames.add(baseName);
+                    // Build size map for fallback matching
+                    if (manifest.originalSize) {
+                      if (!alreadyBaseNameSizes.has(baseName)) alreadyBaseNameSizes.set(baseName, new Set());
+                      alreadyBaseNameSizes.get(baseName).add(manifest.originalSize);
+                    }
+                    // Build date map for fallback matching
+                    if (manifest.creationTime) {
+                      const dateStr = normalizeDateForCompare(manifest.creationTime);
+                      if (dateStr) {
+                        if (!alreadyBaseNameDates.has(baseName)) alreadyBaseNameDates.set(baseName, new Set());
+                        alreadyBaseNameDates.get(baseName).add(dateStr);
+                      }
+                      // Build full timestamp map for HEIC deduplication (second-level precision)
+                      const fullTimestamp = normalizeFullTimestamp(manifest.creationTime);
+                      if (fullTimestamp) {
+                        if (!alreadyBaseNameTimestamps.has(baseName)) alreadyBaseNameTimestamps.set(baseName, new Set());
+                        alreadyBaseNameTimestamps.get(baseName).add(fullTimestamp);
+                      }
+                    }
+                  }
+                }
+                // If manifest has perceptualHash, it's an image - use perceptual hash
+                if (manifest.perceptualHash) {
+                  alreadyPerceptualHashes.add(manifest.perceptualHash);
+                }
+                // Always add fileHash if present (for both images and videos)
+                // Images need fileHash for byte-identical dedup (AirDrop, copies)
+                if (manifest.fileHash) {
+                  alreadyFileHashes.add(manifest.fileHash);
+                }
+                // Build EXIF-based deduplication keys from manifest
+                // These are the real EXIF values extracted from the original file during upload
+                if (manifest.exifCaptureTime) {
+                  const ct = manifest.exifCaptureTime;
+                  const mk = manifest.exifMake;
+                  const md = manifest.exifModel;
+                  // Generate dedup keys at different confidence levels
+                  if (ct && mk && md) alreadyExifFull.add(`${ct}|${mk}|${md}`);
+                  if (ct && md) alreadyExifTimeModel.add(`${ct}|${md}`);
+                  if (ct && mk) alreadyExifTimeMake.add(`${ct}|${mk}`);
                 }
               }
             } catch (e) {
               // Skip manifests we can't decrypt
             }
           }
-          console.log(`AutoUpload: found ${alreadyFilenames.size} existing filenames for cross-device duplicate detection`);
+          console.log(`AutoUpload: found ${alreadyFilenames.size} filenames, ${alreadyBaseFilenames.size} base names, ${alreadyBaseNameSizes.size} name+size, ${alreadyBaseNameDates.size} name+date, ${alreadyBaseNameTimestamps.size} name+timestamp, ${alreadyPerceptualHashes.size} perceptual hashes, ${alreadyFileHashes.size} file hashes, ${alreadyExifFull.size} EXIF keys for deduplication`);
+          // Debug: log some sample filenames to verify they're being collected
+          const sampleFilenames = Array.from(alreadyFilenames).slice(0, 5);
+          console.log(`AutoUpload: sample filenames in set: ${JSON.stringify(sampleFilenames)}`);
         }
 
         let after = null;
@@ -1267,7 +1415,7 @@ export default function App() {
                 if (!page || page.hasNextPage !== true) {
                   console.log('AutoUpload: reached end of assets, clearing cursor and setting completion');
                   await SecureStore.deleteItemAsync(AUTO_UPLOAD_CURSOR_KEY);
-                  setStatus('Auto-Backup: All files uploaded');
+                  setStatus('Auto-Backup: Complete');
                   console.log('AutoUpload: full backup cycle complete, all photos backed up');
                   backupCompleted = true;
                 }
@@ -1283,10 +1431,10 @@ export default function App() {
             // Update status with current progress or completion
             console.log('AutoUpload: initial status - backupCompleted:', backupCompleted, 'cumulativeUploaded:', cumulativeUploaded, 'totalEstimatedCount:', totalEstimatedCount);
             if (backupCompleted || cumulativeUploaded === totalEstimatedCount) {
-              setStatus('Auto-Backup: All files uploaded');
+              setStatus('Auto-Backup: Complete');
               console.log('AutoUpload: showing completion message');
             } else {
-              setStatus(`Auto-Backup: ${cumulativeUploaded}/${totalEstimatedCount} uploaded`);
+              setStatus(`Auto-Backup: ${cumulativeUploaded} of ${totalEstimatedCount}`);
               console.log('AutoUpload: showing progress message');
             }
           }
@@ -1322,13 +1470,20 @@ export default function App() {
               config,
               SERVER_URL,
               existingManifestIds: already,
+              alreadyFilenames,
+              alreadyBaseNameSizes,
+              alreadyBaseNameDates,
+              alreadyBaseNameTimestamps,
+              alreadyPerceptualHashes,
+              alreadyFileHashes,
+              alreadyExifFull,
+              alreadyExifTimeModel,
+              alreadyExifTimeMake,
               fastMode: fastModeEnabledRef.current,
               onStatus: (phase) => {
                 if (totalEstimatedCount !== null && !autoUploadNightRunnerCancelRef.current && autoUploadEnabledRef.current) {
-                  if (phase === 'encrypting') {
-                    setStatus(`Auto-Backup: Encrypting ${cumulativeUploaded + 1}/${totalEstimatedCount}`);
-                  } else if (phase === 'uploading') {
-                    setStatus(`Auto-Backup: Uploading ${cumulativeUploaded + 1}/${totalEstimatedCount}`);
+                  if (phase === 'encrypting' || phase === 'uploading') {
+                    setStatus(`Auto-Backup: ${cumulativeUploaded + 1} of ${totalEstimatedCount}`);
                   }
                 }
               }
@@ -1339,7 +1494,7 @@ export default function App() {
               if (r.manifestId) already.add(r.manifestId);
               // Update status with current progress (only if not cancelled)
               if (totalEstimatedCount !== null && !autoUploadNightRunnerCancelRef.current && autoUploadEnabledRef.current) {
-                setStatus(`Auto-Backup: ${cumulativeUploaded}/${totalEstimatedCount} uploaded`);
+                setStatus(`Auto-Backup: ${cumulativeUploaded} of ${totalEstimatedCount}`);
               }
               console.log('AutoUpload: successfully uploaded asset:', asset.id, 'cumulative:', cumulativeUploaded);
             } else if (r && r.skipped) {
@@ -1348,16 +1503,16 @@ export default function App() {
               failed += 1;
               console.log('AutoUpload: upload failed for asset:', asset.id);
             }
-            
+
             // CPU cooldown between assets to reduce CPU pressure and phone heating
             const assetCooldown = getThrottleAssetCooldownMs();
             if (assetCooldown > 0) await sleep(assetCooldown);
-            
+
             // Thermal batch limit: long cooling pause every N assets
             const batchLimit = getThrottleBatchLimit();
             const batchCooldown = getThrottleBatchCooldownMs();
             if (batchCooldown > 0 && uploaded > 0 && uploaded % batchLimit === 0) {
-              setStatus(`Auto-Backup: Cooling down (batch ${Math.floor(uploaded / batchLimit)})...`);
+              setStatus('Auto-Backup: Pausing...');
               await sleep(batchCooldown);
             }
           }
@@ -1375,7 +1530,7 @@ export default function App() {
             // If we completed a full cycle and uploaded nothing, all photos are backed up
             if (uploaded === 0 && totalEstimatedCount !== null) {
               backupCompleted = true;
-              setStatus('Auto-Backup: All uploaded and no new files found');
+              setStatus('Auto-Backup: Complete');
               console.log('AutoUpload: full backup cycle complete, all photos backed up');
             }
           }
@@ -1423,7 +1578,7 @@ export default function App() {
       } catch (e) {}
       await deactivateKeepAwakeForAutoUpload();
 
-      // Schedule a quick re-check to pick up newly added photos/videos soon after completion
+      // Schedule a quick re-check to pick up newly added photos & videos soon after completion
       if (autoUploadEnabledRef.current && serverTypeRef.current === 'stealthcloud' && tokenRef.current) {
         setTimeout(() => {
           try {
@@ -1544,15 +1699,15 @@ export default function App() {
 
     const list = Array.isArray(assets) ? assets.filter(a => a && a.id) : [];
     if (list.length === 0) {
-      showDarkAlert('Select items', 'Choose photos/videos to back up.');
+      showDarkAlert('Select items', 'Choose photos & videos to back up.');
       return;
     }
 
-    setStatus('Preparing selection...');
-    setProgress(0);
     setLoadingSafe(true);
     setBackgroundWarnEligibleSafe(!autoUploadEnabledRef.current);
     setWasBackgroundedDuringWorkSafe(false);
+    setProgress(0);
+    setStatus('Preparing backup...');
 
     try {
       const config = await getAuthHeaders();
@@ -1566,8 +1721,6 @@ export default function App() {
       }
 
       const masterKey = await getStealthCloudMasterKey();
-      setStatus('Checking server files...');
-      const prepareStartTime = Date.now();
 
       let existingManifests = [];
       try {
@@ -1577,11 +1730,28 @@ export default function App() {
       }
       const already = new Set(existingManifests.map(m => m.manifestId));
 
-      // Build filename set by decrypting manifests (for cross-device duplicate detection)
+      // Build deduplication sets by decrypting manifests (for cross-device duplicate detection)
+      // Images: use perceptualHash only (ignore fileHash)
+      // Videos: use fileHash only (no perceptualHash)
       const alreadyFilenames = new Set();
+      const alreadyBaseFilenames = new Set();
+      const alreadyBaseNameSizes = new Map(); // baseFilename -> Set of sizes
+      const alreadyBaseNameDates = new Map(); // baseFilename -> Set of date strings (YYYY-MM-DD)
+      const alreadyBaseNameTimestamps = new Map(); // baseFilename -> Set of full timestamps (YYYY-MM-DDTHH:MM:SS) for HEIC
+      const alreadyFileHashes = new Set();
+      const alreadyPerceptualHashes = new Set();
       if (existingManifests.length > 0) {
-        setStatus('Checking server files...');
+        // iOS: Show analyzing message during dedup preparation (iOS uses hash-based dedup)
+        if (Platform.OS === 'ios') {
+          setStatus('Analyzing existing files...');
+        }
+        let manifestsProcessed = 0;
         for (const m of existingManifests) {
+          manifestsProcessed++;
+          // iOS: Update progress during manifest analysis (0-50% of prep phase)
+          if (Platform.OS === 'ios' && (manifestsProcessed === 1 || manifestsProcessed % 10 === 0)) {
+            setProgress(0.5 * (manifestsProcessed / existingManifests.length));
+          }
           try {
             const manRes = await axios.get(`${SERVER_URL}/api/cloud/manifests/${m.manifestId}`, { headers: config.headers, timeout: 15000 });
             const payload = manRes.data;
@@ -1594,19 +1764,50 @@ export default function App() {
               const manifest = JSON.parse(naclUtil.encodeUTF8(manifestPlain));
               if (manifest.filename) {
                 alreadyFilenames.add(normalizeFilenameForCompare(manifest.filename));
+                // Add base filename for variant matching
+                const baseName = extractBaseFilename(manifest.filename);
+                if (baseName) {
+                  alreadyBaseFilenames.add(baseName);
+                  // Build size map for fallback matching
+                  if (manifest.originalSize) {
+                    if (!alreadyBaseNameSizes.has(baseName)) alreadyBaseNameSizes.set(baseName, new Set());
+                    alreadyBaseNameSizes.get(baseName).add(manifest.originalSize);
+                  }
+                  // Build date map for fallback matching
+                  if (manifest.creationTime) {
+                    const dateStr = normalizeDateForCompare(manifest.creationTime);
+                    if (dateStr) {
+                      if (!alreadyBaseNameDates.has(baseName)) alreadyBaseNameDates.set(baseName, new Set());
+                      alreadyBaseNameDates.get(baseName).add(dateStr);
+                    }
+                    // Build full timestamp map for HEIC deduplication (second-level precision)
+                    const fullTimestamp = normalizeFullTimestamp(manifest.creationTime);
+                    if (fullTimestamp) {
+                      if (!alreadyBaseNameTimestamps.has(baseName)) alreadyBaseNameTimestamps.set(baseName, new Set());
+                      alreadyBaseNameTimestamps.get(baseName).add(fullTimestamp);
+                    }
+                  }
+                }
+              }
+              // If manifest has perceptualHash, it's an image - use perceptual hash
+              if (manifest.perceptualHash) {
+                alreadyPerceptualHashes.add(manifest.perceptualHash);
+              }
+              // Always add fileHash if present (for both images and videos)
+              // Images need fileHash for byte-identical dedup (AirDrop, copies)
+              if (manifest.fileHash) {
+                alreadyFileHashes.add(manifest.fileHash);
               }
             }
           } catch (e) {
             // Skip manifests we can't decrypt
           }
         }
-        console.log(`StealthCloud: found ${alreadyFilenames.size} existing filenames for cross-device duplicate detection`);
-      }
-
-      // Ensure "Preparing backup..." shows for at least 800ms for professional UX
-      const prepareElapsed = Date.now() - prepareStartTime;
-      if (prepareElapsed < 800) {
-        await sleep(800 - prepareElapsed);
+        console.log(`StealthCloud: found ${alreadyFilenames.size} filenames, ${alreadyBaseFilenames.size} base names, ${alreadyBaseNameSizes.size} name+size, ${alreadyBaseNameDates.size} name+date, ${alreadyBaseNameTimestamps.size} name+timestamp, ${alreadyFileHashes.size} file hashes, ${alreadyPerceptualHashes.size} perceptual hashes for deduplication`);
+        // iOS: Reset progress for backup phase
+        if (Platform.OS === 'ios') {
+          setProgress(0);
+        }
       }
 
       let uploaded = 0;
@@ -1615,6 +1816,14 @@ export default function App() {
 
       const totalCount = list.length;
       let processedIndex = 0;
+
+      // Optimization: Skip deduplication checks if no server files exist
+      const hasServerFiles = existingManifests.length > 0;
+      const shouldSkipDeduplication = !hasServerFiles;
+
+      if (shouldSkipDeduplication) {
+        console.log('StealthCloud: No server files found - skipping deduplication checks for faster upload');
+      }
 
       for (let j = 0; j < list.length; j++) {
         const asset = list[j];
@@ -1625,7 +1834,10 @@ export default function App() {
         }
 
         try {
-          setStatus(`Comparing ${processedIndex}/${totalCount}`);
+          // Show unified "Backing up X of Y" status
+          // Progress starts at beginning of file, ends at processedIndex/totalCount after upload
+          setStatus(`Backing up ${processedIndex} of ${totalCount}`);
+          setProgress((processedIndex - 1) / totalCount);
 
           let assetInfo;
           try {
@@ -1682,14 +1894,182 @@ export default function App() {
           const fileIdentity = computeFileIdentity(assetFilename, originalSize);
           const manifestId = fileIdentity ? sha256(`file:${fileIdentity}`) : sha256(`asset:${asset.id}`);
 
-          // Skip if already uploaded (by stable manifestId)
-          if (already.has(manifestId)) {
-            if (tmpCopied && tmpUri) await FileSystem.deleteAsync(tmpUri, { idempotent: true });
-            skipped += 1;
-            continue;
+          // Only perform deduplication checks if server has files
+          if (!shouldSkipDeduplication) {
+            // Skip if already uploaded (by stable manifestId)
+            if (already.has(manifestId)) {
+              if (tmpCopied && tmpUri) await FileSystem.deleteAsync(tmpUri, { idempotent: true });
+              skipped += 1;
+              setProgress(processedIndex / totalCount);
+              continue;
+            }
+
+            // Skip if filename already exists on server (fallback for old manifests without fileHash)
+            const normalizedFilename = assetFilename ? normalizeFilenameForCompare(assetFilename) : null;
+            if (normalizedFilename && alreadyFilenames.has(normalizedFilename)) {
+              console.log(`Skipping ${assetFilename} - filename already on server`);
+              if (tmpCopied && tmpUri) await FileSystem.deleteAsync(tmpUri, { idempotent: true });
+              skipped += 1;
+              setProgress(processedIndex / totalCount);
+              continue;
+            }
+            
+            // Cross-platform variant matching using base filename
+            const baseFilename = assetFilename ? extractBaseFilename(assetFilename) : null;
+            
+            // Debug: log why HEIC files aren't being caught by fallbacks
+            if (assetFilename && assetFilename.toLowerCase().endsWith('.heic')) {
+              const hasBaseNameSize = baseFilename && alreadyBaseNameSizes.has(baseFilename);
+              const hasBaseNameDate = baseFilename && alreadyBaseNameDates.has(baseFilename);
+              const hasBaseNameTimestamp = baseFilename && alreadyBaseNameTimestamps.has(baseFilename);
+              const assetTimestamp = asset.creationTime ? normalizeFullTimestamp(asset.creationTime) : null;
+              console.log(`[HEIC Debug] ${assetFilename}: base=${baseFilename}, size=${originalSize}, timestamp=${assetTimestamp}, hasBaseNameSize=${hasBaseNameSize}, hasBaseNameDate=${hasBaseNameDate}, hasBaseNameTimestamp=${hasBaseNameTimestamp}`);
+            }
+
+            // HEIC PRIORITY: Full timestamp match (most reliable for cross-platform HEIC dedup)
+            // HEIC files from iPhone and desktop have identical EXIF timestamps even if bytes differ
+            const assetTimestamp = asset.creationTime ? normalizeFullTimestamp(asset.creationTime) : null;
+            if (baseFilename && assetTimestamp && alreadyBaseNameTimestamps.has(baseFilename)) {
+              const existingTimestamps = alreadyBaseNameTimestamps.get(baseFilename);
+              if (existingTimestamps.has(assetTimestamp)) {
+                console.log(`Skipping ${assetFilename} - baseFilename+timestamp match (${baseFilename}, ${assetTimestamp})`);
+                if (tmpCopied && tmpUri) await FileSystem.deleteAsync(tmpUri, { idempotent: true });
+                skipped += 1;
+                setProgress(processedIndex / totalCount);
+                continue;
+              }
+            }
+            
+            // Fallback 1: base filename + size match (within 20% tolerance for re-compression)
+            let skipByBaseNameSize = false;
+            if (baseFilename && alreadyBaseNameSizes.has(baseFilename)) {
+              const existingSizes = alreadyBaseNameSizes.get(baseFilename);
+              for (const existingSize of existingSizes) {
+                const sizeDiff = Math.abs(originalSize - existingSize) / Math.max(originalSize, existingSize);
+                if (sizeDiff < 0.20) {
+                  console.log(`Skipping ${assetFilename} - baseFilename+size match (${baseFilename}, size diff ${(sizeDiff * 100).toFixed(1)}%)`);
+                  skipByBaseNameSize = true;
+                  break;
+                }
+              }
+            }
+            if (skipByBaseNameSize) {
+              if (tmpCopied && tmpUri) await FileSystem.deleteAsync(tmpUri, { idempotent: true });
+              skipped += 1;
+              setProgress(processedIndex / totalCount);
+              continue;
+            }
+
+            // Fallback 2: base filename + creation date match (day-level precision)
+            const assetDate = asset.creationTime ? normalizeDateForCompare(asset.creationTime) : null;
+            if (baseFilename && assetDate && alreadyBaseNameDates.has(baseFilename)) {
+              const existingDates = alreadyBaseNameDates.get(baseFilename);
+              if (existingDates.has(assetDate)) {
+                console.log(`Skipping ${assetFilename} - baseFilename+date match (${baseFilename}, ${assetDate})`);
+                if (tmpCopied && tmpUri) await FileSystem.deleteAsync(tmpUri, { idempotent: true });
+                skipped += 1;
+                setProgress(processedIndex / totalCount);
+                continue;
+              }
+            }
           }
 
-          setStatus(`Encrypting ${processedIndex}/${totalCount}`);
+          // Determine if this is an image or video
+          const isImage = asset.mediaType === 'photo' || (assetInfo && assetInfo.mediaType === 'photo');
+
+          // For IMAGES: use perceptual hash (transcoding-resistant)
+          // For VIDEOS: use exact file hash (byte-for-byte comparison)
+          let exactFileHash = null;
+          let perceptualHash = null;
+
+          // Only compute hashes for deduplication if server has files
+          if (!shouldSkipDeduplication) {
+            if (isImage) {
+              // Images: compute perceptual hash for transcoding-resistant deduplication
+              try {
+                perceptualHash = await computePerceptualHash(filePath, asset, assetInfo);
+                if (perceptualHash) {
+                  console.log(`[PerceptualHash] ${assetFilename}: ${perceptualHash} (${perceptualHash.length} chars)`);
+                }
+              } catch (e) {
+                console.warn('computePerceptualHash failed:', asset.id, e?.message);
+                perceptualHash = null;
+              }
+
+              // Skip if perceptual hash already exists on server (catches transcoded duplicates)
+              // Use fuzzy matching with cross-platform threshold
+              if (perceptualHash && findPerceptualHashMatch(perceptualHash, alreadyPerceptualHashes, CROSS_PLATFORM_DHASH_THRESHOLD)) {
+                console.log(`Skipping ${assetFilename} - visually identical image already on server (perceptual match)`);
+                if (tmpCopied && tmpUri) await FileSystem.deleteAsync(tmpUri, { idempotent: true });
+                skipped += 1;
+                setProgress(processedIndex / totalCount);
+                continue;
+              }
+
+              // Also compute exact hash for storage in manifest AND for byte-identical deduplication
+              // This catches AirDropped/copied files that have different perceptual hashes due to decoder differences
+              try {
+                exactFileHash = await computeExactFileHash(filePath);
+              } catch (e) {
+                console.warn('computeExactFileHash failed:', asset.id, e?.message);
+              }
+
+              // Skip if exact file hash matches (catches byte-identical copies like AirDrop)
+              if (exactFileHash && alreadyFileHashes && alreadyFileHashes.has(exactFileHash)) {
+                console.log(`Skipping ${assetFilename} - exact file hash already on server (byte-identical)`);
+                if (tmpCopied && tmpUri) await FileSystem.deleteAsync(tmpUri, { idempotent: true });
+                skipped += 1;
+                setProgress(processedIndex / totalCount);
+                continue;
+              }
+            } else {
+              // Videos: compute exact file hash for byte-for-byte deduplication
+              try {
+                exactFileHash = await computeExactFileHash(filePath);
+                console.log(`[FileHash] ${assetFilename}: ${exactFileHash ? exactFileHash.substring(0, 16) + '...' : 'null'}`);
+              } catch (e) {
+                console.warn('computeExactFileHash failed:', asset.id, e?.message);
+                exactFileHash = null;
+              }
+
+              // Skip if exact file hash already exists on server
+              if (exactFileHash && alreadyFileHashes.has(exactFileHash)) {
+                console.log(`Skipping ${assetFilename} - exact file hash already on server`);
+                if (tmpCopied && tmpUri) await FileSystem.deleteAsync(tmpUri, { idempotent: true });
+                skipped += 1;
+                setProgress(processedIndex / totalCount);
+                continue;
+              }
+            }
+          }
+
+          // Always compute hashes for manifest storage (even if skipping deduplication)
+          if (shouldSkipDeduplication) {
+            if (isImage) {
+              try {
+                perceptualHash = await computePerceptualHash(filePath, asset, assetInfo);
+                if (perceptualHash) {
+                  console.log(`[PerceptualHash] ${assetFilename}: ${perceptualHash} (${perceptualHash.length} chars)`);
+                }
+              } catch (e) {
+                console.warn('computePerceptualHash failed:', asset.id, e?.message);
+              }
+              try {
+                exactFileHash = await computeExactFileHash(filePath);
+              } catch (e) {
+                console.warn('computeExactFileHash failed:', asset.id, e?.message);
+              }
+            } else {
+              try {
+                exactFileHash = await computeExactFileHash(filePath);
+                console.log(`[FileHash] ${assetFilename}: ${exactFileHash ? exactFileHash.substring(0, 16) + '...' : 'null'}`);
+              } catch (e) {
+                console.warn('computeExactFileHash failed:', asset.id, e?.message);
+              }
+            }
+          }
+
+          // Status already set to "Backing up X of Y" above
 
           const fileKey = new Uint8Array(32);
           global.crypto.getRandomValues(fileKey);
@@ -1712,11 +2092,7 @@ export default function App() {
           if (Platform.OS === 'ios') {
             const fileUri = filePath.startsWith('/') ? `file://${filePath}` : (filePath || tmpUri);
 
-            setStatus(
-              originalSize
-                ? `Encrypting ${processedIndex}/${totalCount || '?'} • ${formatBytesHumanDecimal(originalSize)}`
-                : `Encrypting ${processedIndex}/${totalCount || '?'}`
-            );
+            // Status already set to "Backing up X of Y" above
 
             maxChunkUploadsInFlight = Math.max(1, chooseStealthCloudMaxParallelChunkUploads({ platform: 'ios', originalSize, fastMode: fastModeEnabledRef.current }));
             runChunkUpload = createConcurrencyLimiter(maxChunkUploadsInFlight);
@@ -1744,13 +2120,10 @@ export default function App() {
               if (!plaintext || plaintext.length === 0) break;
 
               const nonce = makeChunkNonce(baseNonce16, chunkIndex);
-              await throttleEncryption(chunkIndex); // CPU throttle to prevent overheating
+              await throttleEncryption(chunkIndex, fastModeEnabledRef.current);
               const boxed = nacl.secretbox(plaintext, nonce, fileKey);
               const chunkId = sha256.create().update(boxed).hex();
-              // Switch to "Uploading" status after first chunk encrypted
-              if (chunkIndex === 0) {
-                setStatus(`Uploading ${processedIndex}/${totalCount}`);
-              }
+              // Keep status as "Backing up X of Y" - unified message
               await trackInFlightPromise(
                 chunkUploadsInFlight,
                 runChunkUpload(() => stealthCloudUploadEncryptedChunk({ SERVER_URL, config, chunkId, encryptedBytes: boxed })),
@@ -1786,11 +2159,7 @@ export default function App() {
             const stat = await ReactNativeBlobUtil.fs.stat(filePath);
             originalSize = stat && stat.size ? Number(stat.size) : null;
 
-            setStatus(
-              originalSize
-                ? `Encrypting ${processedIndex}/${totalCount || '?'} • ${formatBytesHumanDecimal(originalSize)}`
-                : `Encrypting ${processedIndex}/${totalCount || '?'}`
-            );
+            // Status already set to "Backing up X of Y" above
             maxChunkUploadsInFlight = Math.max(1, chooseStealthCloudMaxParallelChunkUploads({ platform: 'android', originalSize, fastMode: fastModeEnabledRef.current }));
             runChunkUpload = createConcurrencyLimiter(maxChunkUploadsInFlight);
             chunkPlainBytes = chooseStealthCloudChunkBytes({ platform: 'android', originalSize, fastMode: fastModeEnabledRef.current });
@@ -1815,13 +2184,10 @@ export default function App() {
                       const nextB64 = queue.shift();
                       const plaintext = naclUtil.decodeBase64(nextB64);
                       const nonce = makeChunkNonce(baseNonce16, chunkIndex);
-                      await throttleEncryption(chunkIndex); // CPU throttle to prevent overheating
+                      await throttleEncryption(chunkIndex, fastModeEnabledRef.current);
                       const boxed = nacl.secretbox(plaintext, nonce, fileKey);
                       const chunkId = sha256.create().update(boxed).hex();
-                      // Switch to "Uploading" status after first chunk encrypted
-                      if (chunkIndex === 0) {
-                        setStatus(`Uploading ${processedIndex}/${totalCount}`);
-                      }
+                      // Keep status as "Backing up X of Y" - unified message
                       await trackInFlightPromise(
                         chunkUploadsInFlight,
                         runChunkUpload(() => stealthCloudUploadEncryptedChunk({ SERVER_URL, config, chunkId, encryptedBytes: boxed })),
@@ -1872,17 +2238,27 @@ export default function App() {
             throw new Error('StealthCloud backup read 0 bytes (no chunks).');
           }
 
+          // Extract real EXIF data from file for cross-platform deduplication
+          const exifData = extractExifForDedup(assetInfo, asset);
+
           const manifest = {
             v: 1,
             assetId: asset.id,
             filename: assetInfo.filename || asset.filename || null,
             mediaType: asset.mediaType || null,
             originalSize,
+            creationTime: asset.creationTime || null,
+            // EXIF data for cross-platform HEIC deduplication
+            exifCaptureTime: exifData.captureTime || null,
+            exifMake: exifData.make || null,
+            exifModel: exifData.model || null,
             baseNonce16: naclUtil.encodeBase64(baseNonce16),
             wrapNonce: naclUtil.encodeBase64(wrapNonce),
             wrappedFileKey: naclUtil.encodeBase64(wrappedKey),
             chunkIds,
-            chunkSizes
+            chunkSizes,
+            fileHash: exactFileHash,
+            perceptualHash: perceptualHash,
           };
 
           const manifestPlain = naclUtil.decodeUTF8(JSON.stringify(manifest));
@@ -1895,8 +2271,8 @@ export default function App() {
           });
 
           // Retry manifest upload up to 3 times
-          await withRetries(async () => {
-            await axios.post(
+          const manifestResponse = await withRetries(async () => {
+            return await axios.post(
               `${SERVER_URL}/api/cloud/manifests`,
               { manifestId, encryptedManifest, chunkCount: chunkIds.length },
               { headers: config.headers, timeout: 30000 }
@@ -1907,16 +2283,27 @@ export default function App() {
             maxDelayMs: 30000,
             shouldRetry: shouldRetryChunkUpload
           });
+
+          // Check if server rejected as duplicate (server-side deduplication)
+          if (manifestResponse?.data?.skipped) {
+            console.log(`Server rejected ${assetFilename} as duplicate (reason: ${manifestResponse.data.reason || 'unknown'})`);
+            skipped += 1;
+            continue;
+          }
+
           uploaded += 1;
+          already.add(manifestId);
+          if (exactFileHash) alreadyFileHashes.add(exactFileHash);
+          if (perceptualHash) alreadyPerceptualHashes.add(perceptualHash);
 
           if (tmpCopied && tmpUri) {
             await FileSystem.deleteAsync(tmpUri, { idempotent: true });
           }
-          
+
           // CPU cooldown between assets to reduce phone heating
           const assetCooldown = getThrottleAssetCooldownMs();
           if (assetCooldown > 0) await sleep(assetCooldown);
-          
+
           // Thermal batch limit: long cooling pause every N assets
           const batchLimit = getThrottleBatchLimit();
           if (uploaded > 0 && uploaded % batchLimit === 0) {
@@ -1929,20 +2316,25 @@ export default function App() {
       }
 
       if (uploaded === 0 && skipped === 0 && failed === 0) {
+        setProgress(1);
         setStatus(
           Platform.OS === 'ios'
             ? 'No photos visible to the app yet. If you chose "Selected Photos" / Limited access, pick photos or switch to Full Access in iOS Settings.'
             : 'No items processed'
         );
+        await sleep(1000);
+        setProgress(0);
         return;
       }
 
+      setProgress(1);
+      await sleep(300);
       setStatus('Backup complete');
-      showDarkAlert('Backup Complete', `Uploaded: ${uploaded}\nSkipped: ${skipped}\nFailed: ${failed}`);
+      showResultAlert('backup', { uploaded, skipped, failed });
     } catch (e) {
       console.error('StealthCloud backup error:', e);
       setStatus('Backup error');
-      showDarkAlert('Backup Error', e && e.message ? e.message : 'Unknown error');
+      showResultAlert('backup', { error: e && e.message ? e.message : 'Unknown error' });
     } finally {
       setLoadingSafe(false);
       setBackgroundWarnEligibleSafe(false);
@@ -1953,7 +2345,7 @@ export default function App() {
   const backupSelectedAssets = async ({ assets }) => {
     const list = Array.isArray(assets) ? assets.filter(a => a && a.id) : [];
     if (list.length === 0) {
-      showDarkAlert('Select items', 'Choose photos/videos to back up.');
+      showDarkAlert('Select items', 'Choose photos & videos to back up.');
       return;
     }
 
@@ -1971,14 +2363,13 @@ export default function App() {
       return;
     }
 
-    setStatus('Preparing selection...');
-    setProgress(0);
     setLoadingSafe(true);
     setBackgroundWarnEligibleSafe(!autoUploadEnabledRef.current);
     setWasBackgroundedDuringWorkSafe(false);
+    setProgress(0);
+    setStatus('Preparing backup...');
 
     try {
-      setStatus('Checking server files...');
       const config = await getAuthHeaders();
       const SERVER_URL = getServerUrl();
       const allServerFiles = await fetchAllServerFilesPaged(SERVER_URL, config);
@@ -1998,7 +2389,7 @@ export default function App() {
       const toUpload = [];
       for (let i = 0; i < list.length; i++) {
         const asset = list[i];
-        setStatus(`Comparing ${i + 1}/${list.length}`);
+        setStatus(`Analyzing ${i + 1} of ${list.length}`);
         if (excludedIds.has(asset.id)) continue;
 
         let actualFilename = normalizeFilenameForCompare(asset && asset.filename ? asset.filename : null);
@@ -2022,9 +2413,8 @@ export default function App() {
         return;
       }
 
-      // Show summary before starting
-      setStatus(`Ready to backup ${toUpload.length} of ${list.length} files...`);
-      await new Promise(resolve => setTimeout(resolve, 1000)); // Brief pause to show message
+      // Brief pause before starting uploads
+      await new Promise(resolve => setTimeout(resolve, 500));
 
       let successCount = 0;
       let failedCount = 0;
@@ -2035,7 +2425,7 @@ export default function App() {
           if (!(await ensureAutoUploadPolicyAllowsWorkIfBackgrounded())) {
             break;
           }
-          setStatus(`Uploading ${i + 1}/${toUpload.length}`);
+          setStatus(`Backing up ${i + 1} of ${toUpload.length}`);
 
           const assetInfo = await MediaLibrary.getAssetInfoAsync(asset.id);
           const resolved = await resolveReadableFilePath({ assetId: asset.id, assetInfo });
@@ -2051,8 +2441,8 @@ export default function App() {
 
           // iOS: use FOREGROUND for HTTP since background sessions require HTTPS
           const isHttps = SERVER_URL.startsWith('https://');
-          const sessionType = (Platform.OS === 'ios' && !isHttps) 
-            ? FileSystem.FileSystemSessionType.FOREGROUND 
+          const sessionType = (Platform.OS === 'ios' && !isHttps)
+            ? FileSystem.FileSystemSessionType.FOREGROUND
             : FileSystem.FileSystemSessionType.BACKGROUND;
           const uploadRes = await FileSystem.uploadAsync(`${SERVER_URL}/api/upload/raw`, fileUri, {
             httpMethod: 'POST',
@@ -2080,10 +2470,10 @@ export default function App() {
 
       const skippedCount = list.length - toUpload.length;
       setStatus('Backup complete');
-      showDarkAlert('Backup Complete', `Uploaded: ${successCount}\nSkipped: ${skippedCount}\nFailed: ${failedCount}`);
+      showResultAlert('backup', { uploaded: successCount, skipped: skippedCount, failed: failedCount });
     } catch (error) {
       setStatus('Backup error');
-      showDarkAlert('Backup Error', error && error.message ? error.message : 'Unknown error');
+      showResultAlert('backup', { error: error && error.message ? error.message : 'Unknown error' });
     } finally {
       setLoadingSafe(false);
       setBackgroundWarnEligibleSafe(false);
@@ -2270,7 +2660,7 @@ export default function App() {
 
   const startSimilarShotsReview = async () => {
     setBackgroundWarnEligibleSafe(false); setWasBackgroundedDuringWorkSafe(false); setLoadingSafe(true);
-    setStatus('Scanning for similar photos...');
+    setStatus('Analyzing photos...');
     try {
       // Check permission first
       const permission = await MediaLibrary.requestPermissionsAsync();
@@ -2287,20 +2677,21 @@ export default function App() {
         resolveReadableFilePath,
         onProgress: (current, total, status) => {
           setStatus(status || `Analyzing ${current}/${total} photos...`);
+          setProgress(total > 0 ? current / total : 0);
         }
       });
 
-      if (!groups || groups.length === 0) { 
-        setStatus('No similar photos'); 
-        showDarkAlert('Similar Photos', 'No similar photo groups found.'); 
-        setLoadingSafe(false); 
-        return; 
+      if (!groups || groups.length === 0) {
+        setStatus('No similar photos found');
+        showDarkAlert('Similar Photos', 'No similar photo groups found.');
+        setLoadingSafe(false);
+        return;
       }
       setLoadingSafe(false);
       openSimilarGroup({ groups, index: 0 });
     } catch (e) {
       setLoadingSafe(false);
-      showDarkAlert('Similar Photos', e?.message || 'Could not scan for similar photos.');
+      showDarkAlert('Similar Photos', e?.message || 'Could not scan for photos.');
     }
   };
 
@@ -2400,7 +2791,7 @@ export default function App() {
       showDarkAlert('Sync list failed', detail);
     } finally { setSyncPickerLoading(false); }
   };
-  
+
   const loadMoreSyncPickerItems = () => {
     if (syncPickerLoadingMore || syncPickerLoading) return;
     setSyncPickerLoadingMore(true);
@@ -2477,7 +2868,7 @@ export default function App() {
       }
     })();
   };
-  
+
   const syncPickerHasMore = (syncPickerTotal > 0 && syncPickerOffset < syncPickerTotal);
 
   const closeSyncPicker = () => { setSyncPickerOpen(false); resetSyncPickerState(); };
@@ -2492,7 +2883,11 @@ export default function App() {
     return selected;
   };
 
-  useEffect(() => { checkLogin(); }, []);
+  useEffect(() => {
+    checkLogin();
+    // Clear sync picker state on app launch to prevent stale data
+    resetSyncPickerState();
+  }, []);
 
   // Initialize RevenueCat when app starts
   useEffect(() => {
@@ -2614,7 +3009,7 @@ export default function App() {
           setStatus('Idle');
         }
       }
-      
+
       // iOS: show paused status when backgrounded (Android has foreground service)
       if (Platform.OS === 'ios' && nextState === 'background' && autoUploadEnabledRef.current && serverTypeRef.current === 'stealthcloud') {
         setStatus('Auto-backup paused (backgrounded)');
@@ -2648,10 +3043,10 @@ export default function App() {
   // Battery listener: triggers auto-upload when charging starts
   useEffect(() => {
     if (!autoUploadEnabled || serverType !== 'stealthcloud' || !token) return;
-    
+
     let sub = null;
     let pollInterval = null;
-    
+
     try {
       sub = Battery.addBatteryStateListener(({ batteryState }) => {
         console.log('AutoUpload: battery state changed', batteryState);
@@ -2662,7 +3057,7 @@ export default function App() {
     } catch (e) {
       console.log('AutoUpload: failed to add battery listener', e);
     }
-    
+
     // Android: poll every 10s as fallback (listener unreliable on some devices)
     if (Platform.OS === 'android') {
       pollInterval = setInterval(() => {
@@ -2671,7 +3066,7 @@ export default function App() {
         }
       }, 10000);
     }
-    
+
     return () => {
       if (sub) {
         try { sub.remove(); } catch (e) {}
@@ -2849,7 +3244,7 @@ export default function App() {
       return false;
     }
   };
-  
+
   /**
    * Perform thermal cooldown pause with status update.
    * @param {number} batchCount - Current batch number
@@ -2864,25 +3259,55 @@ export default function App() {
 
   useEffect(() => {
     if (view !== 'about') return;
-    if (serverType !== 'stealthcloud') return;
-    if (!token) return;
 
     let cancelled = false;
 
     const fetchStealthCloudUsage = async () => {
-      if (serverType !== 'stealthcloud') return null;
+      // Check serverType from state or SecureStore
+      let effectiveServerType = serverType;
+      if (!effectiveServerType || effectiveServerType === 'local') {
+        try {
+          const storedType = await SecureStore.getItemAsync('server_type');
+          if (storedType) effectiveServerType = storedType;
+        } catch (e) {}
+      }
+
+      console.log('[StealthCloud] fetchUsage - serverType:', effectiveServerType, 'token:', token ? 'present' : 'null');
+
+      if (effectiveServerType !== 'stealthcloud') return;
+
+      // Get token from state or SecureStore
+      let effectiveToken = token;
+      if (!effectiveToken) {
+        try {
+          effectiveToken = await SecureStore.getItemAsync('auth_token');
+        } catch (e) {}
+      }
+
+      if (!effectiveToken) {
+        console.log('[StealthCloud] No token, skipping usage fetch');
+        return;
+      }
+
       try {
         setStealthUsageLoading(true);
         setStealthUsageError(null);
 
+        // Small delay to ensure auth state is fully settled after login
+        await new Promise(resolve => setTimeout(resolve, 100));
+        if (cancelled) return;
+
         const config = await getAuthHeaders();
         const base = getServerUrl();
+        console.log('[StealthCloud] Fetching usage from:', `${base}/api/cloud/usage`);
         const res = await axios.get(`${base}/api/cloud/usage`, { ...config, timeout: 10000 });
         const data = res && res.data ? res.data : null;
+        console.log('[StealthCloud] Usage data received:', JSON.stringify(data, null, 2));
         if (cancelled) return;
         setStealthUsage(data);
       } catch (e) {
         if (cancelled) return;
+        console.log('[StealthCloud] Usage fetch error:', e?.message);
         const msg = (e && e.response && e.response.data && e.response.data.error)
           ? String(e.response.data.error)
           : (e && e.message ? String(e.message) : 'Usage check failed');
@@ -2920,7 +3345,7 @@ export default function App() {
    * Backs up all photos to StealthCloud with end-to-end encryption.
    * This is the "Backup All" flow for StealthCloud.
    * @platform Both
-   * 
+   *
    * Process:
    * 1. Request photo permissions
    * 2. Check subscription status
@@ -2995,11 +3420,11 @@ export default function App() {
       return;
     }
 
-    setStatus('Scanning local media...');
-    setProgress(0);
     setLoadingSafe(true);
     setBackgroundWarnEligibleSafe(!autoUploadEnabledRef.current);
     setWasBackgroundedDuringWorkSafe(false);
+    setProgress(0);
+    setStatus('Preparing backup...');
 
     try {
       const config = await getAuthHeaders();
@@ -3013,8 +3438,6 @@ export default function App() {
       }
 
       const masterKey = await getStealthCloudMasterKey();
-      setStatus('Checking server files...');
-      const prepareStartTime = Date.now();
 
       const PAGE_SIZE = 250;
       let after = null;
@@ -3030,10 +3453,21 @@ export default function App() {
       }
       const already = new Set(existingManifests.map(m => m.manifestId));
 
-      // Build filename set by decrypting manifests (for cross-device duplicate detection)
+      // Build deduplication sets by decrypting manifests (for cross-device duplicate detection)
+      // Images: use perceptualHash only (ignore fileHash)
+      // Videos: use fileHash only (no perceptualHash)
       const alreadyFilenames = new Set();
+      const alreadyBaseFilenames = new Set();
+      const alreadyBaseNameSizes = new Map(); // baseFilename -> Set of sizes
+      const alreadyBaseNameDates = new Map(); // baseFilename -> Set of date strings (YYYY-MM-DD)
+      const alreadyBaseNameTimestamps = new Map(); // baseFilename -> Set of full timestamps (YYYY-MM-DDTHH:MM:SS) for HEIC
+      const alreadyFileHashes = new Set();
+      const alreadyPerceptualHashes = new Set();
+      // EXIF-based deduplication sets for cross-platform HEIC matching
+      const alreadyExifFull = new Set(); // captureTime|make|model (highest confidence)
+      const alreadyExifTimeModel = new Set(); // captureTime|model
+      const alreadyExifTimeMake = new Set(); // captureTime|make
       if (existingManifests.length > 0) {
-        setStatus('Checking server files...');
         for (const m of existingManifests) {
           try {
             const manRes = await axios.get(`${SERVER_URL}/api/cloud/manifests/${m.manifestId}`, { headers: config.headers, timeout: 15000 });
@@ -3047,27 +3481,70 @@ export default function App() {
               const manifest = JSON.parse(naclUtil.encodeUTF8(manifestPlain));
               if (manifest.filename) {
                 alreadyFilenames.add(normalizeFilenameForCompare(manifest.filename));
+                // Add base filename for variant matching
+                const baseName = extractBaseFilename(manifest.filename);
+                if (baseName) {
+                  alreadyBaseFilenames.add(baseName);
+                  // Build size map for fallback matching
+                  if (manifest.originalSize) {
+                    if (!alreadyBaseNameSizes.has(baseName)) alreadyBaseNameSizes.set(baseName, new Set());
+                    alreadyBaseNameSizes.get(baseName).add(manifest.originalSize);
+                  }
+                  // Build date map for fallback matching
+                  if (manifest.creationTime) {
+                    const dateStr = normalizeDateForCompare(manifest.creationTime);
+                    if (dateStr) {
+                      if (!alreadyBaseNameDates.has(baseName)) alreadyBaseNameDates.set(baseName, new Set());
+                      alreadyBaseNameDates.get(baseName).add(dateStr);
+                    }
+                    // Build full timestamp map for HEIC deduplication (second-level precision)
+                    const fullTimestamp = normalizeFullTimestamp(manifest.creationTime);
+                    if (fullTimestamp) {
+                      if (!alreadyBaseNameTimestamps.has(baseName)) alreadyBaseNameTimestamps.set(baseName, new Set());
+                      alreadyBaseNameTimestamps.get(baseName).add(fullTimestamp);
+                    }
+                  }
+                }
+              }
+              // If manifest has perceptualHash, it's an image - use perceptual hash
+              if (manifest.perceptualHash) {
+                alreadyPerceptualHashes.add(manifest.perceptualHash);
+              }
+              // Always add fileHash if present (for both images and videos)
+              // Images need fileHash for byte-identical dedup (AirDrop, copies)
+              if (manifest.fileHash) {
+                alreadyFileHashes.add(manifest.fileHash);
+              }
+              // Build EXIF-based deduplication keys from manifest
+              // These are the real EXIF values extracted from the original file during upload
+              if (manifest.exifCaptureTime) {
+                const ct = manifest.exifCaptureTime;
+                const mk = manifest.exifMake;
+                const md = manifest.exifModel;
+                // Generate dedup keys at different confidence levels
+                if (ct && mk && md) alreadyExifFull.add(`${ct}|${mk}|${md}`);
+                if (ct && md) alreadyExifTimeModel.add(`${ct}|${md}`);
+                if (ct && mk) alreadyExifTimeMake.add(`${ct}|${mk}`);
               }
             }
           } catch (e) {
             // Skip manifests we can't decrypt (different key, corrupted, etc.)
           }
         }
-        console.log(`StealthCloud: found ${alreadyFilenames.size} existing filenames for cross-device duplicate detection`);
-      }
-
-      // Ensure "Preparing backup..." shows for at least 800ms for professional UX
-      const prepareElapsed = Date.now() - prepareStartTime;
-      if (prepareElapsed < 800) {
-        await sleep(800 - prepareElapsed);
+        console.log(`StealthCloud: found ${alreadyFilenames.size} filenames, ${alreadyBaseFilenames.size} base names, ${alreadyBaseNameSizes.size} name+size, ${alreadyBaseNameDates.size} name+date, ${alreadyBaseNameTimestamps.size} name+timestamp, ${alreadyFileHashes.size} file hashes, ${alreadyPerceptualHashes.size} perceptual hashes, ${alreadyExifFull.size} EXIF keys for deduplication`);
       }
 
       let uploaded = 0;
       let skipped = 0;
       let failed = 0;
 
-      const IOS_INITIAL_PAGE_MAX_WAIT_MS = 180000;
-      const IOS_INITIAL_PAGE_ATTEMPTS = Math.max(1, Math.ceil(IOS_INITIAL_PAGE_MAX_WAIT_MS / 500));
+      // Optimization: Skip deduplication checks if no server files exist
+      const hasServerFiles = existingManifests.length > 0;
+      const shouldSkipDeduplication = !hasServerFiles;
+
+      if (shouldSkipDeduplication) {
+        console.log('StealthCloud: No server files found - skipping deduplication checks for faster upload');
+      }
 
       const mediaTypeQuery = Platform.OS === 'ios'
         ? [MediaLibrary.MediaType.photo, MediaLibrary.MediaType.video]
@@ -3077,37 +3554,12 @@ export default function App() {
         : undefined;
 
       while (true) {
-        let page = null;
-        const maxAttempts = (Platform.OS === 'ios' && processedIndex === 0 && !after)
-          ? IOS_INITIAL_PAGE_ATTEMPTS
-          : 1;
-
-        if (Platform.OS === 'ios' && maxAttempts > 1) {
-          try {
-            await MediaLibrary.getAlbumsAsync();
-          } catch (e) {
-            // ignore
-          }
-        }
-
-        for (let attempt = 0; attempt < maxAttempts; attempt++) {
-          page = await MediaLibrary.getAssetsAsync({
-            first: PAGE_SIZE,
-            after: after || undefined,
-            mediaType: mediaTypeQuery,
-            sortBy: sortByQuery,
-          });
-
-          const assetsNow = page && Array.isArray(page.assets) ? page.assets : [];
-          // iOS can return 0 items right after the permission prompt / app launch.
-          if (maxAttempts > 1 && assetsNow.length === 0 && attempt < (maxAttempts - 1)) {
-            const waitedSec = Math.round(((attempt + 1) * 500) / 1000);
-            setStatus(`Waiting for Photos to become available... (${waitedSec}s)`);
-            await new Promise(r => setTimeout(r, 500));
-            continue;
-          }
-          break;
-        }
+        const page = await MediaLibrary.getAssetsAsync({
+          first: PAGE_SIZE,
+          after: after || undefined,
+          mediaType: mediaTypeQuery,
+          sortBy: sortByQuery,
+        });
 
         if (totalCount === null && page && typeof page.totalCount === 'number') {
           totalCount = page.totalCount;
@@ -3116,7 +3568,10 @@ export default function App() {
         const assets = page && Array.isArray(page.assets) ? page.assets : [];
         if (assets.length === 0) {
           if (processedIndex === 0) {
-            setStatus('No photos/videos found');
+            setProgress(1);
+            setStatus('No files on device');
+            await sleep(1500);
+            setStatus('Idle');
             setLoadingSafe(false);
             setBackgroundWarnEligibleSafe(false);
             setProgress(0);
@@ -3135,7 +3590,9 @@ export default function App() {
 
         try {
 
-        setStatus(`Comparing ${processedIndex}/${totalCount || '?'}`);
+        // Show unified "Backing up X of Y" status
+        setStatus(`Backing up ${processedIndex} of ${totalCount || '?'}`);
+        if (totalCount) setProgress(processedIndex / totalCount);
 
         let assetInfo;
         try {
@@ -3192,14 +3649,156 @@ export default function App() {
         const fileIdentity = computeFileIdentity(assetFilename, originalSize);
         const manifestId = fileIdentity ? sha256(`file:${fileIdentity}`) : sha256(`asset:${asset.id}`);
 
-        // Skip if already uploaded (by stable manifestId)
-        if (already.has(manifestId)) {
-          if (tmpCopied && tmpUri) await FileSystem.deleteAsync(tmpUri, { idempotent: true });
-          skipped++;
-          continue;
+        // Only perform deduplication checks if server has files
+        if (!shouldSkipDeduplication) {
+          // Skip if already uploaded (by stable manifestId)
+          if (already.has(manifestId)) {
+            if (tmpCopied && tmpUri) await FileSystem.deleteAsync(tmpUri, { idempotent: true });
+            skipped++;
+            continue;
+          }
+
+          // Skip if filename already exists on server (fallback for old manifests without fileHash)
+          const normalizedFilename = assetFilename ? normalizeFilenameForCompare(assetFilename) : null;
+          if (normalizedFilename && alreadyFilenames.has(normalizedFilename)) {
+            console.log(`Skipping ${assetFilename} - filename already on server`);
+            if (tmpCopied && tmpUri) await FileSystem.deleteAsync(tmpUri, { idempotent: true });
+            skipped++;
+            continue;
+          }
+
+          // Cross-platform variant matching using base filename
+          const baseFilename = assetFilename ? extractBaseFilename(assetFilename) : null;
+
+          // HEIC PRIORITY: Full timestamp match (most reliable for cross-platform HEIC dedup)
+          // HEIC files from iPhone and desktop have identical EXIF timestamps even if bytes differ
+          const assetTimestamp = asset.creationTime ? normalizeFullTimestamp(asset.creationTime) : null;
+          if (baseFilename && assetTimestamp && alreadyBaseNameTimestamps.has(baseFilename)) {
+            const existingTimestamps = alreadyBaseNameTimestamps.get(baseFilename);
+            if (existingTimestamps.has(assetTimestamp)) {
+              console.log(`Skipping ${assetFilename} - baseFilename+timestamp match (${baseFilename}, ${assetTimestamp})`);
+              if (tmpCopied && tmpUri) await FileSystem.deleteAsync(tmpUri, { idempotent: true });
+              skipped++;
+              continue;
+            }
+          }
+          
+          // Fallback 1: base filename + size match (within 20% tolerance for re-compression)
+          let skipByBaseNameSize = false;
+          if (baseFilename && alreadyBaseNameSizes.has(baseFilename)) {
+            const existingSizes = alreadyBaseNameSizes.get(baseFilename);
+            for (const existingSize of existingSizes) {
+              const sizeDiff = Math.abs(originalSize - existingSize) / Math.max(originalSize, existingSize);
+              if (sizeDiff < 0.20) {
+                console.log(`Skipping ${assetFilename} - baseFilename+size match (${baseFilename}, size diff ${(sizeDiff * 100).toFixed(1)}%)`);
+                skipByBaseNameSize = true;
+                break;
+              }
+            }
+          }
+          if (skipByBaseNameSize) {
+            if (tmpCopied && tmpUri) await FileSystem.deleteAsync(tmpUri, { idempotent: true });
+            skipped++;
+            continue;
+          }
+
+          // Fallback 2: base filename + creation date match
+          const assetDate = asset.creationTime ? normalizeDateForCompare(asset.creationTime) : null;
+          if (baseFilename && assetDate && alreadyBaseNameDates.has(baseFilename)) {
+            const existingDates = alreadyBaseNameDates.get(baseFilename);
+            if (existingDates.has(assetDate)) {
+              console.log(`Skipping ${assetFilename} - baseFilename+date match (${baseFilename}, ${assetDate})`);
+              if (tmpCopied && tmpUri) await FileSystem.deleteAsync(tmpUri, { idempotent: true });
+              skipped++;
+              continue;
+            }
+          }
         }
 
-        setStatus(`Encrypting ${processedIndex}/${totalCount || '?'}`);
+        // Determine if this is an image or video
+        const isImage = asset.mediaType === 'photo' || (assetInfo && assetInfo.mediaType === 'photo');
+
+        // For IMAGES: use perceptual hash (transcoding-resistant)
+        // For VIDEOS: use exact file hash (byte-for-byte comparison)
+        let exactFileHash = null;
+        let perceptualHash = null;
+
+        // Only compute hashes for deduplication if server has files
+        if (!shouldSkipDeduplication) {
+          if (isImage) {
+            // Images: compute perceptual hash for transcoding-resistant deduplication
+            try {
+              perceptualHash = await computePerceptualHash(filePath, asset, assetInfo);
+              if (perceptualHash) {
+                console.log(`[PerceptualHash] ${assetFilename}: ${perceptualHash} (${perceptualHash.length} chars)`);
+              }
+            } catch (e) {
+              console.warn('computePerceptualHash failed:', asset.id, e?.message);
+              perceptualHash = null;
+            }
+
+            // Skip if perceptual hash already exists on server (catches transcoded duplicates)
+            // Use fuzzy matching with cross-platform threshold
+            if (perceptualHash && findPerceptualHashMatch(perceptualHash, alreadyPerceptualHashes, CROSS_PLATFORM_DHASH_THRESHOLD)) {
+              console.log(`Skipping ${assetFilename} - visually identical image already on server (perceptual match)`);
+              if (tmpCopied && tmpUri) await FileSystem.deleteAsync(tmpUri, { idempotent: true });
+              skipped++;
+              continue;
+            }
+
+            // Also compute exact hash for storage in manifest (but don't use for deduplication)
+            try {
+              exactFileHash = await computeExactFileHash(filePath);
+            } catch (e) {
+              console.warn('computeExactFileHash failed:', asset.id, e?.message);
+            }
+          } else {
+            // Videos: compute exact file hash for byte-for-byte deduplication
+            try {
+              exactFileHash = await computeExactFileHash(filePath);
+              console.log(`[FileHash] ${assetFilename}: ${exactFileHash ? exactFileHash.substring(0, 16) + '...' : 'null'}`);
+            } catch (e) {
+              console.warn('computeExactFileHash failed:', asset.id, e?.message);
+              exactFileHash = null;
+            }
+
+            // Skip if exact file hash already exists on server
+            if (exactFileHash && alreadyFileHashes.has(exactFileHash)) {
+              console.log(`Skipping ${assetFilename} - exact file hash already on server`);
+              if (tmpCopied && tmpUri) await FileSystem.deleteAsync(tmpUri, { idempotent: true });
+              skipped++;
+              continue;
+            }
+          }
+        }
+
+        // Always compute hashes for manifest storage (even if skipping deduplication)
+        if (shouldSkipDeduplication) {
+          if (isImage) {
+            try {
+              perceptualHash = await computePerceptualHash(filePath, asset, assetInfo);
+              if (perceptualHash) {
+                console.log(`[PerceptualHash] ${assetFilename}: ${perceptualHash} (${perceptualHash.length} chars)`);
+              }
+            } catch (e) {
+              console.warn('computePerceptualHash failed:', asset.id, e?.message);
+            }
+            try {
+              exactFileHash = await computeExactFileHash(filePath);
+            } catch (e) {
+              console.warn('computeExactFileHash failed:', asset.id, e?.message);
+            }
+          } else {
+            try {
+              exactFileHash = await computeExactFileHash(filePath);
+              console.log(`[FileHash] ${assetFilename}: ${exactFileHash ? exactFileHash.substring(0, 16) + '...' : 'null'}`);
+            } catch (e) {
+              console.warn('computeExactFileHash failed:', asset.id, e?.message);
+            }
+          }
+        }
+
+        // Status already set to "Backing up X of Y" above
 
         // Generate per-file key and base nonce
         const fileKey = new Uint8Array(32);
@@ -3253,13 +3852,10 @@ export default function App() {
             if (!plaintext || plaintext.length === 0) break;
 
             const nonce = makeChunkNonce(baseNonce16, chunkIndex);
-            await throttleEncryption(chunkIndex); // CPU throttle to prevent overheating
+            await throttleEncryption(chunkIndex, fastModeEnabledRef.current);
             const boxed = nacl.secretbox(plaintext, nonce, fileKey);
             const chunkId = sha256.create().update(boxed).hex();
-            // Switch to "Uploading" status after first chunk encrypted
-            if (chunkIndex === 0) {
-              setStatus(`Uploading ${processedIndex}/${totalCount || '?'}`);
-            }
+            // Keep status as "Backing up X of Y" - unified message
             await trackInFlightPromise(
               chunkUploadsInFlight,
               runChunkUpload(() => stealthCloudUploadEncryptedChunk({ SERVER_URL, config, chunkId, encryptedBytes: boxed })),
@@ -3322,13 +3918,10 @@ export default function App() {
                     const nextB64 = queue.shift();
                     const plaintext = naclUtil.decodeBase64(nextB64);
                     const nonce = makeChunkNonce(baseNonce16, chunkIndex);
-                    await throttleEncryption(chunkIndex); // CPU throttle to prevent overheating
+                    await throttleEncryption(chunkIndex, fastModeEnabledRef.current);
                     const boxed = nacl.secretbox(plaintext, nonce, fileKey);
                     const chunkId = sha256.create().update(boxed).hex();
-                    // Switch to "Uploading" status after first chunk encrypted
-                    if (chunkIndex === 0) {
-                      setStatus(`Uploading ${processedIndex}/${totalCount || '?'}`);
-                    }
+                    // Keep status as "Backing up X of Y" - unified message
                     await trackInFlightPromise(
                       chunkUploadsInFlight,
                       runChunkUpload(() => stealthCloudUploadEncryptedChunk({ SERVER_URL, config, chunkId, encryptedBytes: boxed })),
@@ -3370,6 +3963,9 @@ export default function App() {
           throw new Error('StealthCloud backup read 0 bytes (no chunks).');
         }
 
+        // Extract real EXIF data from file for cross-platform deduplication
+        const exifData = extractExifForDedup(assetInfo, asset);
+
         // Build manifest (then encrypt it with masterKey)
         const manifest = {
           v: 1,
@@ -3377,11 +3973,18 @@ export default function App() {
           filename: assetInfo.filename || asset.filename || null,
           mediaType: asset.mediaType || null,
           originalSize,
+          creationTime: asset.creationTime || null,
+          // EXIF data for cross-platform HEIC deduplication
+          exifCaptureTime: exifData.captureTime || null,
+          exifMake: exifData.make || null,
+          exifModel: exifData.model || null,
           baseNonce16: naclUtil.encodeBase64(baseNonce16),
           wrapNonce: naclUtil.encodeBase64(wrapNonce),
           wrappedFileKey: naclUtil.encodeBase64(wrappedKey),
           chunkIds,
-          chunkSizes
+          chunkSizes,
+          fileHash: exactFileHash,
+          perceptualHash: perceptualHash,
         };
 
         const manifestPlain = naclUtil.decodeUTF8(JSON.stringify(manifest));
@@ -3394,8 +3997,8 @@ export default function App() {
         });
 
         // Retry manifest upload up to 3 times
-        await withRetries(async () => {
-          await axios.post(
+        const manifestResponse = await withRetries(async () => {
+          return await axios.post(
             `${SERVER_URL}/api/cloud/manifests`,
             { manifestId, encryptedManifest, chunkCount: chunkIds.length },
             { headers: config.headers, timeout: 30000 }
@@ -3406,16 +4009,27 @@ export default function App() {
           maxDelayMs: 30000,
           shouldRetry: shouldRetryChunkUpload
         });
+
+        // Check if server rejected as duplicate (server-side deduplication)
+        if (manifestResponse?.data?.skipped) {
+          console.log(`Server rejected ${assetInfo.filename || asset.filename} as duplicate (reason: ${manifestResponse.data.reason || 'unknown'})`);
+          skipped++;
+          continue;
+        }
+
         uploaded += 1;
+        already.add(manifestId);
+        if (exactFileHash) alreadyFileHashes.add(exactFileHash);
+        if (perceptualHash) alreadyPerceptualHashes.add(perceptualHash);
 
         if (tmpCopied && tmpUri) {
           await FileSystem.deleteAsync(tmpUri, { idempotent: true });
         }
-        
+
         // CPU cooldown between assets to reduce phone heating
         const assetCooldown = getThrottleAssetCooldownMs();
         if (assetCooldown > 0) await sleep(assetCooldown);
-        
+
         // Thermal batch limit: long cooling pause every N assets
         const batchLimit = getThrottleBatchLimit();
         if (uploaded > 0 && uploaded % batchLimit === 0) {
@@ -3436,20 +4050,21 @@ export default function App() {
       }
 
       if (uploaded === 0 && skipped === 0 && failed === 0) {
-        setStatus(
-          Platform.OS === 'ios'
-            ? 'Waiting for Photos to become available...'
-            : 'No items processed'
-        );
+        setProgress(1);
+        setStatus('No files on device');
+        await sleep(1000);
+        setProgress(0);
         return;
       }
 
+      setProgress(1);
+      await sleep(300);
       setStatus('Backup complete');
-      showDarkAlert('Backup Complete', `Uploaded: ${uploaded}\nSkipped: ${skipped}\nFailed: ${failed}`);
+      showResultAlert('backup', { uploaded, skipped, failed });
     } catch (e) {
       console.error('StealthCloud backup error:', e);
       setStatus('Backup error');
-      showDarkAlert('Backup Error', e && e.message ? e.message : 'Unknown error');
+      showResultAlert('backup', { error: e && e.message ? e.message : 'Unknown error' });
     } finally {
       setLoadingSafe(false);
       setBackgroundWarnEligibleSafe(false);
@@ -3465,7 +4080,7 @@ export default function App() {
    * @platform Android: Requires react-native-blob-util for file append operations
    * @param {Object|null} opts - Options
    * @param {Array<string>} opts.manifestIds - Optional list of specific manifests to restore
-   * 
+   *
    * Process:
    * 1. Request photo permissions
    * 2. Build local filename index to skip already-restored files
@@ -3473,8 +4088,11 @@ export default function App() {
    * 4. For each manifest: download chunks, decrypt, save to gallery
    */
   const stealthCloudRestore = async (opts = null) => {
-    setStatus('Requesting permissions...');
     setLoadingSafe(true);
+    setBackgroundWarnEligibleSafe(true);
+    setWasBackgroundedDuringWorkSafe(false);
+    setProgress(0);
+    setStatus('Preparing sync...');
 
     const permission = await MediaLibrary.requestPermissionsAsync();
     if (permission.status !== 'granted') {
@@ -3493,45 +4111,266 @@ export default function App() {
       return;
     }
 
-    setBackgroundWarnEligibleSafe(true);
-    setWasBackgroundedDuringWorkSafe(false);
-
     try {
       const restoreHistory = await loadRestoreHistory();
       const config = await getAuthHeaders();
       const SERVER_URL = getServerUrl();
       const masterKey = await getStealthCloudMasterKey();
 
-      setStatus('Comparing local files...');
+      // Check if device is empty first
       const localIndex = await buildLocalFilenameSetPaged({ mediaType: ['photo', 'video'] });
       const localFilenames = localIndex.set;
+      const isEmptyDevice = localIndex.scanned === 0;
+
+      // iOS Analyzing: fills 0-100%, then syncing resets to 0 and fills 0-100%
+      // Android: no analyzing, syncing fills 0-100%
+
+      // iOS assigns new filenames when saving, so we need hash-based deduplication
+      // Build local deduplication sets by scanning device photos (same 4 steps as upload)
+      const localManifestIds = new Set();
+      const localFileHashes = new Set();
+      const localPerceptualHashes = new Set();
+      const localBaseNameSizes = new Map(); // baseFilename -> Set of sizes
+      const localBaseNameDates = new Map(); // baseFilename -> Set of date strings
+
+      if (Platform.OS === 'ios') {
+        if (localIndex.scanned > 0) {
+          // Start analyzing from 0, progress to PHASE2_END
+          setStatus(`Analyzing 1 of ${localIndex.scanned}`);
+          let hashScanned = 0;
+          let after = null;
+          const PAGE_SIZE = 100;
+          const totalToScan = localIndex.scanned;
+
+          while (true) {
+            const page = await MediaLibrary.getAssetsAsync({
+              first: PAGE_SIZE,
+              after: after || undefined,
+              mediaType: ['photo', 'video'],
+            });
+
+            const assets = page && Array.isArray(page.assets) ? page.assets : [];
+            if (assets.length === 0) break;
+
+            for (const asset of assets) {
+              try {
+                const assetInfo = await MediaLibrary.getAssetInfoAsync(asset.id);
+                const { filePath } = await resolveReadableFilePath({ assetId: asset.id, assetInfo });
+
+                // Step 1: Compute manifestId (filename + size)
+                const assetFilename = assetInfo.filename || asset.filename || null;
+                let originalSize = null;
+                try {
+                  const fileUri = filePath.startsWith('/') ? `file://${filePath}` : filePath;
+                  const info = await FileSystem.getInfoAsync(fileUri);
+                  originalSize = info && typeof info.size === 'number' ? Number(info.size) : null;
+                } catch (e) {}
+
+                const fileIdentity = computeFileIdentity(assetFilename, originalSize);
+                if (fileIdentity) {
+                  const manifestId = sha256(`file:${fileIdentity}`);
+                  localManifestIds.add(manifestId);
+                }
+
+                // Build base filename + size/date maps for fallback matching
+                const baseName = assetFilename ? extractBaseFilename(assetFilename) : null;
+                if (baseName) {
+                  if (originalSize) {
+                    if (!localBaseNameSizes.has(baseName)) localBaseNameSizes.set(baseName, new Set());
+                    localBaseNameSizes.get(baseName).add(originalSize);
+                  }
+                  if (asset.creationTime) {
+                    const dateStr = normalizeDateForCompare(asset.creationTime);
+                    if (dateStr) {
+                      if (!localBaseNameDates.has(baseName)) localBaseNameDates.set(baseName, new Set());
+                      localBaseNameDates.get(baseName).add(dateStr);
+                    }
+                  }
+                }
+
+                const isImage = asset.mediaType === 'photo';
+
+                if (isImage) {
+                  // Step 3: Images - compute perceptual hash
+                  const pHash = await computePerceptualHash(filePath, asset, assetInfo);
+                  if (pHash) {
+                    localPerceptualHashes.add(pHash);
+                  }
+                } else {
+                  // Step 4: Videos - compute exact file hash
+                  const fHash = await computeExactFileHash(filePath);
+                  if (fHash) {
+                    localFileHashes.add(fHash);
+                  }
+                }
+
+                hashScanned++;
+                // Analyzing fills bar 0-100%
+                setProgress(hashScanned / totalToScan);
+                // Show count: first 10 by 1, then every 5 (15, 20, 25...)
+                if (hashScanned <= 10 || hashScanned % 5 === 0 || hashScanned === totalToScan) {
+                  setStatus(`Analyzing ${hashScanned} of ${totalToScan}`);
+                }
+              } catch (e) {
+                // Skip files we can't hash
+                hashScanned++;
+              }
+            }
+
+            after = page && page.endCursor ? page.endCursor : null;
+            if (!page || page.hasNextPage !== true) break;
+          }
+
+          // Bar stays at 100% when analyzing completes
+          setProgress(1);
+          console.log(`[iOS Restore] Built local dedup index: ${localManifestIds.size} manifestIds, ${localPerceptualHashes.size} image hashes, ${localFileHashes.size} video hashes, ${localBaseNameSizes.size} name+size, ${localBaseNameDates.size} name+date`);
+          await new Promise(r => setTimeout(r, 500));
+        } else {
+          // No local files - show preparing message and fill to 100%
+          setStatus('Preparing sync...');
+          setProgress(1);
+          await new Promise(r => setTimeout(r, 800));
+        }
+      } else {
+        // Android: also needs hash-based deduplication (Google Photos sync can rename files)
+        if (localIndex.scanned > 0) {
+          setStatus(`Analyzing 1 of ${localIndex.scanned}`);
+          let hashScanned = 0;
+          let after = null;
+          const PAGE_SIZE = 100;
+          const totalToScan = localIndex.scanned;
+
+          while (true) {
+            const page = await MediaLibrary.getAssetsAsync({
+              first: PAGE_SIZE,
+              after: after || undefined,
+              mediaType: ['photo', 'video'],
+            });
+
+            const assets = page && Array.isArray(page.assets) ? page.assets : [];
+            if (assets.length === 0) break;
+
+            for (const asset of assets) {
+              try {
+                const assetInfo = await MediaLibrary.getAssetInfoAsync(asset.id);
+                const { filePath } = await resolveReadableFilePath({ assetId: asset.id, assetInfo });
+
+                // Step 1: Compute manifestId (filename + size)
+                const assetFilename = assetInfo.filename || asset.filename || null;
+                let originalSize = null;
+                let ReactNativeBlobUtil = null;
+                try {
+                  const mod = require('react-native-blob-util');
+                  ReactNativeBlobUtil = mod && (mod.default || mod);
+                } catch (e) {}
+                if (ReactNativeBlobUtil?.fs?.stat) {
+                  try {
+                    const stat = await ReactNativeBlobUtil.fs.stat(filePath);
+                    originalSize = stat && stat.size ? Number(stat.size) : null;
+                  } catch (e) {}
+                }
+
+                const fileIdentity = computeFileIdentity(assetFilename, originalSize);
+                if (fileIdentity) {
+                  const manifestId = sha256(`file:${fileIdentity}`);
+                  localManifestIds.add(manifestId);
+                }
+
+                // Build base filename + size/date maps for fallback matching
+                const baseName = assetFilename ? extractBaseFilename(assetFilename) : null;
+                if (baseName) {
+                  if (originalSize) {
+                    if (!localBaseNameSizes.has(baseName)) localBaseNameSizes.set(baseName, new Set());
+                    localBaseNameSizes.get(baseName).add(originalSize);
+                  }
+                  if (asset.creationTime) {
+                    const dateStr = normalizeDateForCompare(asset.creationTime);
+                    if (dateStr) {
+                      if (!localBaseNameDates.has(baseName)) localBaseNameDates.set(baseName, new Set());
+                      localBaseNameDates.get(baseName).add(dateStr);
+                    }
+                  }
+                }
+
+                const isImage = asset.mediaType === 'photo';
+
+                if (isImage) {
+                  // Step 3: Images - compute perceptual hash
+                  const pHash = await computePerceptualHash(filePath, asset, assetInfo);
+                  if (pHash) {
+                    localPerceptualHashes.add(pHash);
+                  }
+                } else {
+                  // Step 4: Videos - compute exact file hash
+                  const fHash = await computeExactFileHash(filePath);
+                  if (fHash) {
+                    localFileHashes.add(fHash);
+                  }
+                }
+
+                hashScanned++;
+                setProgress(hashScanned / totalToScan);
+                if (hashScanned <= 10 || hashScanned % 5 === 0 || hashScanned === totalToScan) {
+                  setStatus(`Analyzing ${hashScanned} of ${totalToScan}`);
+                }
+              } catch (e) {
+                hashScanned++;
+              }
+            }
+
+            after = page && page.endCursor ? page.endCursor : null;
+            if (!page || page.hasNextPage !== true) break;
+          }
+
+          setProgress(1);
+          console.log(`[Android Restore] Built local dedup index: ${localManifestIds.size} manifestIds, ${localPerceptualHashes.size} image hashes, ${localFileHashes.size} video hashes, ${localBaseNameSizes.size} name+size, ${localBaseNameDates.size} name+date`);
+          await new Promise(r => setTimeout(r, 500));
+        } else {
+          setStatus('Preparing sync...');
+          setProgress(1);
+          await new Promise(r => setTimeout(r, 800));
+        }
+      }
+
+      // Syncing phase starts fresh at 0% - reset happens in stealthCloudRestoreCore when first status is set
 
       const result = await stealthCloudRestoreCore({
         config,
         SERVER_URL,
         masterKey,
         localFilenames,
+        localManifestIds,
+        localFileHashes,
+        localPerceptualHashes,
+        localBaseNameSizes,
+        localBaseNameDates,
         restoreHistory,
         saveRestoreHistory,
         makeHistoryKey,
         manifestIds: opts?.manifestIds || null,
         fastMode: fastModeEnabledRef.current,
         onStatus: setStatus,
-        onProgress: setProgress,
+        onProgress: (p) => setProgress(p),
       });
 
       if (result.noBackups) {
-        setStatus('No backups');
+        setProgress(1);
+        setStatus('No files to sync');
+        await sleep(800);
         showDarkAlert('No Backups', 'No StealthCloud backups found for this account.');
+        await sleep(500);
+        setProgress(0);
         return;
       }
 
+      setProgress(1);
+      await sleep(300);
       setStatus('Sync complete');
-      showDarkAlert('Sync Complete', `Downloaded: ${result.restored}\nSkipped: ${result.skipped}\nFailed: ${result.failed}`);
+      showResultAlert('sync', { downloaded: result.restored, skipped: result.skipped, failed: result.failed });
     } catch (e) {
       console.error('StealthCloud restore error:', e);
       setStatus('Sync error');
-      showDarkAlert('Sync Error', e && e.message ? e.message : 'Unknown error');
+      showResultAlert('sync', { error: e && e.message ? e.message : 'Unknown error' });
     } finally {
       setLoadingSafe(false);
       setBackgroundWarnEligibleSafe(false);
@@ -3604,6 +4443,35 @@ export default function App() {
 
   const checkLogin = async () => {
     try {
+    // CRITICAL: Detect first launch after reinstall and clear old credentials
+    // FileSystem persists across app updates but is cleared on uninstall
+    // SecureStore (Keychain on iOS) persists even after uninstall
+    const firstLaunchMarker = `${FileSystem.documentDirectory}app_initialized.txt`;
+    let isFirstLaunchAfterReinstall = false;
+
+    try {
+      const markerExists = await FileSystem.getInfoAsync(firstLaunchMarker);
+      if (!markerExists.exists) {
+        // First launch after reinstall - clear SecureStore credentials
+        isFirstLaunchAfterReinstall = true;
+        console.log('[FirstLaunch] Detected first launch after reinstall - clearing old credentials');
+
+        // Clear all auth-related SecureStore items
+        await SecureStore.deleteItemAsync('auth_token').catch(() => {});
+        await SecureStore.deleteItemAsync('user_id').catch(() => {});
+        await SecureStore.deleteItemAsync('user_email').catch(() => {});
+        await SecureStore.deleteItemAsync('device_uuid').catch(() => {});
+        await SecureStore.deleteItemAsync(SAVED_PASSWORD_KEY).catch(() => {});
+        await SecureStore.deleteItemAsync(SAVED_PASSWORD_EMAIL_KEY).catch(() => {});
+
+        // Create marker file to indicate app has been initialized
+        await FileSystem.writeAsStringAsync(firstLaunchMarker, new Date().toISOString());
+        console.log('[FirstLaunch] Credentials cleared, marker created');
+      }
+    } catch (e) {
+      console.log('[FirstLaunch] Error checking/creating marker:', e?.message);
+    }
+
     // Load server settings
     const savedType = await SecureStore.getItemAsync('server_type');
     const savedLocalHost = await SecureStore.getItemAsync('local_host');
@@ -3633,7 +4501,20 @@ export default function App() {
     if (savedFastMode === 'true' || savedFastMode === 'false') {
       setFastModeEnabledSafe(savedFastMode === 'true');
     }
-    
+
+    const savedGlassMode = await SecureStore.getItemAsync('glass_mode_enabled');
+    if (savedGlassMode === 'true' || savedGlassMode === 'false') {
+      setGlassModeEnabled(savedGlassMode === 'true');
+    }
+
+    // If first launch after reinstall, skip auto-login and show login screen
+    if (isFirstLaunchAfterReinstall) {
+      console.log('[FirstLaunch] Skipping auto-login - showing login screen');
+      setStatus('');
+      setView('auth');
+      return;
+    }
+
     // Load stored email to get correct UUID
     const rawStoredEmail = await SecureStore.getItemAsync('user_email');
     const storedEmail = normalizeEmailForDeviceUuid(rawStoredEmail);
@@ -3671,116 +4552,182 @@ export default function App() {
     }
     setDeviceUuid(uuid);
 
-    if (storedToken) {
-      // If we have a token but the UUID is missing, try to unlock saved password and
-      // re-derive/persist the UUID instead of throwing away the session.
-      if (storedEmail && !uuid) {
+    // Best practice flow:
+    // 1. If token exists AND is valid -> auto-login with biometric for master key
+    // 2. If no token BUT credentials exist -> biometric re-auth to generate new token
+    // 3. If no token AND no credentials -> manual login (first run/reinstall)
+
+    const persistedType = await SecureStore.getItemAsync('server_type');
+    const persistedLocalHost = await SecureStore.getItemAsync('local_host');
+    const persistedRemoteHost = await SecureStore.getItemAsync('remote_host');
+    const effectiveType = serverType || persistedType || 'local';
+    const effectiveLocalHost = persistedLocalHost || localHost;
+    const effectiveRemoteHost = persistedRemoteHost || remoteHost;
+    const baseUrl = computeServerUrl(effectiveType, effectiveLocalHost, effectiveRemoteHost);
+
+    // Case 1: Valid token exists - validate and auto-login
+    if (storedToken && storedEmail) {
+      try {
+        setStatus('Validating session...');
+        const headers = {
+          'Authorization': `Bearer ${storedToken}`,
+          'X-Device-UUID': uuid || 'unknown'
+        };
+
+        await axios.get(`${baseUrl}/api/cloud/usage`, { headers, timeout: 5000 });
+
+        // Token valid - unlock password for master key caching
+        setStatus('Unlock to continue...');
+        let savedPassword = null;
         try {
-          setStatus('Unlock to sign in...');
-          let pw = null;
+          savedPassword = await SecureStore.getItemAsync(SAVED_PASSWORD_KEY, {
+            requireAuthentication: true,
+            authenticationPrompt: 'Unlock to sign in'
+          });
+        } catch (e) {
+          savedPassword = await SecureStore.getItemAsync(SAVED_PASSWORD_KEY);
+        }
+
+        if (savedPassword) {
+          setStatus('Securing session...');
+          await cacheStealthCloudMasterKey(storedEmail, savedPassword);
+        }
+
+        setTokenSafe(storedToken);
+        if (storedUserId) setUserId(parseInt(storedUserId));
+        setStatus('');
+        setView('home');
+        return;
+      } catch (e) {
+        const isNetworkError = !e?.response && (e?.message?.includes('Network') || e?.code === 'ECONNABORTED' || e?.message?.includes('timeout'));
+
+        if (isNetworkError) {
+          // Network error - don't clear token, allow offline access with biometric
+          console.log('[Auth] Network error - allowing offline access with existing token');
+
+          // Try to get password for master key caching
+          let savedPassword = null;
           try {
-            pw = await SecureStore.getItemAsync(SAVED_PASSWORD_KEY, {
+            savedPassword = await SecureStore.getItemAsync(SAVED_PASSWORD_KEY, {
               requireAuthentication: true,
               authenticationPrompt: 'Unlock to sign in'
             });
-          } catch (e) {
-            pw = await SecureStore.getItemAsync(SAVED_PASSWORD_KEY);
+          } catch (bioErr) {
+            savedPassword = await SecureStore.getItemAsync(SAVED_PASSWORD_KEY);
           }
 
-          if (pw) {
-            const fixedUuid = await getDeviceUUID(storedEmail, pw);
-            if (fixedUuid) {
-              setDeviceUuid(fixedUuid);
+          if (savedPassword) {
+            setStatus('Securing session...');
+            await cacheStealthCloudMasterKey(storedEmail, savedPassword);
+          }
+
+          setTokenSafe(storedToken);
+          if (storedUserId) setUserId(parseInt(storedUserId));
+          setStatus('');
+          setView('home');
+          return;
+        }
+
+        // Token actually invalid (401/403) - clear and re-auth
+        console.log('Token invalid, clearing:', e?.response?.status || e?.message);
+        await SecureStore.deleteItemAsync('auth_token');
+        await SecureStore.deleteItemAsync('user_id');
+        // Fall through to Case 2 - try biometric re-auth
+      }
+    }
+
+    // Case 2: No valid token but credentials exist - biometric re-auth
+    // Skip if user explicitly logged out (should see login screen instead)
+    const userLoggedOut = await SecureStore.getItemAsync('user_logged_out');
+    if (userLoggedOut === 'true') {
+      console.log('[Auth] User logged out - skipping biometric re-auth');
+      // Clear the flag so it doesn't persist forever
+      await SecureStore.deleteItemAsync('user_logged_out');
+      // Fall through to Case 3 - show login screen
+    } else {
+      const savedPasswordEmail = await SecureStore.getItemAsync(SAVED_PASSWORD_EMAIL_KEY);
+      if (savedPasswordEmail && storedEmail) {
+        try {
+          setStatus('Unlock to sign in...');
+          let savedPassword = null;
+          let biometricCancelled = false;
+
+          // Check how password was stored (Android only - iOS always uses biometric)
+          const storedWithBiometric = Platform.OS === 'ios' ||
+            (await SecureStore.getItemAsync('password_stored_with_biometric')) === 'true';
+
+          if (storedWithBiometric) {
+            try {
+              savedPassword = await SecureStore.getItemAsync(SAVED_PASSWORD_KEY, {
+                requireAuthentication: true,
+                authenticationPrompt: 'Unlock to sign in'
+              });
+            } catch (e) {
+              // Check if user cancelled biometric prompt
+              const errMsg = e?.message?.toLowerCase() || '';
+              if (errMsg.includes('cancel') || errMsg.includes('user') || errMsg.includes('authentication') || errMsg.includes('failed')) {
+                console.log('[Auth] Biometric cancelled/failed by user:', errMsg);
+                biometricCancelled = true;
+              }
             }
+          } else {
+            // Password was stored without biometric (Android fallback)
+            console.log('[Auth] Reading password without biometric (Android silent storage)');
+            savedPassword = await SecureStore.getItemAsync(SAVED_PASSWORD_KEY);
+          }
+
+          // If biometric was cancelled, show login screen but don't clear credentials
+          // User can try again or login manually
+          if (biometricCancelled) {
+            console.log('[Auth] Showing login screen after biometric cancel');
+            if (storedEmail && !email) setEmail(storedEmail);
+            setStatus('');
+            setView('auth');
+            return;
+          }
+
+          if (savedPassword) {
+            setStatus('Signing in...');
+
+            const deviceId = await getDeviceUUID(storedEmail, savedPassword);
+            if (deviceId) setDeviceUuid(deviceId);
+
+            const payload = {
+              email: storedEmail,
+              password: savedPassword,
+              device_uuid: deviceId,
+              deviceUuid: deviceId,
+              device_name: Platform.OS + ' ' + Platform.Version,
+            };
+
+            const res = await axios.post(`${baseUrl}/api/login`, payload, { timeout: 15000 });
+            const { token, userId } = res.data;
+
+            await SecureStore.setItemAsync('auth_token', token);
+            if (userId) {
+              await SecureStore.setItemAsync('user_id', String(userId));
+              setUserId(userId);
+            }
+
+            setStatus('Securing session...');
+            await cacheStealthCloudMasterKey(storedEmail, savedPassword);
+
+            setTokenSafe(token);
+            setStatus('');
+            setView('home');
+            return;
           }
         } catch (e) {
-          // ignore
-        } finally {
+          console.log('Biometric re-auth failed:', e?.response?.status || e?.message);
           setStatus('');
+          // Fall through to manual login
         }
       }
-
-      setTokenSafe(storedToken);
-      if (storedUserId) setUserId(parseInt(storedUserId));
-      setView('home');
-      return;
     }
 
+    // Case 3: No token and no credentials - require manual login
     if (storedEmail && !email) setEmail(storedEmail);
-
-    let savedPassword = null;
-    try {
-      setStatus('Unlock to sign in...');
-      try {
-        savedPassword = await SecureStore.getItemAsync(SAVED_PASSWORD_KEY, {
-          requireAuthentication: true,
-          authenticationPrompt: 'Unlock to sign in'
-        });
-      } catch (e) {
-        // Android can have a previously-saved (non-protected) password.
-        // Fall back so we don't break auto-login.
-        savedPassword = await SecureStore.getItemAsync(SAVED_PASSWORD_KEY);
-      }
-    } catch (e) {
-      savedPassword = null;
-    }
-
-    if (savedPassword && !password) setPassword(savedPassword);
-    if (!savedPassword) setStatus('');
-
-    if (storedEmail && savedPassword) {
-      try {
-        setLoadingSafe(true);
-        setStatus('Signing in...');
-
-        const runAutoLogin = async () => {
-          const persistedType = await SecureStore.getItemAsync('server_type');
-          const persistedLocalHost = await SecureStore.getItemAsync('local_host');
-          const persistedRemoteHost = await SecureStore.getItemAsync('remote_host');
-
-          const effectiveType = serverType || persistedType || 'local';
-          const effectiveLocalHost = persistedLocalHost || localHost;
-          const effectiveRemoteHost = persistedRemoteHost || remoteHost;
-
-          const deviceId = await getDeviceUUID(storedEmail, savedPassword);
-          if (deviceId) setDeviceUuid(deviceId);
-
-          const endpoint = '/api/login';
-          const authBaseUrl = computeServerUrl(effectiveType, effectiveLocalHost, effectiveRemoteHost);
-          const payload = {
-            email: storedEmail,
-            password: savedPassword,
-            device_uuid: deviceId,
-            deviceUuid: deviceId,
-            device_name: Platform.OS + ' ' + Platform.Version,
-          };
-
-          const res = await axios.post(authBaseUrl + endpoint, payload, { timeout: 15000 });
-          const { token, userId } = res.data;
-          await SecureStore.setItemAsync('auth_token', token);
-          await SecureStore.setItemAsync('user_email', storedEmail);
-          if (userId) {
-            await SecureStore.setItemAsync('user_id', String(userId));
-            setUserId(userId);
-          }
-          setTokenSafe(token);
-          setView('home');
-        };
-
-        await Promise.race([
-          runAutoLogin(),
-          new Promise((_, reject) => setTimeout(() => reject(new Error('Auto-login timeout')), 20000))
-        ]);
-
-        setStatus('');
-        return;
-      } catch (e) {
-        setStatus('');
-      } finally {
-        setLoadingSafe(false);
-      }
-    }
-
+    console.log('No valid session - requiring manual login');
     setStatus('');
     setView('auth');
     } catch (e) {
@@ -3795,7 +4742,7 @@ export default function App() {
    * Handles user authentication (login or registration).
    * @platform Both
    * @param {string} type - 'login' or 'register'
-   * 
+   *
    * Process:
    * 1. Validates email and password
    * 2. Generates device UUID from credentials
@@ -3806,7 +4753,7 @@ export default function App() {
   const handleAuth = async (type) => {
     console.log('handleAuth called:', type);
     console.log('Email:', email, 'Password:', password ? '***' : 'empty');
-    
+
     if (!email || !password) {
       showDarkAlert('Error', 'Please fill in all fields');
       return;
@@ -3828,15 +4775,16 @@ export default function App() {
         return;
       }
     }
-    
+
     Keyboard.dismiss();
-    setAuthLoadingLabel('Signing in...');
     setLoadingSafe(true);
-    resetAuthLoadingLabel(loginStatusTimerRef, loginLabelTimerRef, setAuthLoadingLabel, 'Signing in...');
-    if (type === 'login') {
-      scheduleAuthProgressLabels(loginLabelTimerRef, setAuthLoadingLabel);
-    }
+    resetAuthLoadingLabel(loginStatusTimerRef, loginLabelTimerRef, setAuthLoadingLabel, type === 'register' ? 'Creating account...' : 'Signing in...');
+
     try {
+      // Step 1: Bonding device
+      setAuthLoadingLabel('Bonding device...');
+      await new Promise(resolve => setTimeout(resolve, 1000));
+
       // Resolve effective server settings.
       // On cold start, state may still be default while SecureStore already has the user's saved host.
       // Also avoid overwriting persisted host with empty string.
@@ -3866,9 +4814,10 @@ export default function App() {
       if (serverType !== effectiveType) setServerType(effectiveType);
       if (effectiveType === 'local' && localHost !== effectiveLocalHost) setLocalHost(effectiveLocalHost);
       if (effectiveType === 'remote' && remoteHost !== effectiveRemoteHost) setRemoteHost(effectiveRemoteHost);
-      
+
       // Device UUID is derived from email+password and persisted.
       const deviceId = await getDeviceUUID(normalizedEmail, password);
+      await new Promise(resolve => setTimeout(resolve, 200));
       if (!deviceId) {
         showDarkAlert('Device ID unavailable', 'Could not derive a device ID from your credentials. Please try again.');
         setLoadingSafe(false);
@@ -3884,7 +4833,7 @@ export default function App() {
       }
       const endpoint = type === 'register' ? '/api/register' : '/api/login';
       const authBaseUrl = computeServerUrl(effectiveType, effectiveLocalHost, effectiveRemoteHost);
-      
+
       // Get persistent hardware device ID for device-bound password reset (StealthCloud only)
       // Use only stable device-derived ID so it survives reinstall. Do not use SecureStore/uuid.
       let hardwareDeviceId = null;
@@ -3926,7 +4875,12 @@ export default function App() {
         platform: Platform.OS,
       });
 
+      // Step 2: Generating token
+      setAuthLoadingLabel(type === 'register' ? 'Generating token...' : 'Authenticating...');
+      await new Promise(resolve => setTimeout(resolve, 1000));
+
       const res = await axios.post(authUrl, payload);
+      await new Promise(resolve => setTimeout(resolve, 200));
 
       console.log('Attempting auth:', type, authUrl, {
         email,
@@ -3939,60 +4893,144 @@ export default function App() {
 
       if (type === 'login') {
         const { token, userId } = res.data;
+
+        // Check if credentials changed - if so, clear old session data first
+        const previousEmail = await SecureStore.getItemAsync(SAVED_PASSWORD_EMAIL_KEY).catch(() => null);
+        const credentialsChanged = previousEmail && previousEmail !== normalizedEmail;
+
+        if (credentialsChanged) {
+          // Clear old session data when switching accounts
+          await clearStealthCloudMasterKeyCache();
+          setStealthUsage(null);
+          setStealthUsageError(null);
+          setStealthUsageLoading(false);
+        }
+
+        // Step 3: Securing credentials
+        setAuthLoadingLabel('Securing credentials...');
+        await new Promise(resolve => setTimeout(resolve, 1000));
+
         await SecureStore.setItemAsync('auth_token', token);
-        await SecureStore.setItemAsync('user_email', normalizedEmail); // Save normalized email for UUID retrieval
+        await SecureStore.setItemAsync('user_email', normalizedEmail);
+
+        // Store password with biometrics (identical logic for iOS and Android)
         try {
           if (Platform.OS === 'ios') {
-            // iOS: store the password behind FaceID/TouchID (fallback to device passcode).
+            // iOS: store the password behind FaceID/TouchID (fallback to device passcode)
             await SecureStore.setItemAsync(SAVED_PASSWORD_KEY, password, {
               requireAuthentication: true,
               authenticationPrompt: 'Unlock to sign in'
             });
             await SecureStore.setItemAsync(SAVED_PASSWORD_EMAIL_KEY, normalizedEmail);
           } else {
-            // Android: save silently to avoid a second biometric prompt later.
-            // Biometric gating is applied when READING on app start.
-            const savedForEmail = await SecureStore.getItemAsync(SAVED_PASSWORD_EMAIL_KEY);
-            if (savedForEmail !== normalizedEmail) {
-              // Try to enable fingerprint unlock for next launches.
-              // If the device refuses (no biometrics enrolled, etc) we fall back to silent storage.
-              try {
-                await SecureStore.setItemAsync(SAVED_PASSWORD_KEY, password, {
-                  requireAuthentication: true,
-                  authenticationPrompt: 'Use fingerprint to unlock'
-                });
-              } catch (e) {
-                await SecureStore.setItemAsync(SAVED_PASSWORD_KEY, password);
-              }
-              await SecureStore.setItemAsync(SAVED_PASSWORD_EMAIL_KEY, normalizedEmail);
+            // Android: try biometric first, fallback to silent storage
+            let storedWithBiometric = false;
+            try {
+              await SecureStore.setItemAsync(SAVED_PASSWORD_KEY, password, {
+                requireAuthentication: true,
+                authenticationPrompt: 'Use fingerprint to unlock'
+              });
+              storedWithBiometric = true;
+            } catch (e) {
+              console.log('[Auth] Android biometric storage failed, using silent storage:', e?.message);
+              await SecureStore.setItemAsync(SAVED_PASSWORD_KEY, password);
             }
+            await SecureStore.setItemAsync(SAVED_PASSWORD_EMAIL_KEY, normalizedEmail);
+            // Track how password was stored so we know how to read it
+            await SecureStore.setItemAsync('password_stored_with_biometric', storedWithBiometric ? 'true' : 'false');
           }
         } catch (e) {}
         if (userId) {
           await SecureStore.setItemAsync('user_id', String(userId));
           setUserId(userId);
         }
-        
-        // Cache the StealthCloud master key so backup doesn't need biometrics
-        // PBKDF2 with 100k iterations takes 2-5 seconds on mobile
-        setStatus('Securing your account...');
+
+        // Step 4: Finalizing (cache master key)
+        setAuthLoadingLabel('Finalizing...');
         await cacheStealthCloudMasterKey(normalizedEmail, password);
-        setStatus('');
-        
+        await new Promise(resolve => setTimeout(resolve, 500));
+
         setTokenSafe(token);
 
         // Auto Upload UI is hidden for now; prevent auto-start after login.
         try { await SecureStore.setItemAsync('auto_upload_enabled', 'false'); } catch (e) {}
         setAutoUploadEnabledSafe(false);
 
+        // Clear logout flag on successful login
+        await SecureStore.deleteItemAsync('user_logged_out');
+
         setAuthMode('login');
         setView('home');
       } else {
-        // Save email so the next login is prefilled after registering
+        // Registration successful - auto-login immediately
+        // Store credentials with biometrics and get token
+        const { token, userId } = res.data;
+
+        // Step 3: Securing credentials
+        setAuthLoadingLabel('Securing credentials...');
+        await new Promise(resolve => setTimeout(resolve, 1000));
+
+        // Store token
+        await SecureStore.setItemAsync('auth_token', token);
         await SecureStore.setItemAsync('user_email', normalizedEmail);
-        showDarkAlert('Success', 'Account created! Please login.');
-        setAuthMode('login');
+
+        // Store password with biometrics for future auto-login
+        try {
+          if (Platform.OS === 'ios') {
+            await SecureStore.setItemAsync(SAVED_PASSWORD_KEY, password, {
+              requireAuthentication: true,
+              authenticationPrompt: 'Secure your account with biometrics'
+            });
+            await SecureStore.setItemAsync(SAVED_PASSWORD_EMAIL_KEY, normalizedEmail);
+          } else {
+            // Android: try biometric first, fallback to silent storage
+            let storedWithBiometric = false;
+            try {
+              await SecureStore.setItemAsync(SAVED_PASSWORD_KEY, password, {
+                requireAuthentication: true,
+                authenticationPrompt: 'Secure your account with fingerprint'
+              });
+              storedWithBiometric = true;
+            } catch (e) {
+              console.log('[Auth] Android biometric storage failed (register), using silent storage:', e?.message);
+              await SecureStore.setItemAsync(SAVED_PASSWORD_KEY, password);
+            }
+            await SecureStore.setItemAsync(SAVED_PASSWORD_EMAIL_KEY, normalizedEmail);
+            await SecureStore.setItemAsync('password_stored_with_biometric', storedWithBiometric ? 'true' : 'false');
+          }
+        } catch (e) {
+          // Fallback: store without biometrics
+          await SecureStore.setItemAsync(SAVED_PASSWORD_KEY, password);
+          await SecureStore.setItemAsync(SAVED_PASSWORD_EMAIL_KEY, normalizedEmail);
+          await SecureStore.setItemAsync('password_stored_with_biometric', 'false');
+        }
+
+        if (userId) {
+          await SecureStore.setItemAsync('user_id', String(userId));
+          setUserId(userId);
+        }
+
+        // Step 4: Finalizing (cache master key)
+        setAuthLoadingLabel('Finalizing...');
+        await cacheStealthCloudMasterKey(normalizedEmail, password);
+        await new Promise(resolve => setTimeout(resolve, 500));
+
+        setTokenSafe(token);
         setConfirmPassword('');
+        setAuthMode('login');
+
+        // Clear logout flag on successful registration
+        await SecureStore.deleteItemAsync('user_logged_out');
+
+        // Navigate to home immediately (same as login flow)
+        setView('home');
+
+        // Show success message after navigation
+        showDarkAlert(
+          'Account Created!',
+          'Your account has been successfully created and you are now logged in.',
+          [{ text: 'Get Started' }]
+        );
       }
     } catch (error) {
       // Only log actual server errors, not Metro bundler noise
@@ -4054,10 +5092,10 @@ export default function App() {
       } catch (e) {
         console.log('Could not get hardware device ID:', e);
       }
-      
+
       if (!hardwareDeviceId) {
         showDarkAlert(
-          'Device ID Unavailable', 
+          'Device ID Unavailable',
           'Could not retrieve device identifier. Password reset requires device verification. Please ensure you registered on this device.'
         );
         setLoadingSafe(false);
@@ -4071,7 +5109,7 @@ export default function App() {
         hardware_device_id: hardwareDeviceId,
         newPassword
       });
-      
+
       showDarkAlert('Success', 'Your password has been reset. Please login with your new password.');
       setPassword(newPassword);
       setAuthMode('login');
@@ -4107,7 +5145,7 @@ export default function App() {
     setBackgroundWarnEligibleSafe(false);
     setWasBackgroundedDuringWorkSafe(false);
     setLoadingSafe(true);
-    setStatus('Scanning for duplicates...');
+    setStatus('Analyzing files...');
 
     try {
       // Request permission
@@ -4149,13 +5187,14 @@ export default function App() {
         resolveReadableFilePath,
         onProgress: (hashedCount, totalCount, lastHash) => {
           setStatus(`Analyzing: ${hashedCount}/${totalCount} photos...`);
+          setProgress(totalCount > 0 ? hashedCount / totalCount : 0);
         }
       });
 
       if (duplicateGroups.length === 0) {
         const note = DuplicateScanner.buildNoResultsNote(stats);
-        setStatus('No exact duplicates found');
-        showDarkAlert('Exact Shots', 'No exact duplicates found.' + note);
+        setStatus('No best matches found');
+        showDarkAlert('Best Matches', 'No best matches found.' + note);
         setLoadingSafe(false);
         setBackgroundWarnEligibleSafe(false);
         setWasBackgroundedDuringWorkSafe(false);
@@ -4173,7 +5212,7 @@ export default function App() {
         groups: reviewGroups
       });
 
-      setStatus(`Found ${duplicateCount} exact duplicates in ${duplicateGroups.length} group${duplicateGroups.length !== 1 ? 's' : ''}`);
+      setStatus(`Found ${duplicateCount} best photo matches in ${duplicateGroups.length} group${duplicateGroups.length !== 1 ? 's' : ''}`);
     } catch (error) {
       console.error('Clean duplicates error:', error);
       setStatus('Error during duplicate cleanup: ' + error.message);
@@ -4191,16 +5230,37 @@ export default function App() {
    */
   const logout = async (opts = null) => {
     const forgetCredentials = !!(opts && opts.forgetCredentials);
+
+    // Always clear token on logout - user must re-authenticate
+    // Token will be regenerated on next successful login
     await SecureStore.deleteItemAsync('auth_token');
     await SecureStore.deleteItemAsync('user_id');
-    // Always clear cached master key on logout
-    await clearStealthCloudMasterKeyCache();
+
+    // Set flag to prevent biometric auto-login on next app launch
+    // User explicitly logged out, so they should see login screen
+    await SecureStore.setItemAsync('user_logged_out', 'true');
+
+    // Only delete saved credentials if explicitly forgetting
+    // This allows manual re-login without re-entering password
     if (forgetCredentials) {
       await SecureStore.deleteItemAsync('user_email');
       await SecureStore.deleteItemAsync('device_uuid');
       await SecureStore.deleteItemAsync(SAVED_PASSWORD_KEY);
       await SecureStore.deleteItemAsync(SAVED_PASSWORD_EMAIL_KEY);
     }
+
+    // Always clear cached master key on logout
+    await clearStealthCloudMasterKeyCache();
+
+    // NOTE: Do NOT clear cache on logout - this causes data to not show on app restart
+    // Cache contains thumbnails and other data that should persist across sessions
+    // Only clear cache when user explicitly requests it or on account deletion
+
+    // Clear StealthCloud usage data so it re-fetches on next login
+    setStealthUsage(null);
+    setStealthUsageError(null);
+    setStealthUsageLoading(false);
+
     setTokenSafe(null);
     setUserId(null);
     setDeviceUuid(null);
@@ -4275,7 +5335,7 @@ export default function App() {
    * Backs up all photos to the configured server (local/remote).
    * For StealthCloud, delegates to stealthCloudBackup.
    * @platform Both
-   * 
+   *
    * Process:
    * 1. Request photo permissions
    * 2. Get list of files already on server
@@ -4287,9 +5347,16 @@ export default function App() {
       return stealthCloudBackup();
     }
 
+    // Show status immediately on button press
+    setStatus('Preparing backup...');
+    setProgress(0);
+    setLoadingSafe(true);
+
     const permission = await MediaLibrary.requestPermissionsAsync();
     if (!permission || permission.status !== 'granted') {
       showDarkAlert('Permission needed', 'We need access to photos to back them up.');
+      setLoadingSafe(false);
+      setStatus('');
       return;
     }
 
@@ -4299,12 +5366,9 @@ export default function App() {
         'Limited Photos Access',
         `Backup needs Full Access to your Photos library.\n\nGo to Settings → ${APP_DISPLAY_NAME} → Photos → Full Access.`
       );
+      setLoadingSafe(false);
       return;
     }
-
-    setStatus('Scanning local media...');
-    setProgress(0); // Reset progress
-    setLoadingSafe(true);
     setBackgroundWarnEligibleSafe(!autoUploadEnabledRef.current);
     setWasBackgroundedDuringWorkSafe(false);
 
@@ -4312,7 +5376,6 @@ export default function App() {
       console.log('\n🔍 ===== BACKUP TRACE START =====');
 
       // 1. Get Server List (with pagination to get ALL files)
-      setStatus('Checking server files...');
       const config = await getAuthHeaders();
       const SERVER_URL = getServerUrl();
       console.log('Using server URL for backup:', SERVER_URL);
@@ -4331,10 +5394,10 @@ export default function App() {
       // 2. Exclude files already in app album to prevent re-uploading restored files
       const albums = await MediaLibrary.getAlbumsAsync();
       console.log(`📂 All albums: ${albums.map(a => `${a.title} (${a.assetCount})`).join(', ')}`);
-      
+
       const photoSyncAlbum = findFirstAlbumByTitle(albums, [PHOTO_ALBUM_NAME, LEGACY_PHOTO_ALBUM_NAME]);
       let excludedIds = new Set();
-      
+
       if (photoSyncAlbum) {
         excludedIds = await buildLocalAssetIdSetPaged({ album: photoSyncAlbum });
         console.log(`📂 Album "${photoSyncAlbum.title}" has ${excludedIds.size} files (will exclude)`);
@@ -4348,34 +5411,36 @@ export default function App() {
       const duplicateFilenames = {};
 
       while (true) {
-        let page = null;
-        for (let attempt = 0; attempt < 6; attempt++) {
-          page = await MediaLibrary.getAssetsAsync({
-            first: 500,
-            after: after || undefined,
-            mediaType: ['photo', 'video'],
-          });
-
-          const pageAssetsNow = page && Array.isArray(page.assets) ? page.assets : [];
-          // iOS can briefly return 0 items right after app launch / permission prompt.
-          if (!after && checkedCount === 0 && pageAssetsNow.length === 0 && Platform.OS === 'ios' && attempt < 5) {
-            await new Promise(r => setTimeout(r, 500));
-            continue;
-          }
-          break;
-        }
+        const page = await MediaLibrary.getAssetsAsync({
+          first: 500,
+          after: after || undefined,
+          mediaType: ['photo', 'video'],
+        });
 
         if (totalCount === null && page && typeof page.totalCount === 'number') {
           totalCount = page.totalCount;
         }
 
         const pageAssets = page && Array.isArray(page.assets) ? page.assets : [];
-        if (pageAssets.length === 0) break;
+        if (pageAssets.length === 0) {
+          if (checkedCount === 0) {
+            setProgress(1);
+            setStatus('No files on device');
+            await sleep(1500);
+            setStatus('Idle');
+            setLoadingSafe(false);
+            setBackgroundWarnEligibleSafe(false);
+            setProgress(0);
+            return;
+          }
+          break;
+        }
 
         for (const asset of pageAssets) {
           if (excludedIds.has(asset.id)) continue;
           checkedCount += 1;
-          setStatus(`Comparing ${checkedCount}/${totalCount || '?'}`);
+          setStatus(`Analyzing ${checkedCount} of ${totalCount || '?'}`);
+          if (totalCount) setProgress(checkedCount / totalCount);
 
           let actualFilename = normalizeFilenameForCompare(asset && asset.filename ? asset.filename : null);
           if (Platform.OS === 'ios' || !actualFilename) {
@@ -4406,10 +5471,10 @@ export default function App() {
       }
 
       console.log(`📊 Assets to backup (after excluding album): ${checkedCount}`);
-      setStatus(`Found ${checkedCount} photos/videos to check...`);
+      // Status will be updated below based on what we found
 
       if (checkedCount === 0) {
-        setStatus('No photos found to backup.');
+        setStatus('No files to backup');
         showDarkAlert('No Photos', 'No photos or videos found on device.');
         setLoadingSafe(false);
         setBackgroundWarnEligibleSafe(false);
@@ -4425,21 +5490,20 @@ export default function App() {
           console.log(`  - ${filename}: ${count} copies`);
         });
       }
-      
+
       console.log(`Local: ${checkedCount}, Server: ${serverFiles.size}, To upload: ${toUpload.length}`);
-      
+
       if (toUpload.length === 0) {
         setStatus(`All ${checkedCount} files already backed up.`);
-        showDarkAlert('Up to Date', `All ${checkedCount} photos/videos are already on the server.`);
+        showDarkAlert('Up to Date', `All ${checkedCount} photos & videos are already on the server.`);
         setLoadingSafe(false);
         setBackgroundWarnEligibleSafe(false);
         setWasBackgroundedDuringWorkSafe(false);
         return;
       }
 
-      // Show summary before starting
-      setStatus(`Ready to backup ${toUpload.length} of ${checkedCount} files...`);
-      await new Promise(resolve => setTimeout(resolve, 1000)); // Brief pause to show message
+      // Brief pause before starting uploads
+      await new Promise(resolve => setTimeout(resolve, 500));
 
       // 4. Upload Loop with per-file error handling (parallel)
       let successCount = 0;
@@ -4448,10 +5512,10 @@ export default function App() {
       const failedFiles = [];
       let processedCount = 0;
 
-      // Concurrency: Fast Mode Android=8 / iOS=6; Slow Mode Android=5 / iOS=3
+      // Concurrency: Fast Mode Android=10 / iOS=8; Slow Mode Android=5 / iOS=4
       const maxParallelUploads = fastModeEnabledRef.current
-        ? (Platform.OS === 'android' ? 8 : 6)
-        : (Platform.OS === 'android' ? 5 : 3);
+        ? (Platform.OS === 'android' ? 10 : 8)
+        : (Platform.OS === 'android' ? 5 : 4);
       const runUpload = createConcurrencyLimiter(maxParallelUploads);
 
       const uploadTasks = toUpload.map((asset, idx) => runUpload(async () => {
@@ -4514,7 +5578,7 @@ export default function App() {
           failedFiles.push(asset.filename);
         } finally {
           processedCount++;
-          setStatus(`Uploading ${processedCount}/${toUpload.length}`);
+          setStatus(`Backing up ${processedCount} of ${toUpload.length}`);
           setProgress(processedCount / toUpload.length);
         }
       }));
@@ -4532,16 +5596,16 @@ export default function App() {
       console.log(`Duplicates skipped: ${duplicateCount}`);
       console.log(`Failed: ${failedCount}`);
       console.log('===== END BACKUP TRACE =====\n');
-      
+
       const skippedCount = checkedCount - toUpload.length + duplicateCount;
       setStatus('Backup complete');
-      showDarkAlert('Backup Complete', `Uploaded: ${successCount}\nSkipped: ${skippedCount}\nFailed: ${failedCount}`);
+      showResultAlert('backup', { uploaded: successCount, skipped: skippedCount, failed: failedCount });
       setProgress(0); // Reset progress after completion
     } catch (error) {
       console.error(error);
-      setStatus('Backup error');
+      setStatus('Backup failed');
       setProgress(0); // Reset progress on error
-      showDarkAlert('Backup Error', error && error.message ? error.message : 'Unknown error');
+      showResultAlert('backup', { error: error && error.message ? error.message : 'Unknown error' });
     } finally {
       setLoadingSafe(false);
       setBackgroundWarnEligibleSafe(false);
@@ -4555,7 +5619,7 @@ export default function App() {
    * @platform iOS: Requires full photo access (not limited)
    * @param {Object|null} opts - Options
    * @param {Array<string>} opts.onlyFilenames - Optional list of specific filenames to restore
-   * 
+   *
    * Process:
    * 1. Request photo permissions
    * 2. Get list of files on server
@@ -4566,15 +5630,19 @@ export default function App() {
     if (serverType === 'stealthcloud') {
       return stealthCloudRestore(opts);
     }
-    setStatus('Requesting permissions...');
+
+    // Show status immediately on button press
+    setStatus('Preparing sync...');
+    setProgress(0);
     setLoadingSafe(true);
-    
+
     // Request full media library permission (read is required to check what already exists locally,
     // and write is required to save restored items)
     const permission = await MediaLibrary.requestPermissionsAsync();
     if (permission.status !== 'granted') {
       showDarkAlert('Permission Required', 'Media library permission is required to sync photos to your gallery.');
       setLoadingSafe(false);
+      setStatus('');
       setBackgroundWarnEligibleSafe(false);
       setWasBackgroundedDuringWorkSafe(false);
       return;
@@ -4596,10 +5664,9 @@ export default function App() {
 
     setBackgroundWarnEligibleSafe(true);
     setWasBackgroundedDuringWorkSafe(false);
-    
+
     console.log('\n⬇️  ===== RESTORE TRACE START =====');
-    
-    setStatus('Checking server files...');
+
     setProgress(0); // Reset progress
 
     try {
@@ -4617,21 +5684,25 @@ export default function App() {
       console.log(`☁️  Server has ${serverFiles.length} files`);
 
       // 2. Get local device photos to check what already exists
-      setStatus('Comparing local files...');
+      setStatus('Analyzing local files...');
       const localIndex = await buildLocalFilenameSetPaged({ mediaType: ['photo', 'video'] });
       const localFilenames = localIndex.set;
       console.log(`📱 Scanned assets on device: ${localIndex.scanned}${localIndex.totalCount ? `/${localIndex.totalCount}` : ''}`);
       console.log(`📊 Unique filenames on device: ${localFilenames.size}`);
-      
+
       if (serverFiles.length === 0) {
-        setStatus('No files on server to download.');
+        setProgress(1);
+        setStatus('No files to sync');
+        await sleep(800);
         showDarkAlert('No Files', 'There are no files on the server to download.');
+        await sleep(500);
         setLoadingSafe(false);
         setBackgroundWarnEligibleSafe(false);
         setWasBackgroundedDuringWorkSafe(false);
+        setProgress(0);
         return;
       }
-      
+
       // Only download files that don't exist locally (case-insensitive check)
       const toDownload = serverFiles.filter(f => {
         const normalizedFilename = normalizeFilenameForCompare(f && f.filename ? f.filename : null);
@@ -4643,44 +5714,47 @@ export default function App() {
         }
         return !exists;
       });
-      
+
       console.log(`\n📊 Restore Summary:`);
       console.log(`Server: ${serverFiles.length}, Local: ${localFilenames.size}, To download: ${toDownload.length}`);
-      
+
       if (toDownload.length === 0) {
+        setProgress(1);
         setStatus(`All ${serverFiles.length} files already synced.`);
+        await sleep(800);
         showDarkAlert('Up to Date', `All ${serverFiles.length} server files are already on your device.`);
+        await sleep(500);
         setLoadingSafe(false);
         setBackgroundWarnEligibleSafe(false);
         setWasBackgroundedDuringWorkSafe(false);
+        setProgress(0);
         return;
       }
 
-      // Show summary before starting
-      setStatus(`Ready to download ${toDownload.length} of ${serverFiles.length} files...`);
-      await new Promise(resolve => setTimeout(resolve, 1000)); // Brief pause to show message
+      // Brief pause before starting downloads
+      await new Promise(resolve => setTimeout(resolve, 500));
 
       // 3. Download Loop - download new files in parallel
       const downloadedUris = [];
       let processedCount = 0;
-      
-      // Fast Mode: parallel downloads (Android=8, iOS=6)
-      // Slow Mode: Android=5, iOS=3
-      const maxParallelDownloads = fastModeEnabledRef.current 
-        ? (Platform.OS === 'android' ? 8 : 6)
-        : (Platform.OS === 'android' ? 5 : 3);
+
+      // Fast Mode: parallel downloads (Android=10, iOS=8)
+      // Slow Mode: Android=5, iOS=4
+      const maxParallelDownloads = fastModeEnabledRef.current
+        ? (Platform.OS === 'android' ? 10 : 8)
+        : (Platform.OS === 'android' ? 5 : 4);
       const runDownload = createConcurrencyLimiter(maxParallelDownloads);
-      
+
       const downloadTasks = toDownload.map((file) => runDownload(async () => {
         try {
           const downloadPath = FileSystem.cacheDirectory + file.filename;
-          
+
           // Delete cached file if it exists to prevent conflicts
           const cachedFileInfo = await FileSystem.getInfoAsync(downloadPath);
           if (cachedFileInfo.exists) {
             await FileSystem.deleteAsync(downloadPath, { idempotent: true });
           }
-          
+
           const downloadRes = await FileSystem.downloadAsync(
             `${getServerUrl()}/api/files/${file.filename}`,
             downloadPath,
@@ -4698,21 +5772,22 @@ export default function App() {
           console.error(`Error downloading ${file.filename}:`, fileError);
         } finally {
           processedCount++;
-          setStatus(`Downloading ${processedCount}/${toDownload.length}`);
+          setStatus(`Syncing ${processedCount} of ${toDownload.length}`);
         }
       }));
-      
+
       await Promise.all(downloadTasks);
-      
+
       // 4. Save all downloaded files to gallery in batch
       let successCount = 0;
+      let downloadFailedCount = toDownload.length - downloadedUris.length;
       if (downloadedUris.length > 0) {
-        setStatus(`Saving ${downloadedUris.length} files to gallery...`);
+        setStatus('Saving to gallery...');
         try {
           // Get or create app album
           const albums = await MediaLibrary.getAlbumsAsync();
           let photoSyncAlbum = findFirstAlbumByTitle(albums, [PHOTO_ALBUM_NAME, LEGACY_PHOTO_ALBUM_NAME]);
-          
+
           // Save files to library using saveToLibraryAsync (asks permission once)
           const assets = [];
           for (const item of downloadedUris) {
@@ -4724,7 +5799,7 @@ export default function App() {
               console.log(`Could not save ${item.filename}: ${err.message}`);
             }
           }
-          
+
           // Add all assets to album at once
           if (assets.length > 0) {
             if (photoSyncAlbum) {
@@ -4741,7 +5816,7 @@ export default function App() {
             }
             console.log(`Saved ${assets.length} files to ${PHOTO_ALBUM_NAME} album`);
           }
-          
+
           // Clean up cache files after saving to gallery
           for (const item of downloadedUris) {
             try {
@@ -4755,28 +5830,34 @@ export default function App() {
           console.log(`Gallery save error: ${galleryError.message}`);
         }
       }
-      
+
       console.log('\n📊 ===== RESTORE SUMMARY =====');
       console.log(`Server files: ${serverFiles.length}`);
       console.log(`Device assets before: ${localIndex.scanned}${localIndex.totalCount ? `/${localIndex.totalCount}` : ''}`);
       console.log(`Unique filenames on device: ${localFilenames.size}`);
       console.log(`Marked for download: ${toDownload.length}`);
-      console.log(`Successfully downloaded: ${successCount}`);
-      console.log(`Failed downloads: ${toDownload.length - successCount}`);
+      console.log(`Successfully downloaded to cache: ${downloadedUris.length}`);
+      console.log(`Successfully saved to gallery: ${successCount}`);
+      console.log(`Failed to download: ${downloadFailedCount}`);
+      console.log(`Failed to save to gallery: ${downloadedUris.length - successCount}`);
       console.log('===== END RESTORE TRACE =====\n');
-      
+
       setStatus('Sync complete');
       setProgress(0); // Reset progress after completion
-      
+
       const skippedCount = serverFiles.length - toDownload.length;
-      const failedCount = toDownload.length - successCount;
-      showDarkAlert('Sync Complete', `Downloaded: ${successCount}\nSkipped: ${skippedCount}\nFailed: ${failedCount}`);
+      const totalFailedCount = downloadFailedCount + (downloadedUris.length - successCount);
+      showResultAlert('sync', { downloaded: successCount, skipped: skippedCount, failed: totalFailedCount });
+
+      // Clear sync picker state to force refresh on next open
+      // This prevents showing stale data (e.g., files that were just downloaded)
+      resetSyncPickerState();
 
     } catch (error) {
       console.error('Restore error:', error);
-      setStatus('Error during restore: ' + error.message);
+      setStatus('Sync failed');
       setProgress(0); // Reset progress on error
-      showDarkAlert('Sync Error', error.message);
+      showResultAlert('sync', { error: error.message });
     } finally {
       setLoadingSafe(false);
       setBackgroundWarnEligibleSafe(false);
@@ -4795,11 +5876,11 @@ export default function App() {
     return (
       <SafeAreaView style={styles.container}>
         <StatusBar barStyle="light-content" backgroundColor="#0A0A0A" />
-        <KeyboardAvoidingView 
+        <KeyboardAvoidingView
           style={{ flex: 1 }}
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
           keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}>
-          <ScrollView 
+          <ScrollView
             contentContainerStyle={{ flexGrow: 1, justifyContent: 'center', alignItems: 'center', paddingVertical: 20 }}
             style={{ flex: 1 }}
             showsVerticalScrollIndicator={false}
@@ -4808,33 +5889,33 @@ export default function App() {
             alwaysBounceVertical={true}
             centerContent={true}>
             <View style={styles.authHeader}>
-              <Image 
-                source={require('./assets/splash-icon.png')} 
+              <Image
+                source={require('./assets/splash-icon.png')}
                 style={styles.appIcon}
               />
               <Text style={styles.title}>{APP_DISPLAY_NAME}</Text>
               <Text style={styles.subtitle}>Secure Cloud Backup for Your Memories</Text>
             </View>
-        
+
             <View style={styles.form}>
           <View style={styles.serverConfig}>
             <Text style={styles.serverLabel}>Server Type</Text>
             <View style={styles.serverToggle}>
-              <TouchableOpacity 
+              <TouchableOpacity
                 style={[styles.toggleBtn, serverType === 'local' && styles.toggleBtnActive]}
                 onPress={() => setServerType('local')}>
                 <Text numberOfLines={1} ellipsizeMode="tail" style={[styles.toggleText, serverType === 'local' && styles.toggleTextActive]}>
                   Local Network
                 </Text>
               </TouchableOpacity>
-              <TouchableOpacity 
+              <TouchableOpacity
                 style={[styles.toggleBtn, serverType === 'remote' && styles.toggleBtnActive]}
                 onPress={() => setServerType('remote')}>
                 <Text numberOfLines={1} ellipsizeMode="tail" style={[styles.toggleText, serverType === 'remote' && styles.toggleTextActive]}>
                   Remote Server
                 </Text>
               </TouchableOpacity>
-              <TouchableOpacity 
+              <TouchableOpacity
                 style={[styles.toggleBtn, serverType === 'stealthcloud' && styles.toggleBtnActive]}
                 onPress={() => setServerType('stealthcloud')}>
                 <Text numberOfLines={1} ellipsizeMode="tail" style={[styles.toggleText, serverType === 'stealthcloud' && styles.toggleTextActive]}>
@@ -4842,12 +5923,12 @@ export default function App() {
                 </Text>
               </TouchableOpacity>
             </View>
-            
+
             {serverType === 'remote' && (
               <>
-                <TextInput 
-                  style={[styles.input, {marginTop: 12}]} 
-                  placeholder="Enter remote domain (recommended)" 
+                <TextInput
+                  style={[styles.input, {marginTop: 12}]}
+                  placeholder="Enter remote domain (recommended)"
                   placeholderTextColor="#666666"
                   value={remoteHost}
                   onChangeText={(t) => setRemoteHost(normalizeHostInput(t))}
@@ -4929,15 +6010,15 @@ export default function App() {
             {serverType === 'local' && (
               <>
                 <View style={{flexDirection: 'row', alignItems: 'center', marginTop: 12}}>
-                  <TextInput 
-                    style={[styles.input, {flex: 1, marginTop: 0, marginRight: 8}]} 
-                    placeholder="Enter local server IP" 
+                  <TextInput
+                    style={[styles.input, {flex: 1, marginTop: 0, marginRight: 8}]}
+                    placeholder="Enter local server IP"
                     placeholderTextColor="#666666"
                     value={localHost}
                     onChangeText={(t) => setLocalHost(normalizeHostInput(t))}
                     autoCapitalize="none"
                   />
-                  <TouchableOpacity 
+                  <TouchableOpacity
                     style={{
                       width: 44,
                       height: 44,
@@ -4952,7 +6033,7 @@ export default function App() {
                       if (!cameraPermission?.granted) {
                         const result = await requestCameraPermission();
                         if (!result.granted) {
-                          Alert.alert('Camera Permission', 'Camera access is needed to scan QR codes.');
+                          showDarkAlert('Camera Permission', 'Camera access is needed to scan QR codes.');
                           return;
                         }
                       }
@@ -4974,7 +6055,7 @@ export default function App() {
 
             {serverType === 'stealthcloud' && (
               <Text style={styles.serverHint}>
-                🕶️ Using StealthCloud (https://stealthlynk.io)
+              Using StealthCloud (https://stealthlynk.io)
               </Text>
             )}
           </View>
@@ -5031,7 +6112,7 @@ export default function App() {
                       <Text style={styles.codeLine} numberOfLines={2} ellipsizeMode="middle">sudo curl -fsSL https://raw.githubusercontent.com/viktorvishyn369/PhotoLynk/main/install-server.sh | bash</Text>
                       <Text style={styles.codeHint}>Tap to copy • Long-press to view script</Text>
                     </TouchableOpacity>
-                    <Text style={styles.serverHelpText}>3) Use an HTTPS domain (Cloudflare/Certbot).</Text>
+                    <Text style={styles.serverHelpText}>3) Follow on-screen instructions.</Text>
                     <Text style={[styles.serverHelpText, styles.boldText]}>On your phone:</Text>
                     <Text style={styles.serverHelpText}>4) Enter your domain (no https://, no port). Example: remote.example.com</Text>
                     <Text style={styles.serverHelpText}>5) Create account and log in</Text>
@@ -5050,10 +6131,10 @@ export default function App() {
               </>
             )}
           </View>
-          
-          <TextInput 
-            style={styles.input} 
-            placeholder="Email" 
+
+          <TextInput
+            style={styles.input}
+            placeholder="Email"
             placeholderTextColor="#888888"
             value={email}
             onChangeText={setEmail}
@@ -5063,9 +6144,9 @@ export default function App() {
             textContentType="username"
           />
           {(authMode === 'login' || authMode === 'register') && (
-            <TextInput 
-              style={styles.input} 
-              placeholder="Password" 
+            <TextInput
+              style={styles.input}
+              placeholder="Password"
               placeholderTextColor="#888888"
               value={password}
               onChangeText={setPassword}
@@ -5076,9 +6157,9 @@ export default function App() {
           )}
 
           {authMode === 'register' && (
-            <TextInput 
-              style={styles.input} 
-              placeholder="Confirm Password" 
+            <TextInput
+              style={styles.input}
+              placeholder="Confirm Password"
               placeholderTextColor="#888888"
               value={confirmPassword}
               onChangeText={setConfirmPassword}
@@ -5087,7 +6168,7 @@ export default function App() {
               textContentType="password"
             />
           )}
-          
+
           {authMode === 'login' && (
             <>
               <TouchableOpacity style={[styles.btnPrimary, loading && { opacity: 0.7 }]} onPress={() => handleAuth('login')} disabled={loading}>
@@ -5100,7 +6181,7 @@ export default function App() {
                   <Text style={styles.btnText}>Login</Text>
                 )}
               </TouchableOpacity>
-              
+
               <View style={{
                 flexDirection: 'row',
                 justifyContent: serverType === 'stealthcloud' ? 'space-between' : 'center',
@@ -5115,7 +6196,7 @@ export default function App() {
                   }}
                   disabled={loading}
                 >
-                  <Text style={{ color: '#a78bfa', fontSize: 14 }}>Create Account</Text>
+                  <Text style={{ color: '#4A9FE8', fontSize: 14 }}>Create Account</Text>
                 </TouchableOpacity>
 
                 {serverType === 'stealthcloud' && (
@@ -5143,8 +6224,8 @@ export default function App() {
                     height: 22,
                     borderRadius: 4,
                     borderWidth: 2,
-                    borderColor: termsAccepted ? '#a78bfa' : '#555',
-                    backgroundColor: termsAccepted ? '#a78bfa' : 'transparent',
+                    borderColor: termsAccepted ? '#4A9FE8' : '#555',
+                    backgroundColor: termsAccepted ? '#4A9FE8' : 'transparent',
                     alignItems: 'center',
                     justifyContent: 'center',
                   }}>
@@ -5157,14 +6238,14 @@ export default function App() {
                   <Text style={{ color: '#AAA', fontSize: 13, lineHeight: 18 }}>
                     I agree to the{' '}
                     <Text
-                      style={{ color: '#a78bfa', textDecorationLine: 'underline' }}
+                      style={{ color: '#4A9FE8', textDecorationLine: 'underline' }}
                       onPress={() => Linking.openURL('https://viktorvishyn369.github.io/PhotoLynk/terms.html')}
                     >
                       Terms of Service
                     </Text>
                     {' '}and{' '}
                     <Text
-                      style={{ color: '#a78bfa', textDecorationLine: 'underline' }}
+                      style={{ color: '#4A9FE8', textDecorationLine: 'underline' }}
                       onPress={() => Linking.openURL('https://viktorvishyn369.github.io/PhotoLynk/privacy-policy.html')}
                     >
                       Privacy Policy
@@ -5173,9 +6254,9 @@ export default function App() {
                 </View>
               </View>
 
-              <TouchableOpacity 
-                style={[styles.btnPrimary, (loading || !termsAccepted) && { opacity: 0.5 }]} 
-                onPress={() => handleAuth('register')} 
+              <TouchableOpacity
+                style={[styles.btnPrimary, (loading || !termsAccepted) && { opacity: 0.5 }]}
+                onPress={() => handleAuth('register')}
                 disabled={loading || !termsAccepted}
               >
                 {loading ? (
@@ -5187,7 +6268,7 @@ export default function App() {
                   <Text style={styles.btnText}>Create Account</Text>
                 )}
               </TouchableOpacity>
-              
+
               <TouchableOpacity
                 style={styles.btnSecondary}
                 onPress={() => {
@@ -5207,10 +6288,10 @@ export default function App() {
               <Text style={{ color: '#CCC', fontSize: 14, textAlign: 'center', marginBottom: 16, lineHeight: 20 }}>
                 If you created your account on this device, you can reset your password below.
               </Text>
-              
-              <TextInput 
-                style={styles.input} 
-                placeholder="New Password (min 6 characters)" 
+
+              <TextInput
+                style={styles.input}
+                placeholder="New Password (min 6 characters)"
                 placeholderTextColor="#888888"
                 value={newPassword}
                 onChangeText={setNewPassword}
@@ -5218,7 +6299,7 @@ export default function App() {
                 autoComplete="new-password"
                 textContentType="newPassword"
               />
-              
+
               <TouchableOpacity style={[styles.btnPrimary, loading && { opacity: 0.7 }]} onPress={handleResetPassword} disabled={loading}>
                 {loading ? (
                   <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
@@ -5229,7 +6310,7 @@ export default function App() {
                   <Text style={styles.btnText}>Reset Password</Text>
                 )}
               </TouchableOpacity>
-              
+
               <TouchableOpacity
                 style={styles.btnSecondary}
                 onPress={() => {
@@ -5243,7 +6324,7 @@ export default function App() {
             </>
           )}
         </View>
-        
+
             <View style={styles.authFooter}>
               <Text style={styles.footerText}>🔒 End-to-end encrypted • Device-bound security</Text>
             </View>
@@ -5261,17 +6342,17 @@ export default function App() {
       )}
 
       {customAlert && (
-        <View style={styles.overlay}>
-          <View style={[styles.overlayCard, { backgroundColor: '#2A2A2A', maxWidth: 320 }]}>
+        <View style={[styles.overlay, glassModeEnabled && styles.overlayGlass]}>
+          <View style={[styles.overlayCard, glassModeEnabled && styles.overlayCardGlass, { backgroundColor: glassModeEnabled ? 'rgba(42, 42, 42, 0.9)' : '#2A2A2A', maxWidth: 320 }]}>
             <Text style={[styles.overlayTitle, { fontSize: 18, marginBottom: 8 }]}>{customAlert.title}</Text>
             <Text style={{ color: '#CCC', fontSize: 14, textAlign: 'center', marginBottom: 20, lineHeight: 20 }}>{customAlert.message}</Text>
             <View style={{ flexDirection: 'row', justifyContent: 'center', gap: 12 }}>
               {(customAlert.buttons || []).map((btn, idx) => (
                 <TouchableOpacity
                   key={idx}
-                  style={[styles.overlayBtnPrimary, { paddingVertical: 10, paddingHorizontal: 24, minWidth: 80 }]}
+                  style={[styles.overlayBtnPrimary, glassModeEnabled && styles.overlayBtnPrimaryGlass, { paddingVertical: 10, paddingHorizontal: 24, minWidth: 80 }]}
                   onPress={() => { closeDarkAlert(); if (btn.onPress) btn.onPress(); }}>
-                  <Text style={styles.overlayBtnText}>{btn.text}</Text>
+                  <Text style={styles.overlayBtnPrimaryText}>{btn.text}</Text>
                 </TouchableOpacity>
               ))}
             </View>
@@ -5288,7 +6369,7 @@ export default function App() {
             <Text style={{color: '#aaa', fontSize: 14, marginBottom: 20, textAlign: 'center', paddingHorizontal: 40}}>
               Point your camera at the QR code shown in the PhotoLynk Server tray app
             </Text>
-            
+
             <View style={{width: 280, height: 280, borderRadius: 16, overflow: 'hidden', backgroundColor: '#000'}}>
               {cameraPermission?.granted ? (
                 <CameraView
@@ -5316,8 +6397,8 @@ export default function App() {
                 </View>
               )}
             </View>
-            
-            <TouchableOpacity 
+
+            <TouchableOpacity
               style={{marginTop: 24, paddingVertical: 14, paddingHorizontal: 40, backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 8}}
               onPress={() => setQrScannerOpen(false)}>
               <Text style={{color: '#fff', fontSize: 16, fontWeight: '600'}}>Cancel</Text>
@@ -5339,30 +6420,30 @@ export default function App() {
           <Text style={styles.headerTitle}>Settings</Text>
           <View style={styles.backBtn} />
         </View>
-        
+
         <ScrollView style={styles.content} contentContainerStyle={styles.contentContainer}>
-          <View style={styles.settingsCard}>
+          <View style={[styles.settingsCard, glassModeEnabled && styles.glassCard]}>
             <Text style={styles.settingsTitle}>Server</Text>
             <Text style={styles.settingsDescription}>
               Choose where your cloud will be running:
             </Text>
-            
+
             <View style={styles.serverToggle}>
-              <TouchableOpacity 
+              <TouchableOpacity
                 style={[styles.toggleBtn, serverType === 'local' && styles.toggleBtnActive]}
                 onPress={() => setServerType('local')}>
                 <Text numberOfLines={1} ellipsizeMode="tail" style={[styles.toggleText, serverType === 'local' && styles.toggleTextActive]}>
                   Local
                 </Text>
               </TouchableOpacity>
-              <TouchableOpacity 
+              <TouchableOpacity
                 style={[styles.toggleBtn, serverType === 'remote' && styles.toggleBtnActive]}
                 onPress={() => setServerType('remote')}>
                 <Text numberOfLines={1} ellipsizeMode="tail" style={[styles.toggleText, serverType === 'remote' && styles.toggleTextActive]}>
                   Remote
                 </Text>
               </TouchableOpacity>
-              <TouchableOpacity 
+              <TouchableOpacity
                 style={[styles.toggleBtn, serverType === 'stealthcloud' && styles.toggleBtnActive]}
                 onPress={async () => {
                   await SecureStore.setItemAsync('server_type', 'stealthcloud');
@@ -5374,7 +6455,7 @@ export default function App() {
                 </Text>
               </TouchableOpacity>
             </View>
-            
+
             {serverType !== 'stealthcloud' && (
               <View style={styles.serverExplanation}>
                 {serverType === 'local' ? (
@@ -5390,11 +6471,11 @@ export default function App() {
                 ) : null}
               </View>
             )}
-            
+
             {serverType === 'remote' && (
-              <TextInput 
-                style={[styles.input, {marginTop: 12}]} 
-                placeholder="IP or domain of your server" 
+              <TextInput
+                style={[styles.input, {marginTop: 12}]}
+                placeholder="IP or domain of your server"
                 placeholderTextColor="#666666"
                 value={remoteHost}
                 onChangeText={(t) => setRemoteHost(normalizeHostInput(t))}
@@ -5404,9 +6485,9 @@ export default function App() {
 
             {serverType === 'local' && (
               <View style={{flexDirection: 'row', alignItems: 'center', marginTop: 12}}>
-                <TextInput 
-                  style={[styles.input, {flex: 1, marginTop: 0, marginRight: 8}]} 
-                  placeholder="Local server IP" 
+                <TextInput
+                  style={[styles.input, {flex: 1, marginTop: 0, marginRight: 8}]}
+                  placeholder="Local server IP"
                   placeholderTextColor="#666666"
                   value={localHost}
                   onChangeText={(t) => setLocalHost(normalizeHostInput(t))}
@@ -5427,7 +6508,7 @@ export default function App() {
                     if (!cameraPermission?.granted) {
                       const result = await requestCameraPermission();
                       if (!result.granted) {
-                        Alert.alert('Camera Permission', 'Camera access is needed to scan QR codes.');
+                        showDarkAlert('Camera Permission', 'Camera access is needed to scan QR codes.');
                         return;
                       }
                     }
@@ -5444,15 +6525,15 @@ export default function App() {
                 </TouchableOpacity>
               </View>
             )}
-            
+
             <View style={styles.serverInfo}>
               <Text style={styles.serverInfoLabel}>Chosen connection:</Text>
               <Text style={styles.serverInfoText}>{getServerUrl()}</Text>
             </View>
 
             {serverType !== 'stealthcloud' && (
-              <TouchableOpacity 
-                style={styles.btnPrimary} 
+              <TouchableOpacity
+                style={styles.btnPrimary}
                 onPress={async () => {
                   await SecureStore.setItemAsync('server_type', serverType);
                   if (serverType === 'remote') {
@@ -5473,7 +6554,7 @@ export default function App() {
             <View style={styles.settingsCard}>
               <Text style={styles.settingsTitle}>Auto Upload</Text>
               <Text style={styles.settingsDescription}>
-                Backs up photos/videos on Wi-Fi when charging or battery over 50%. Keep app open — backgrounding or locking will pause.
+                Backs up photos & videos on Wi-Fi when charging or battery over 50%. Keep app open — backgrounding or locking will pause.
               </Text>
 
               <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -5508,11 +6589,11 @@ export default function App() {
                     }
 
                     persistAutoUploadEnabled(false);
-                    
+
                     // Cancel any running auto upload session
                     autoUploadNightRunnerCancelRef.current = true;
                     autoUploadNightRunnerActiveRef.current = false;
-                    
+
                     setStatus('Auto backup disabled');
 
                     try {
@@ -5525,28 +6606,47 @@ export default function App() {
           )}
           */}
 
-          {serverType === 'stealthcloud' && (
-            <View style={styles.settingsCard}>
-              <Text style={styles.settingsTitle}>Performance</Text>
-              <View style={{flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between'}}>
-                <Text style={styles.inputLabel}>{fastModeEnabled ? 'Fast Mode' : 'Slow Mode'}</Text>
-                <Switch
-                  value={fastModeEnabled}
-                  onValueChange={persistFastModeEnabled}
-                  trackColor={{ false: '#CCCCCC', true: '#FF4444' }}
-                  thumbColor='#FFFFFF'
-                />
-              </View>
-              <Text style={styles.settingsDescription}>
-                {fastModeEnabled
-                  ? 'Faster uploads but uses more CPU and battery.\nRecommended when speed is a priority.'
-                  : 'Safe for phone CPU and battery. Uploads will be significantly slower but your device stays cool.'}
-              </Text>
+          <View style={[styles.settingsCard, glassModeEnabled && styles.glassCard]}>
+            <Text style={styles.settingsTitle}>Performance</Text>
+            <View style={{flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between'}}>
+              <Text style={styles.inputLabel}>{fastModeEnabled ? 'Fast Mode' : 'Slow Mode'}</Text>
+              <Switch
+                value={fastModeEnabled}
+                onValueChange={persistFastModeEnabled}
+                trackColor={{ false: '#CCCCCC', true: '#FF4444' }}
+                thumbColor='#FFFFFF'
+              />
             </View>
-          )}
+            <Text style={styles.settingsDescription}>
+              {fastModeEnabled
+                ? "Faster uploads but uses more CPU and battery.\nRecommended when speed is a priority.\nWatch device's temperature and battery charge."
+                : "Safer for device CPU and battery.\nUploads will be slower but this device stays cooler.\nWatch device's temperature and battery charge."}
+            </Text>
+            <Text style={styles.settingsDescription}>
+              Screen stays on while the app is active. All activity pauses when the app is backgrounded.
+            </Text>
+          </View>
+
+          <View style={[styles.settingsCard, glassModeEnabled && styles.glassCard]}>
+            <Text style={styles.settingsTitle}>Appearance</Text>
+            <View style={{flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between'}}>
+              <Text style={styles.inputLabel}>{glassModeEnabled ? 'Glass Mode' : 'Standard Mode'}</Text>
+              <Switch
+                value={glassModeEnabled}
+                onValueChange={persistGlassModeEnabled}
+                trackColor={{ false: '#CCCCCC', true: '#007AFF' }}
+                thumbColor='#FFFFFF'
+              />
+            </View>
+            <Text style={styles.settingsDescription}>
+              {glassModeEnabled
+                ? "Frosted glass effect on cards and overlays.\nModern glassmorphism design."
+                : "Standard solid background cards.\nClassic app appearance."}
+            </Text>
+          </View>
 
           {serverType === 'stealthcloud' ? (
-            <View style={styles.settingsCard}>
+            <View style={[styles.settingsCard, glassModeEnabled && styles.glassCard]}>
               <Text style={styles.settingsTitle}>StealthCloud</Text>
               <Text style={styles.settingsDescription}>Danger zone</Text>
 
@@ -5558,32 +6658,41 @@ export default function App() {
               </TouchableOpacity>
 
               <Text style={styles.inputHint}>
-                This removes encrypted chunks and manifests from the server for your device/account.
+                This removes All Data from the server for your account.
               </Text>
             </View>
           ) : (
-            <View style={styles.settingsCard}>
-              <Text style={styles.settingsTitle}>Server</Text>
-              <Text style={styles.settingsDescription}>Danger zone</Text>
+            <>
+              <View style={[styles.settingsCard, glassModeEnabled && styles.glassCard]}>
+                <Text style={styles.settingsTitle}>Performance</Text>
+                <Text style={styles.settingsDescription}>
+                  Screen stays on while the app is active. All activity is paused when the app is backgrounded.
+                </Text>
+              </View>
 
-              <TouchableOpacity
-                style={[styles.btnDanger, loading && styles.disabledCard]}
-                disabled={loading}
-                onPress={purgeClassicServerData}>
-                <Text style={styles.btnDangerText}>Delete all data on server</Text>
-              </TouchableOpacity>
+              <View style={[styles.settingsCard, glassModeEnabled && styles.glassCard]}>
+                <Text style={styles.settingsTitle}>Server</Text>
+                <Text style={styles.settingsDescription}>Danger zone</Text>
 
-              <Text style={styles.inputHint}>
-                This removes uploaded photos/videos from your server for your device/account.
-              </Text>
-            </View>
+                <TouchableOpacity
+                  style={[styles.btnDanger, loading && styles.disabledCard]}
+                  disabled={loading}
+                  onPress={purgeClassicServerData}>
+                  <Text style={styles.btnDangerText}>Delete All Data on server</Text>
+                </TouchableOpacity>
+
+                <Text style={styles.inputHint}>
+                  This removes All Data from the server for your account.
+                </Text>
+              </View>
+            </>
           )}
 
         </ScrollView>
 
         {quickSetupOpen && (
-          <View style={styles.overlay}>
-            <View style={styles.overlayCard}>
+          <View style={[styles.overlay, glassModeEnabled && styles.overlayGlass]}>
+            <View style={[styles.overlayCard, glassModeEnabled && styles.overlayCardGlass]}>
               <Text style={styles.overlayTitle}>Quick Setup</Text>
               <Text style={[styles.overlaySubtitle, { textAlign: 'left' }]}>
                 <Text style={styles.boldText}>1)</Text> Download the server app on your computer:
@@ -5604,7 +6713,7 @@ export default function App() {
                   <Text style={styles.boldText}>2)</Text> Install + run it (tray/menu bar){'\n'}
                   <Text style={styles.boldText}>3)</Text> Copy IP from tray → <Text style={styles.boldText}>Local IP Addresses</Text>{'\n'}
                   <Text style={styles.boldText}>4)</Text> In this app: <Text style={styles.boldText}>Local</Text> → paste IP → <Text style={styles.boldText}>Save Changes</Text>{'\n'}
-                  <Text style={styles.boldText}>5)</Text> <Text style={styles.boldText}>Create Account</Text> / <Text style={styles.boldText}>Login</Text> → <Text style={styles.boldText}>Backup Photos</Text>
+                  <Text style={styles.boldText}>5)</Text> <Text style={styles.boldText}>Create Account</Text> / <Text style={styles.boldText}>Login</Text> → <Text style={styles.boldText}>Backup to Cloud</Text>
                 </Text>
               )}
 
@@ -5613,11 +6722,11 @@ export default function App() {
                   <Text style={styles.boldText}>2)</Text> Run the server on your VPS/home server{'\n'}
                   <Text style={styles.boldText}>3)</Text> Enable HTTPS (TLS) on port 3000{'\n'}
                   <Text style={styles.boldText}>4)</Text> In this app: <Text style={styles.boldText}>Remote</Text> → enter host (IP/domain) → <Text style={styles.boldText}>Save Changes</Text>{'\n'}
-                  <Text style={styles.boldText}>5)</Text> <Text style={styles.boldText}>Login</Text> → <Text style={styles.boldText}>Backup Photos</Text> / <Text style={styles.boldText}>Sync from Cloud</Text>
+                  <Text style={styles.boldText}>5)</Text> <Text style={styles.boldText}>Login</Text> → <Text style={styles.boldText}>Backup to Cloud</Text> / <Text style={styles.boldText}>Sync from Cloud</Text>
                 </Text>
               )}
 
-              <TouchableOpacity style={styles.overlayBtnSecondary} onPress={() => setQuickSetupOpen(false)}>
+              <TouchableOpacity style={[styles.overlayBtnSecondary, glassModeEnabled && styles.overlayBtnSecondaryGlass]} onPress={() => setQuickSetupOpen(false)}>
                 <Text style={styles.overlayBtnSecondaryText}>Close</Text>
               </TouchableOpacity>
             </View>
@@ -5633,7 +6742,7 @@ export default function App() {
               <Text style={{color: '#aaa', fontSize: 14, marginBottom: 20, textAlign: 'center', paddingHorizontal: 40}}>
                 Point your camera at the QR code shown in the PhotoLynk Server tray app
               </Text>
-              
+
               <View style={{width: 280, height: 280, borderRadius: 16, overflow: 'hidden', backgroundColor: '#000'}}>
                 {cameraPermission?.granted ? (
                   <CameraView
@@ -5661,8 +6770,8 @@ export default function App() {
                   </View>
                 )}
               </View>
-              
-              <TouchableOpacity 
+
+              <TouchableOpacity
                 style={{marginTop: 24, paddingVertical: 14, paddingHorizontal: 40, backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 8}}
                 onPress={() => setQrScannerOpen(false)}>
                 <Text style={{color: '#fff', fontSize: 16, fontWeight: '600'}}>Cancel</Text>
@@ -5672,15 +6781,15 @@ export default function App() {
         )}
 
         {customAlert && (
-          <View style={styles.overlay}>
-            <View style={[styles.overlayCard, { backgroundColor: '#2A2A2A', maxWidth: 320 }]}>
+          <View style={[styles.overlay, glassModeEnabled && styles.overlayGlass]}>
+            <View style={[styles.overlayCard, glassModeEnabled && styles.overlayCardGlass, { backgroundColor: glassModeEnabled ? 'rgba(42, 42, 42, 0.9)' : '#2A2A2A', maxWidth: 320 }]}>
               <Text style={[styles.overlayTitle, { fontSize: 18, marginBottom: 8 }]}>{customAlert.title}</Text>
               <Text style={{ color: '#CCC', fontSize: 14, textAlign: 'center', marginBottom: 20, lineHeight: 20 }}>{customAlert.message}</Text>
               <View style={{ flexDirection: 'row', justifyContent: 'center', gap: 12 }}>
                 {(customAlert.buttons || []).map((btn, idx) => (
                   <TouchableOpacity
                     key={idx}
-                    style={[styles.overlayBtnPrimary, { paddingVertical: 10, paddingHorizontal: 24, minWidth: 80 }]}
+                    style={[styles.overlayBtnPrimary, glassModeEnabled && styles.overlayBtnPrimaryGlass, { paddingVertical: 10, paddingHorizontal: 24, minWidth: 80 }]}
                     onPress={() => {
                       closeDarkAlert();
                       if (btn.onPress) btn.onPress();
@@ -5706,12 +6815,12 @@ export default function App() {
           <Text style={styles.headerTitle}>About</Text>
           <View style={{width: 60}} />
         </View>
-        
+
         <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingHorizontal: Math.max(16, SCREEN_WIDTH * 0.04), paddingTop: 16, paddingBottom: 40 }}>
-          <View style={styles.settingsCard}>
+          <View style={[styles.settingsCard, glassModeEnabled && styles.glassCard]}>
             <Text style={styles.settingsTitle}>{APP_DISPLAY_NAME}</Text>
             {deviceUuid && (
-              <TouchableOpacity 
+              <TouchableOpacity
                 style={styles.uuidBox}
                 onPress={() => {
                   Clipboard.setString(deviceUuid);
@@ -5724,7 +6833,7 @@ export default function App() {
           </View>
 
           {serverType === 'stealthcloud' && (
-            <View style={styles.settingsCard}>
+            <View style={[styles.settingsCard, glassModeEnabled && styles.glassCard]}>
               <Text style={styles.settingsTitle}>StealthCloud Storage</Text>
               <Text style={styles.settingsDescription}>Your encrypted cloud usage</Text>
 
@@ -5765,7 +6874,7 @@ export default function App() {
                           <View style={styles.usageItem}>
                             <Text style={styles.serverInfoLabel}>Status</Text>
                             <Text style={[styles.serverInfoText, isExpired && { color: '#FF6B6B' }, isGrace && !isExpired && { color: '#FFB347' }]}>
-                              {subStatus === 'active' ? '✓ Active' : 
+                              {subStatus === 'active' ? '✓ Active' :
                                subStatus === 'trial' ? '🎁 Free Trial' :
                                subStatus === 'grace' ? `⚠️ Expired (${GRACE_PERIOD_DAYS} days to sync)` :
                                subStatus === 'grace_expired' ? '❌ Grace Period Ended' :
@@ -5791,7 +6900,7 @@ export default function App() {
                         {(isGrace || isExpired) && (
                           <View style={{ marginTop: 12 }}>
                             <Text style={[styles.inputHint, { color: '#FFB347', marginBottom: 8 }]}>
-                              {isGrace && !isExpired 
+                              {isGrace && !isExpired
                                 ? `Your subscription expired. You have ${GRACE_PERIOD_DAYS} days to sync your data before access is locked.`
                                 : 'Your subscription has expired. Renew to continue backups.'}
                             </Text>
@@ -5807,14 +6916,14 @@ export default function App() {
               <View style={{ marginTop: 16, borderTopWidth: 1, borderTopColor: '#333', paddingTop: 16 }}>
                 <Text style={styles.serverInfoLabel}>Manage Subscription</Text>
                 <Text style={[styles.inputHint, { marginTop: 6 }]}>Prices are shown in your local currency from Apple/Google.</Text>
-                
+
                 <View style={styles.stealthPlanGrid}>
                   {STEALTH_PLAN_TIERS.map((gb) => {
                     const plan = availablePlans.find(p => p.tierGb === gb);
                     const priceStr = plan ? plan.priceString : '—';
                     const currentPlan = stealthUsage?.planGb || stealthUsage?.plan_gb;
                     const isCurrent = currentPlan === gb;
-                    
+
                     return (
                       <TouchableOpacity
                         key={String(gb)}
@@ -5849,11 +6958,11 @@ export default function App() {
               </View>
             </View>
           )}
-          
-          <View style={styles.settingsCard}>
+
+          <View style={[styles.settingsCard, glassModeEnabled && styles.glassCard]}>
             <Text style={styles.settingsTitle}>Resources</Text>
-            
-            <TouchableOpacity 
+
+            <TouchableOpacity
               style={styles.resourceBtn}
               onPress={() => {
                 const githubUrl = 'https://github.com/viktorvishyn369/PhotoLynk';
@@ -5868,24 +6977,24 @@ export default function App() {
               </View>
               <Text style={styles.resourceArrow}>→</Text>
             </TouchableOpacity>
-            
+
           </View>
-          
+
           <View style={styles.settingsFooter}>
-            <Text style={styles.footerVersion}>{APP_DISPLAY_NAME} v1.0.0</Text>
+            <Text style={styles.footerVersion}>{APP_DISPLAY_NAME} v1.1.1</Text>
           </View>
         </ScrollView>
 
         {customAlert && (
-          <View style={styles.overlay}>
-            <View style={[styles.overlayCard, { backgroundColor: '#2A2A2A', maxWidth: 320 }]}>
+          <View style={[styles.overlay, glassModeEnabled && styles.overlayGlass]}>
+            <View style={[styles.overlayCard, glassModeEnabled && styles.overlayCardGlass, { backgroundColor: glassModeEnabled ? 'rgba(42, 42, 42, 0.9)' : '#2A2A2A', maxWidth: 320 }]}>
               <Text style={[styles.overlayTitle, { fontSize: 18, marginBottom: 8 }]}>{customAlert.title}</Text>
               <Text style={{ color: '#CCC', fontSize: 14, textAlign: 'center', marginBottom: 20, lineHeight: 20 }}>{customAlert.message}</Text>
               <View style={{ flexDirection: 'row', justifyContent: 'center', gap: 12, flexWrap: 'wrap' }}>
                 {(customAlert.buttons || []).map((btn, idx) => (
                   <TouchableOpacity
                     key={idx}
-                    style={[styles.overlayBtnPrimary, { paddingVertical: 10, paddingHorizontal: 24, minWidth: 80 }]}
+                    style={[styles.overlayBtnPrimary, glassModeEnabled && styles.overlayBtnPrimaryGlass, { paddingVertical: 10, paddingHorizontal: 24, minWidth: 80 }]}
                     onPress={() => {
                       closeDarkAlert();
                       if (btn.onPress) btn.onPress();
@@ -5899,8 +7008,8 @@ export default function App() {
         )}
 
         {paywallTierGb && (
-          <View style={styles.overlay}>
-            <View style={[styles.overlayCard, { backgroundColor: '#1E1E1E', maxWidth: 340 }]}>
+          <View style={[styles.overlay, glassModeEnabled && styles.overlayGlass]}>
+            <View style={[styles.overlayCard, glassModeEnabled && styles.overlayCardGlass, { backgroundColor: glassModeEnabled ? 'rgba(30, 30, 30, 0.9)' : '#1E1E1E', maxWidth: 340 }]}>
               {(() => {
                 const gb = paywallTierGb;
                 const plan = availablePlans.find(p => p.tierGb === gb);
@@ -5919,7 +7028,7 @@ export default function App() {
                     <Text style={[styles.inputHint, { textAlign: 'center', marginBottom: 14 }]}>Price shown in your local currency from Apple/Google. Taxes may apply. Cancel anytime.</Text>
                     <View style={{ flexDirection: 'row', justifyContent: 'center', gap: 12, flexWrap: 'wrap' }}>
                       <TouchableOpacity
-                        style={[styles.overlayBtnPrimary, { paddingVertical: 10, paddingHorizontal: 24, minWidth: 90, opacity: purchaseLoading ? 0.6 : 1 }]}
+                        style={[styles.overlayBtnPrimary, glassModeEnabled && styles.overlayBtnPrimaryGlass, { paddingVertical: 10, paddingHorizontal: 24, minWidth: 90, opacity: purchaseLoading ? 0.6 : 1 }]}
                         onPress={closePaywall}
                         disabled={purchaseLoading}
                       >
@@ -5927,7 +7036,7 @@ export default function App() {
                       </TouchableOpacity>
 
                       <TouchableOpacity
-                        style={[styles.overlayBtnPrimary, { paddingVertical: 10, paddingHorizontal: 24, minWidth: 110, opacity: canSubscribe ? 1 : 0.5 }]}
+                        style={[styles.overlayBtnPrimary, glassModeEnabled && styles.overlayBtnPrimaryGlass, { paddingVertical: 10, paddingHorizontal: 24, minWidth: 110, opacity: canSubscribe ? 1 : 0.5 }]}
                         onPress={() => {
                           if (!canSubscribe) return;
                           closePaywall();
@@ -5983,7 +7092,7 @@ export default function App() {
       </View>
 
       <ScrollView style={styles.content} contentContainerStyle={styles.contentContainer}>
-        <View style={styles.statusCard}>
+        <View style={[styles.statusCard, glassModeEnabled && styles.statusCardGlass]}>
           <View style={styles.statusHeader}>
             <Text style={styles.statusLabel}>STATUS</Text>
           </View>
@@ -6010,71 +7119,72 @@ export default function App() {
         </View>
 
         <View style={styles.actionsContainer}>
-          <TouchableOpacity 
-            onPress={openBackupModeChooser} 
+          <TouchableOpacity
+            onPress={openCleanupModeChooser}
             disabled={loading}
-            style={[styles.actionCard, styles.backupCard, loading && styles.disabledCard]}>
-            <View style={styles.cardIcon}>
-              <FontAwesome5 name="cloud-upload-alt" size={24} color="#FFFFFF" />
-            </View>
-            <Text style={styles.cardTitle}>Backup Photos</Text>
-            <Text style={styles.cardDescription}>Upload photos/videos to {serverType === 'stealthcloud' ? 'StealthCloud' : serverType === 'remote' ? 'Remote' : 'Local'}</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity 
-            onPress={openSyncModeChooser} 
-            onLongPress={async () => {
-              await SecureStore.deleteItemAsync('downloaded_files');
-              showDarkAlert('Reset', 'Download history cleared. All files will be re-downloaded.');
-            }}
-            disabled={loading}
-            style={[styles.actionCard, styles.syncCard, loading && styles.disabledCard]}>
-            <View style={styles.cardIcon}>
-              <FontAwesome5 name="cloud-download-alt" size={24} color="#FFFFFF" />
-            </View>
-            <Text style={styles.cardTitle}>Sync from Cloud</Text>
-            <Text style={styles.cardDescription}>Download backed up files to your device</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity 
-            onPress={openCleanupModeChooser} 
-            disabled={loading}
-            style={[styles.actionCard, styles.cleanupCard, loading && styles.disabledCard]}>
+            style={[styles.actionCard, styles.cleanupCard, glassModeEnabled && styles.cleanupCardGlass, loading && styles.disabledCard]}>
             <View style={styles.cardIcon}>
               <FontAwesome5 name="broom" size={22} color="#FFFFFF" />
             </View>
             <Text style={styles.cardTitle}>Clean Duplicates</Text>
-            <Text style={styles.cardDescription}>Remove duplicate photos on your device</Text>
+            <Text style={styles.cardDescription}>Remove Duplicate Photos on this device</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            onPress={openBackupModeChooser}
+            disabled={loading}
+            style={[styles.actionCard, styles.backupCard, glassModeEnabled && styles.backupCardGlass, loading && styles.disabledCard]}>
+            <View style={styles.cardIcon}>
+              <FontAwesome5 name="cloud-upload-alt" size={24} color="#FFFFFF" />
+            </View>
+            <Text style={styles.cardTitle}>Backup to Cloud</Text>
+            <Text style={styles.cardDescription}>Upload Photos & Videos to {serverType === 'stealthcloud' ? 'StealthCloud' : serverType === 'remote' ? 'Remote' : 'Local'}</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            onPress={openSyncModeChooser}
+            onLongPress={async () => {
+              await SecureStore.deleteItemAsync('downloaded_files');
+              await clearRestoreHistory();
+              showDarkAlert('Reset', 'Download history cleared. All files will be re-downloaded on next sync.');
+            }}
+            disabled={loading}
+            style={[styles.actionCard, styles.syncCard, glassModeEnabled && styles.syncCardGlass, loading && styles.disabledCard]}>
+            <View style={styles.cardIcon}>
+              <FontAwesome5 name="cloud-download-alt" size={24} color="#FFFFFF" />
+            </View>
+            <Text style={styles.cardTitle}>Sync from Cloud</Text>
+            <Text style={styles.cardDescription}>Download backed up Photos & Videos</Text>
           </TouchableOpacity>
         </View>
       </ScrollView>
 
       {cleanupModeOpen && (
-        <View style={styles.overlay}>
-          <View style={styles.overlayCard}>
+        <View style={[styles.overlay, glassModeEnabled && styles.overlayGlass]}>
+          <View style={[styles.overlayCard, glassModeEnabled && styles.overlayCardGlass]}>
             <Text style={styles.overlayTitle}>Clean Up Duplicates</Text>
-            <Text style={styles.overlaySubtitle}>Free up space by removing exact duplicates and reviewing similar photos. Nothing is deleted without your confirmation.</Text>
+            <Text style={styles.overlaySubtitle}>Remove best photo matches & similar photos.{"\n"}Nothing is deleted without your confirmation.</Text>
 
             <TouchableOpacity
-              style={styles.overlayBtnPrimary}
+              style={[styles.overlayBtnPrimary, glassModeEnabled && styles.overlayBtnPrimaryGlass]}
               onPress={async () => {
                 closeCleanupModeChooser();
                 await cleanDeviceDuplicates();
               }}>
-              <Text style={styles.overlayBtnPrimaryText}>Delete Exact Duplicates</Text>
+              <Text style={styles.overlayBtnPrimaryText}>Review Best Photo Matches & Delete</Text>
             </TouchableOpacity>
 
             <TouchableOpacity
-              style={styles.overlayBtnSecondary}
+              style={[styles.overlayBtnSecondary, glassModeEnabled && styles.overlayBtnSecondaryGlass]}
               onPress={async () => {
                 closeCleanupModeChooser();
                 await startSimilarShotsReview();
               }}>
-              <Text style={styles.overlayBtnSecondaryText}>Review Similar Photos</Text>
+              <Text style={styles.overlayBtnSecondaryText}>Review Similar Photos & Delete</Text>
             </TouchableOpacity>
 
             <TouchableOpacity
-              style={styles.overlayBtnGhost}
+              style={[styles.overlayBtnGhost, glassModeEnabled && styles.overlayBtnGhostGlass]}
               onPress={closeCleanupModeChooser}>
               <Text style={styles.overlayBtnGhostText}>Cancel</Text>
             </TouchableOpacity>
@@ -6083,8 +7193,8 @@ export default function App() {
       )}
 
       {similarReviewOpen && (
-        <View style={styles.overlay}>
-          <View style={styles.pickerCard}>
+        <View style={[styles.overlay, glassModeEnabled && styles.overlayGlass]}>
+          <View style={[styles.pickerCard, glassModeEnabled && styles.pickerCardGlass]}>
             <View style={styles.pickerHeader}>
               <TouchableOpacity onPress={closeSimilarReview} style={styles.pickerHeaderBtn}>
                 <Text style={styles.pickerHeaderBtnText}>Cancel</Text>
@@ -6119,14 +7229,14 @@ export default function App() {
 
                 <TouchableOpacity
                   disabled={getSimilarSelectedIds().length === 0 || loading}
-                  style={styles.overlayBtnPrimary}
+                  style={[styles.overlayBtnPrimary, glassModeEnabled && styles.overlayBtnPrimaryGlass]}
                   onPress={async () => {
                     const ids = getSimilarSelectedIds();
                     if (ids.length === 0) return;
                     setLoadingSafe(true);
                     setStatus('Deleting selected photos...');
                     let didDelete = false;
-                    
+
                     try {
                       // Use native MediaDelete module on Android for proper scoped storage handling
                       if (Platform.OS === 'android' && MediaDelete && typeof MediaDelete.deleteAssets === 'function') {
@@ -6153,7 +7263,7 @@ export default function App() {
                       showDarkAlert('Delete Failed', e?.message || 'Could not delete items.');
                       setStatus('Delete failed');
                     }
-                    
+
                     setLoadingSafe(false);
 
                     if (!didDelete) {
@@ -6181,7 +7291,7 @@ export default function App() {
                 </TouchableOpacity>
 
                 <TouchableOpacity
-                  style={styles.overlayBtnSecondary}
+                  style={[styles.overlayBtnSecondary, glassModeEnabled && styles.overlayBtnSecondaryGlass]}
                   onPress={() => {
                     advanceSimilarGroup({ groups: similarGroups, nextIndex: similarGroupIndex + 1 });
                   }}>
@@ -6194,31 +7304,31 @@ export default function App() {
       )}
 
       {backupModeOpen && (
-        <View style={styles.overlay}>
-          <View style={styles.overlayCard}>
-            <Text style={styles.overlayTitle}>Backup Photos</Text>
-            <Text style={styles.overlaySubtitle}>Choose how you want to back up (existing files on server will be skipped).</Text>
+        <View style={[styles.overlay, glassModeEnabled && styles.overlayGlass]}>
+          <View style={[styles.overlayCard, glassModeEnabled && styles.overlayCardGlass]}>
+            <Text style={styles.overlayTitle}>Backup to Cloud</Text>
+            <Text style={styles.overlaySubtitle}>Choose how you want to upload{"\n"}(existing files on server will be skipped).</Text>
 
             <TouchableOpacity
-              style={styles.overlayBtnPrimary}
+              style={[styles.overlayBtnPrimary, glassModeEnabled && styles.overlayBtnPrimaryGlass]}
               onPress={async () => {
                 closeBackupModeChooser();
                 await backupPhotos();
               }}>
-              <Text style={styles.overlayBtnPrimaryText}>All (skip existing)</Text>
+              <Text style={styles.overlayBtnPrimaryText}>All Photos & Videos</Text>
             </TouchableOpacity>
 
             <TouchableOpacity
-              style={styles.overlayBtnSecondary}
+              style={[styles.overlayBtnSecondary, glassModeEnabled && styles.overlayBtnSecondaryGlass]}
               onPress={async () => {
                 closeBackupModeChooser();
                 await openBackupPicker();
               }}>
-              <Text style={styles.overlayBtnSecondaryText}>Choose photos/videos</Text>
+              <Text style={styles.overlayBtnSecondaryText}>Choose Photos & Videos</Text>
             </TouchableOpacity>
 
             <TouchableOpacity
-              style={styles.overlayBtnGhost}
+              style={[styles.overlayBtnGhost, glassModeEnabled && styles.overlayBtnGhostGlass]}
               onPress={closeBackupModeChooser}>
               <Text style={styles.overlayBtnGhostText}>Cancel</Text>
             </TouchableOpacity>
@@ -6227,8 +7337,8 @@ export default function App() {
       )}
 
       {backupPickerOpen && (
-        <View style={styles.overlay}>
-          <View style={styles.pickerCard}>
+        <View style={[styles.overlay, glassModeEnabled && styles.overlayGlass]}>
+          <View style={[styles.pickerCard, glassModeEnabled && styles.pickerCardGlass]}>
             <View style={styles.pickerHeader}>
               <TouchableOpacity onPress={closeBackupPicker} style={styles.pickerHeaderBtn}>
                 <Text style={styles.pickerHeaderBtnText}>Cancel</Text>
@@ -6278,7 +7388,7 @@ export default function App() {
                 ) : (
                   backupPickerHasNext && (
                     <TouchableOpacity
-                      style={styles.overlayBtnSecondary}
+                      style={[styles.overlayBtnSecondary, glassModeEnabled && styles.overlayBtnSecondaryGlass]}
                       onPress={() => loadBackupPickerPage({ reset: false })}>
                       <Text style={styles.overlayBtnSecondaryText}>Load more</Text>
                     </TouchableOpacity>
@@ -6291,31 +7401,31 @@ export default function App() {
       )}
 
       {syncModeOpen && (
-        <View style={styles.overlay}>
-          <View style={styles.overlayCard}>
+        <View style={[styles.overlay, glassModeEnabled && styles.overlayGlass]}>
+          <View style={[styles.overlayCard, glassModeEnabled && styles.overlayCardGlass]}>
             <Text style={styles.overlayTitle}>Sync from Cloud</Text>
-            <Text style={styles.overlaySubtitle}>Choose how you want to sync (existing files on device will be skipped).</Text>
+            <Text style={styles.overlaySubtitle}>Choose how you want to download{"\n"}(existing files on device will be skipped).</Text>
 
             <TouchableOpacity
-              style={styles.overlayBtnPrimary}
+              style={[styles.overlayBtnPrimary, glassModeEnabled && styles.overlayBtnPrimaryGlass]}
               onPress={async () => {
                 closeSyncModeChooser();
                 await restorePhotos();
               }}>
-              <Text style={styles.overlayBtnPrimaryText}>All (skip existing)</Text>
+              <Text style={styles.overlayBtnPrimaryText}>All Photos & Videos</Text>
             </TouchableOpacity>
 
             <TouchableOpacity
-              style={styles.overlayBtnSecondary}
+              style={[styles.overlayBtnSecondary, glassModeEnabled && styles.overlayBtnSecondaryGlass]}
               onPress={async () => {
                 closeSyncModeChooser();
                 await openSyncPicker();
               }}>
-              <Text style={styles.overlayBtnSecondaryText}>Choose files</Text>
+              <Text style={styles.overlayBtnSecondaryText}>Choose Photos & Videos</Text>
             </TouchableOpacity>
 
             <TouchableOpacity
-              style={styles.overlayBtnGhost}
+              style={[styles.overlayBtnGhost, glassModeEnabled && styles.overlayBtnGhostGlass]}
               onPress={closeSyncModeChooser}>
               <Text style={styles.overlayBtnGhostText}>Cancel</Text>
             </TouchableOpacity>
@@ -6324,8 +7434,8 @@ export default function App() {
       )}
 
       {syncPickerOpen && (
-        <View style={styles.overlay}>
-          <View style={styles.pickerCard}>
+        <View style={[styles.overlay, glassModeEnabled && styles.overlayGlass]}>
+          <View style={[styles.pickerCard, glassModeEnabled && styles.pickerCardGlass]}>
             <View style={styles.pickerHeader}>
               <TouchableOpacity onPress={closeSyncPicker} style={styles.pickerHeaderBtn}>
                 <Text style={styles.pickerHeaderBtnText}>Cancel</Text>
@@ -6364,7 +7474,7 @@ export default function App() {
                       Showing {syncPickerItems.length}{syncPickerTotal > 0 ? ` of ${syncPickerTotal}` : ''} files
                     </Text>
                   </View>
-                  
+
                   {(syncPickerItems || []).map((it) => {
                     const key = serverType === 'stealthcloud'
                       ? String(it && it.manifestId ? it.manifestId : '')
@@ -6373,7 +7483,9 @@ export default function App() {
                     const selected = !!(syncPickerSelected && syncPickerSelected[key]);
                     // Display filename (decrypted for StealthCloud, original for classic)
                     const displayName = it && it.filename ? it.filename : key;
-                    const fileSize = it && typeof it.size === 'number' ? it.size : null;
+                    // Handle size: null means unknown, 0 means actually 0 bytes (treat as unknown too)
+                    const rawSize = it && typeof it.size === 'number' ? it.size : null;
+                    const fileSize = rawSize !== null && rawSize > 0 ? rawSize : null;
                     // Determine file type from mediaType or extension
                     const mediaType = it && it.mediaType ? it.mediaType : null;
                     const ext = (displayName || '').split('.').pop()?.toLowerCase() || '';
@@ -6401,17 +7513,17 @@ export default function App() {
                       </TouchableOpacity>
                     );
                   })}
-                  
+
                   {/* Load More button */}
                   {syncPickerHasMore && (
                     <TouchableOpacity
-                      style={{ 
-                        marginVertical: 16, 
-                        marginHorizontal: 12, 
-                        paddingVertical: 14, 
-                        backgroundColor: THEME.secondary, 
-                        borderRadius: 10, 
-                        alignItems: 'center' 
+                      style={{
+                        marginVertical: 16,
+                        marginHorizontal: 12,
+                        paddingVertical: 14,
+                        backgroundColor: THEME.secondary,
+                        borderRadius: 10,
+                        alignItems: 'center'
                       }}
                       onPress={loadMoreSyncPickerItems}
                       disabled={syncPickerLoadingMore}>
@@ -6432,8 +7544,8 @@ export default function App() {
       )}
 
       {duplicateReview && (
-        <View style={styles.overlay}>
-          <View style={styles.overlayCard}>
+        <View style={[styles.overlay, glassModeEnabled && styles.overlayGlass]}>
+          <View style={[styles.overlayCard, glassModeEnabled && styles.overlayCardGlass]}>
             <Text style={styles.overlayTitle}>Review Duplicates</Text>
             <Text style={styles.overlaySubtitle}>
               {`Found ${duplicateReview.duplicateCount} items in ${duplicateReview.groupCount} group${duplicateReview.groupCount !== 1 ? 's' : ''} (${duplicateReview.mode}). Uncheck any items you want to keep.`}
@@ -6442,7 +7554,7 @@ export default function App() {
               {duplicateReview.groups.map((group) => (
                 <View key={`grp-${group.groupIndex}`} style={{ marginBottom: 12, padding: 10, backgroundColor: '#111', borderRadius: 8 }}>
                   <Text style={{ color: '#fff', fontWeight: '700', marginBottom: 6 }}>
-                    {group.type === 'similar' ? 'Similar' : 'Exact'} Group {group.groupIndex}
+                    {group.type === 'similar' ? 'Similar' : 'Best match'} Group {group.groupIndex}
                   </Text>
                   {group.items.map((item, idx) => (
                     <TouchableOpacity
@@ -6491,13 +7603,13 @@ export default function App() {
             </ScrollView>
             <View style={{ flexDirection: 'row', marginTop: 12, gap: 10 }}>
               <TouchableOpacity
-                style={[styles.overlayBtnSecondary, { flex: 1 }]}
+                style={[styles.overlayBtnSecondary, glassModeEnabled && styles.overlayBtnSecondaryGlass, { flex: 1 }]}
                 onPress={() => { setDuplicateReview(null); setStatus('Duplicate scan cancelled.'); }}
               >
                 <Text style={styles.overlayBtnSecondaryText}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[styles.overlayBtnPrimary, { flex: 1 }]}
+                style={[styles.overlayBtnPrimary, glassModeEnabled && styles.overlayBtnPrimaryGlass, { flex: 1 }]}
                 onPress={async () => {
                   try {
                     const idsToDelete = [];
@@ -6510,13 +7622,13 @@ export default function App() {
                       return;
                     }
                     setStatus(`Deleting ${idsToDelete.length} item${idsToDelete.length !== 1 ? 's' : ''}...`);
-                    
+
                     // Use native MediaDelete module on Android for proper scoped storage handling
                     if (Platform.OS === 'android' && MediaDelete && typeof MediaDelete.deleteAssets === 'function') {
                       console.log('Clean Duplicates: Using native MediaDelete for', idsToDelete.length, 'items');
                       const result = await MediaDelete.deleteAssets(idsToDelete);
                       if (result === true) {
-                        showDarkAlert('Clean Complete', `Deleted: ${idsToDelete.length}`);
+                        showResultAlert('clean', { deleted: idsToDelete.length });
                         setStatus(`Deleted ${idsToDelete.length} item${idsToDelete.length !== 1 ? 's' : ''}`);
                       } else {
                         setStatus('Deletion cancelled');
@@ -6525,14 +7637,14 @@ export default function App() {
                       // iOS or fallback
                       const result = await MediaLibrary.deleteAssetsAsync(idsToDelete);
                       if (result === true) {
-                        showDarkAlert('Clean Complete', `Deleted: ${idsToDelete.length}`);
+                        showResultAlert('clean', { deleted: idsToDelete.length });
                         setStatus(`Deleted ${idsToDelete.length} item${idsToDelete.length !== 1 ? 's' : ''}`);
                       } else {
                         setStatus('Deletion cancelled or partial');
                       }
                     }
                   } catch (err) {
-                    showDarkAlert('Clean Error', err.message || 'Could not delete items.');
+                    showResultAlert('clean', { error: err.message || 'Could not delete items.' });
                     setStatus('Delete failed');
                   } finally {
                     setDuplicateReview(null);
@@ -6550,15 +7662,15 @@ export default function App() {
       )}
 
       {customAlert && (
-        <View style={styles.overlay}>
-          <View style={[styles.overlayCard, { backgroundColor: '#2A2A2A', maxWidth: 320 }]}>
+        <View style={[styles.overlay, glassModeEnabled && styles.overlayGlass]}>
+          <View style={[styles.overlayCard, glassModeEnabled && styles.overlayCardGlass, { backgroundColor: glassModeEnabled ? 'rgba(42, 42, 42, 0.9)' : '#2A2A2A', maxWidth: 320 }]}>
             <Text style={[styles.overlayTitle, { fontSize: 18, marginBottom: 8 }]}>{customAlert.title}</Text>
             <Text style={{ color: '#CCC', fontSize: 14, textAlign: 'center', marginBottom: 20, lineHeight: 20 }}>{customAlert.message}</Text>
             <View style={{ flexDirection: 'row', justifyContent: 'center', gap: 12 }}>
               {(customAlert.buttons || []).map((btn, idx) => (
                 <TouchableOpacity
                   key={idx}
-                  style={[styles.overlayBtnPrimary, { paddingVertical: 10, paddingHorizontal: 24, minWidth: 80 }]}
+                  style={[styles.overlayBtnPrimary, glassModeEnabled && styles.overlayBtnPrimaryGlass, { paddingVertical: 10, paddingHorizontal: 24, minWidth: 80 }]}
                   onPress={() => {
                     closeDarkAlert();
                     if (btn.onPress) btn.onPress();

@@ -18,6 +18,8 @@ import {
   computeFileIdentity,
 } from './utils';
 
+import { computeExactFileHash, computePerceptualHash, findPerceptualHashMatch, extractBaseFilename, normalizeDateForCompare } from './duplicateScanner';
+
 import {
   chooseStealthCloudMaxParallelChunkUploads,
   createConcurrencyLimiter,
@@ -102,6 +104,11 @@ export const stealthCloudRestoreCore = async ({
   SERVER_URL,
   masterKey,
   localFilenames,
+  localManifestIds = new Set(),
+  localFileHashes = new Set(),
+  localPerceptualHashes = new Set(),
+  localBaseNameSizes = new Map(),
+  localBaseNameDates = new Map(),
   restoreHistory,
   saveRestoreHistory,
   makeHistoryKey,
@@ -117,7 +124,7 @@ export const stealthCloudRestoreCore = async ({
     return shouldRetryChunkUpload(e);
   };
 
-  onStatus('Checking server files...');
+  // Don't override status/progress - App.js manages unified progress bar
   let manifests = [];
   try {
     manifests = await fetchAllManifestsPaged(SERVER_URL, config);
@@ -137,12 +144,10 @@ export const stealthCloudRestoreCore = async ({
     return { restored: 0, skipped: 0, failed: 0, noBackups: true };
   }
 
-  onStatus('Comparing local files...');
-  onProgress(0);
-
   let restored = 0;
   let skipped = 0;
   let failed = 0;
+  let downloadNum = 0;  // Counts actual downloads for status
 
   for (let i = 0; i < manifests.length; i++) {
     const mid = manifests[i].manifestId;
@@ -166,7 +171,6 @@ export const stealthCloudRestoreCore = async ({
       
       if (!manifestPlain) {
         failed++;
-        onProgress((i + 1) / manifests.length);
         continue;
       }
 
@@ -183,9 +187,95 @@ export const stealthCloudRestoreCore = async ({
       const fileHistoryKey = fileIdentity ? makeHistoryKey('scf', fileIdentity) : null;
       const alreadyRestored = restoreHistory.has(historyKey) || (fileHistoryKey ? restoreHistory.has(fileHistoryKey) : false);
       
-      if ((normalizedFilename && localFilenames.has(normalizedFilename)) || alreadyRestored) {
+      // === DEDUPLICATION (4 steps, same as upload but reversed) ===
+      
+      // Step 1: Check by manifestId (stable ID from filename + size)
+      // This catches files that were already restored (even if iOS renamed them)
+      const serverManifestId = mid;
+      const fileExistsByManifestId = localManifestIds.has(serverManifestId);
+      
+      // Step 2: Check by exact filename match
+      const fileExistsByFilename = normalizedFilename && localFilenames.has(normalizedFilename);
+      
+      // Step 3 & 4: Check by content hash (iOS assigns new filenames)
+      // Images: use perceptual hash (transcoding-resistant)
+      // Videos: use exact file hash
+      let fileExistsByPerceptualHash = false;
+      let fileExistsByFileHash = false;
+      const manifestPerceptualHash = manifest.perceptualHash || null;
+      const manifestFileHash = manifest.fileHash || null;
+      
+      // Step 3 & 4: Hash-based deduplication (works on both iOS and Android)
+      // iOS assigns new filenames when saving, Android can too with Google Photos sync
+      if (!fileExistsByFilename && (localPerceptualHashes.size > 0 || localFileHashes.size > 0)) {
+        // Step 3: Perceptual hash for images
+        if (manifestPerceptualHash && localPerceptualHashes.size > 0) {
+          if (findPerceptualHashMatch(manifestPerceptualHash, localPerceptualHashes, 3)) {
+            fileExistsByPerceptualHash = true;
+            console.log(`[Hash Match] Server: ${filename} - perceptual hash match found locally`);
+          }
+        }
+        
+        // Step 4: Exact file hash for videos
+        if (manifestFileHash && localFileHashes.size > 0) {
+          if (localFileHashes.has(manifestFileHash)) {
+            fileExistsByFileHash = true;
+            console.log(`[Hash Match] Server: ${filename} - exact file hash match found locally`);
+          }
+        }
+      }
+      
+      // Fallback matching: base filename + size or base filename + date
+      // Handles cross-platform variants (iOS HEIC vs JPG, Android Google Photos renaming, etc.)
+      let fileExistsByBaseNameSize = false;
+      let fileExistsByBaseNameDate = false;
+      const baseFilename = filename ? extractBaseFilename(filename) : null;
+      
+      if (baseFilename && !fileExistsByFilename && !fileExistsByPerceptualHash && !fileExistsByFileHash) {
+        // Fallback 1: base filename + size match (within 20% tolerance for re-compression)
+        if (localBaseNameSizes.size > 0 && localBaseNameSizes.has(baseFilename) && restoreOriginalSize) {
+          const existingSizes = localBaseNameSizes.get(baseFilename);
+          for (const existingSize of existingSizes) {
+            const sizeDiff = Math.abs(restoreOriginalSize - existingSize) / Math.max(restoreOriginalSize, existingSize);
+            if (sizeDiff < 0.20) {
+              fileExistsByBaseNameSize = true;
+              console.log(`[Fallback Match] Server: ${filename} - baseFilename+size match (${baseFilename}, size diff ${(sizeDiff * 100).toFixed(1)}%)`);
+              break;
+            }
+          }
+        }
+        
+        // Fallback 2: base filename + creation date match
+        const manifestDate = manifest.creationTime ? normalizeDateForCompare(manifest.creationTime) : null;
+        if (!fileExistsByBaseNameSize && localBaseNameDates.size > 0 && localBaseNameDates.has(baseFilename) && manifestDate) {
+          const existingDates = localBaseNameDates.get(baseFilename);
+          if (existingDates.has(manifestDate)) {
+            fileExistsByBaseNameDate = true;
+            console.log(`[Fallback Match] Server: ${filename} - baseFilename+date match (${baseFilename}, ${manifestDate})`);
+          }
+        }
+      }
+      
+      const shouldSkip = fileExistsByManifestId || fileExistsByFilename || fileExistsByPerceptualHash || fileExistsByFileHash || fileExistsByBaseNameSize || fileExistsByBaseNameDate;
+      
+      if (shouldSkip) {
+        console.log(`[Restore Skip] ${filename}:`, {
+          skipByManifestId: fileExistsByManifestId,
+          skipByFilename: fileExistsByFilename,
+          skipByPerceptualHash: fileExistsByPerceptualHash,
+          skipByFileHash: fileExistsByFileHash,
+          skipByBaseNameSize: fileExistsByBaseNameSize,
+          skipByBaseNameDate: fileExistsByBaseNameDate,
+          skipByHistory: alreadyRestored,
+          localFilenamesSize: localFilenames.size,
+          localManifestIdsSize: localManifestIds.size,
+          localFileHashesSize: localFileHashes.size,
+          localPerceptualHashesSize: localPerceptualHashes.size,
+          localBaseNameSizesSize: localBaseNameSizes.size,
+          localBaseNameDatesSize: localBaseNameDates.size,
+          restoreHistorySize: restoreHistory.size
+        });
         skipped++;
-        onProgress((i + 1) / manifests.length);
         continue;
       }
 
@@ -195,7 +285,6 @@ export const stealthCloudRestoreCore = async ({
       
       if (!fileKey) {
         failed++;
-        onProgress((i + 1) / manifests.length);
         continue;
       }
 
@@ -240,7 +329,8 @@ export const stealthCloudRestoreCore = async ({
         return chunkB64;
       };
 
-      onStatus(`Downloading ${i + 1}/${manifests.length}`);
+      downloadNum++;
+      onStatus(`Syncing ${downloadNum} of ${manifests.length}`);
 
       for (let batchStart = 0; batchStart < manifest.chunkIds.length; batchStart += maxParallel) {
         const batchEnd = Math.min(batchStart + maxParallel, manifest.chunkIds.length);
@@ -286,7 +376,9 @@ export const stealthCloudRestoreCore = async ({
       if (historyWrites % 10 === 0) {
         await saveRestoreHistory(restoreHistory);
       }
-      onProgress((i + 1) / manifests.length);
+      // Progress based on actual downloads, not manifest index
+      const totalToDownload = manifests.length - skipped;
+      onProgress(totalToDownload > 0 ? downloadNum / totalToDownload : 1);
 
       // CPU cooldown between files
       const assetCooldown = getThrottleAssetCooldownMs(fastMode);
@@ -300,7 +392,6 @@ export const stealthCloudRestoreCore = async ({
     } catch (e) {
       console.warn('StealthCloud restore failed for manifest:', mid, e?.message);
       failed++;
-      onProgress((i + 1) / manifests.length);
     }
   }
 
@@ -364,7 +455,7 @@ export const localRemoteRestoreCore = async ({
   onStatus = () => {},
   onProgress = () => {},
 }) => {
-  onStatus('Checking server files...');
+  onStatus('Preparing sync...');
   
   let serverFiles = await fetchAllServerFilesPaged(SERVER_URL, config);
 
@@ -400,7 +491,7 @@ export const localRemoteRestoreCore = async ({
     return { restored: 0, skipped: skippedCount, failed: 0, serverTotal: serverFiles.length, allSynced: true };
   }
 
-  onStatus(`Downloading ${toDownload.length} files...`);
+  onStatus(`Syncing 0 of ${toDownload.length}`);
   onProgress(0);
 
   let successCount = 0;
@@ -441,7 +532,7 @@ export const localRemoteRestoreCore = async ({
       failedCount++;
     } finally {
       processedCount++;
-      onStatus(`Downloading ${processedCount}/${toDownload.length}`);
+      onStatus(`Syncing ${processedCount} of ${toDownload.length}`);
       onProgress(processedCount / toDownload.length);
     }
   }));

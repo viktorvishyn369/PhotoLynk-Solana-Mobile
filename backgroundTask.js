@@ -22,6 +22,13 @@ import {
 } from './utils';
 
 import {
+  computeExactFileHash,
+  computePerceptualHash,
+  findPerceptualHashMatch,
+  CROSS_PLATFORM_DHASH_THRESHOLD,
+} from './duplicateScanner';
+
+import {
   AUTO_UPLOAD_BACKGROUND_TASK,
   autoUploadEligibilityForBackground,
   autoUploadGetAuthHeadersFromSecureStore
@@ -181,7 +188,7 @@ export const getStealthCloudMasterKey = async () => {
   // Derive key from credentials using PBKDF2 (same as desktop app)
   const salt = email.toLowerCase().trim();
   console.log('StealthCloud: deriving key from credentials, salt=', salt);
-  const derivedKey = pbkdf2Sha256(password, salt, 100000, 32);
+  const derivedKey = pbkdf2Sha256(password, salt, 30000, 32);
   
   // Cache the derived key so we don't need password again (avoids biometrics prompt)
   try {
@@ -214,7 +221,7 @@ export const cacheStealthCloudMasterKey = async (email, password) => {
   await new Promise(resolve => setTimeout(resolve, 50));
   
   const salt = email.toLowerCase().trim();
-  const derivedKey = pbkdf2Sha256(password, salt, 100000, 32);
+  const derivedKey = pbkdf2Sha256(password, salt, 30000, 32);
   
   // Yield again after computation
   await new Promise(resolve => setTimeout(resolve, 10));
@@ -260,7 +267,13 @@ export const uploadEncryptedChunk = async ({ SERVER_URL, config, chunkId, encryp
 };
 
 // Upload single asset to StealthCloud (background task version)
-export const autoUploadStealthCloudUploadOneAsset = async ({ asset, config, SERVER_URL, existingManifestIds, onStatus, fastMode = false }) => {
+export const autoUploadStealthCloudUploadOneAsset = async ({ 
+  asset, config, SERVER_URL, existingManifestIds, 
+  alreadyFilenames, alreadyBaseNameSizes, alreadyBaseNameDates, alreadyBaseNameTimestamps,
+  alreadyPerceptualHashes, alreadyFileHashes,
+  alreadyExifFull, alreadyExifTimeModel, alreadyExifTimeMake,
+  onStatus, fastMode = false 
+}) => {
   if (!asset || !asset.id) return { uploaded: 0, skipped: 0, failed: 0 };
 
   if (onStatus) onStatus('encrypting');
@@ -308,6 +321,153 @@ export const autoUploadStealthCloudUploadOneAsset = async ({ asset, config, SERV
       try { await FileSystem.deleteAsync(staged.tmpUri, { idempotent: true }); } catch (e) {}
     }
     return { uploaded: 0, skipped: 1, failed: 0, manifestId };
+  }
+
+  // Cross-platform deduplication checks
+  const { normalizeFilenameForCompare, extractBaseFilename, normalizeDateForCompare } = require('./duplicateScanner');
+  
+  // Skip if filename already exists on server
+  const normalizedFilename = filename ? normalizeFilenameForCompare(filename) : null;
+  if (normalizedFilename && alreadyFilenames && alreadyFilenames.has(normalizedFilename)) {
+    console.log(`AutoUpload: Skipping ${filename} - filename already on server`);
+    if (staged && staged.tmpCopied && staged.tmpUri) {
+      try { await FileSystem.deleteAsync(staged.tmpUri, { idempotent: true }); } catch (e) {}
+    }
+    return { uploaded: 0, skipped: 1, failed: 0, manifestId };
+  }
+
+  // Cross-platform variant matching using base filename
+  const baseFilename = filename ? extractBaseFilename(filename) : null;
+
+  // HEIC PRIORITY: Full timestamp match (most reliable for cross-platform HEIC dedup)
+  // HEIC files from iPhone and desktop have identical EXIF timestamps even if bytes differ
+  const { normalizeFullTimestamp } = require('./duplicateScanner');
+  const assetTimestamp = asset.creationTime ? normalizeFullTimestamp(asset.creationTime) : null;
+  if (baseFilename && assetTimestamp && alreadyBaseNameTimestamps && alreadyBaseNameTimestamps.has(baseFilename)) {
+    const existingTimestamps = alreadyBaseNameTimestamps.get(baseFilename);
+    if (existingTimestamps.has(assetTimestamp)) {
+      console.log(`AutoUpload: Skipping ${filename} - baseFilename+timestamp match (${baseFilename}, ${assetTimestamp})`);
+      if (staged && staged.tmpCopied && staged.tmpUri) {
+        try { await FileSystem.deleteAsync(staged.tmpUri, { idempotent: true }); } catch (e) {}
+      }
+      return { uploaded: 0, skipped: 1, failed: 0, manifestId };
+    }
+  }
+
+  // EXIF-based deduplication for cross-platform HEIC matching
+  // Extract real EXIF data from the file and compare with manifest EXIF data
+  const isHEIC = filename && /\.(heic|heif)$/i.test(filename);
+  if (isHEIC && (alreadyExifFull || alreadyExifTimeModel || alreadyExifTimeMake)) {
+    try {
+      const { extractExifFromHEIC } = require('./exifExtractor');
+      const exifData = await extractExifFromHEIC(filePath);
+      if (exifData && exifData.captureTime) {
+        const ct = exifData.captureTime;
+        const mk = exifData.make;
+        const md = exifData.model;
+        // Check EXIF matches in priority order (highest confidence first)
+        if (ct && mk && md && alreadyExifFull && alreadyExifFull.has(`${ct}|${mk}|${md}`)) {
+          console.log(`AutoUpload: Skipping ${filename} - EXIF full match (time+make+model)`);
+          if (staged && staged.tmpCopied && staged.tmpUri) {
+            try { await FileSystem.deleteAsync(staged.tmpUri, { idempotent: true }); } catch (e) {}
+          }
+          return { uploaded: 0, skipped: 1, failed: 0, manifestId };
+        }
+        if (ct && md && alreadyExifTimeModel && alreadyExifTimeModel.has(`${ct}|${md}`)) {
+          console.log(`AutoUpload: Skipping ${filename} - EXIF time+model match`);
+          if (staged && staged.tmpCopied && staged.tmpUri) {
+            try { await FileSystem.deleteAsync(staged.tmpUri, { idempotent: true }); } catch (e) {}
+          }
+          return { uploaded: 0, skipped: 1, failed: 0, manifestId };
+        }
+        if (ct && mk && alreadyExifTimeMake && alreadyExifTimeMake.has(`${ct}|${mk}`)) {
+          console.log(`AutoUpload: Skipping ${filename} - EXIF time+make match`);
+          if (staged && staged.tmpCopied && staged.tmpUri) {
+            try { await FileSystem.deleteAsync(staged.tmpUri, { idempotent: true }); } catch (e) {}
+          }
+          return { uploaded: 0, skipped: 1, failed: 0, manifestId };
+        }
+      }
+    } catch (e) {
+      console.warn('AutoUpload: EXIF extraction failed for', filename, e?.message);
+    }
+  }
+  
+  // Fallback 1: base filename + size match (within 20% tolerance for re-compression)
+  if (baseFilename && alreadyBaseNameSizes && alreadyBaseNameSizes.has(baseFilename)) {
+    const existingSizes = alreadyBaseNameSizes.get(baseFilename);
+    for (const existingSize of existingSizes) {
+      const sizeDiff = Math.abs(originalSize - existingSize) / Math.max(originalSize, existingSize);
+      if (sizeDiff < 0.20) {
+        console.log(`AutoUpload: Skipping ${filename} - baseFilename+size match (${baseFilename}, size diff ${(sizeDiff * 100).toFixed(1)}%)`);
+        if (staged && staged.tmpCopied && staged.tmpUri) {
+          try { await FileSystem.deleteAsync(staged.tmpUri, { idempotent: true }); } catch (e) {}
+        }
+        return { uploaded: 0, skipped: 1, failed: 0, manifestId };
+      }
+    }
+  }
+
+  // Fallback 2: base filename + creation date match
+  const assetDate = asset.creationTime ? normalizeDateForCompare(asset.creationTime) : null;
+  if (baseFilename && assetDate && alreadyBaseNameDates && alreadyBaseNameDates.has(baseFilename)) {
+    const existingDates = alreadyBaseNameDates.get(baseFilename);
+    if (existingDates.has(assetDate)) {
+      console.log(`AutoUpload: Skipping ${filename} - baseFilename+date match (${baseFilename}, ${assetDate})`);
+      if (staged && staged.tmpCopied && staged.tmpUri) {
+        try { await FileSystem.deleteAsync(staged.tmpUri, { idempotent: true }); } catch (e) {}
+      }
+      return { uploaded: 0, skipped: 1, failed: 0, manifestId };
+    }
+  }
+
+  // Compute hashes for deduplication (same as main upload)
+  const isImage = asset.mediaType === 'photo';
+  let exactFileHash = null;
+  let perceptualHash = null;
+
+  if (isImage) {
+    // Images: compute perceptual hash for transcoding-resistant deduplication
+    try {
+      perceptualHash = await computePerceptualHash(filePath, asset, assetInfo);
+    } catch (e) {
+      console.warn('Background: computePerceptualHash failed:', asset.id, e?.message);
+    }
+    // Skip if perceptual hash already exists on server
+    if (perceptualHash && alreadyPerceptualHashes && findPerceptualHashMatch(perceptualHash, alreadyPerceptualHashes, CROSS_PLATFORM_DHASH_THRESHOLD)) {
+      console.log(`AutoUpload: Skipping ${filename} - perceptual hash match on server`);
+      if (staged && staged.tmpCopied && staged.tmpUri) {
+        try { await FileSystem.deleteAsync(staged.tmpUri, { idempotent: true }); } catch (e) {}
+      }
+      return { uploaded: 0, skipped: 1, failed: 0, manifestId };
+    }
+    // Also compute exact hash for manifest storage and byte-identical dedup (AirDrop)
+    try {
+      exactFileHash = await computeExactFileHash(filePath);
+    } catch (e) {}
+    // Skip if exact file hash already exists on server (byte-identical, e.g. AirDrop)
+    if (exactFileHash && alreadyFileHashes && alreadyFileHashes.has(exactFileHash)) {
+      console.log(`AutoUpload: Skipping ${filename} - exact file hash match on server`);
+      if (staged && staged.tmpCopied && staged.tmpUri) {
+        try { await FileSystem.deleteAsync(staged.tmpUri, { idempotent: true }); } catch (e) {}
+      }
+      return { uploaded: 0, skipped: 1, failed: 0, manifestId };
+    }
+  } else {
+    // Videos: compute exact file hash
+    try {
+      exactFileHash = await computeExactFileHash(filePath);
+    } catch (e) {
+      console.warn('Background: computeExactFileHash failed:', asset.id, e?.message);
+    }
+    // Skip if exact file hash already exists on server
+    if (exactFileHash && alreadyFileHashes && alreadyFileHashes.has(exactFileHash)) {
+      console.log(`AutoUpload: Skipping ${filename} - exact file hash match on server`);
+      if (staged && staged.tmpCopied && staged.tmpUri) {
+        try { await FileSystem.deleteAsync(staged.tmpUri, { idempotent: true }); } catch (e) {}
+      }
+      return { uploaded: 0, skipped: 1, failed: 0, manifestId };
+    }
   }
 
   const fileKey = new Uint8Array(32);
@@ -375,11 +535,31 @@ export const autoUploadStealthCloudUploadOneAsset = async ({ asset, config, SERV
 
   if (!chunkIds.length) return { uploaded: 0, skipped: 0, failed: 1 };
 
+  // Extract EXIF data for HEIC files to store in manifest for cross-platform deduplication
+  let exifCaptureTime = null, exifMake = null, exifModel = null;
+  if (isHEIC) {
+    try {
+      const { extractExifFromHEIC } = require('./exifExtractor');
+      const exifData = await extractExifFromHEIC(filePath);
+      if (exifData) {
+        exifCaptureTime = exifData.captureTime || null;
+        exifMake = exifData.make || null;
+        exifModel = exifData.model || null;
+        console.log(`AutoUpload: Extracted EXIF for ${filename}: time=${exifCaptureTime}, make=${exifMake}, model=${exifModel}`);
+      }
+    } catch (e) {
+      console.warn('AutoUpload: EXIF extraction for manifest failed:', filename, e?.message);
+    }
+  }
+
   const manifest = {
     v: 1, assetId: asset.id, filename: assetInfo.filename || asset.filename || null,
-    mediaType: asset.mediaType || null, originalSize: null,
+    mediaType: asset.mediaType || null, originalSize: originalSize,
+    creationTime: asset.creationTime || null,
     baseNonce16: naclUtil.encodeBase64(baseNonce16), wrapNonce: naclUtil.encodeBase64(wrapNonce),
-    wrappedFileKey: naclUtil.encodeBase64(wrappedKey), chunkIds, chunkSizes
+    wrappedFileKey: naclUtil.encodeBase64(wrappedKey), chunkIds, chunkSizes,
+    fileHash: exactFileHash, perceptualHash: perceptualHash,
+    exifCaptureTime, exifMake, exifModel
   };
   const manifestPlain = naclUtil.decodeUTF8(JSON.stringify(manifest));
   const manifestNonce = new Uint8Array(24);
@@ -419,16 +599,14 @@ export const chooseStealthCloudChunkBytes = ({ platform, originalSize, fastMode 
 };
 
 export const chooseStealthCloudMaxParallelChunkUploads = ({ platform, originalSize, fastMode = false }) => {
-  // Fast mode: maximum safe concurrency for speed
-  // iOS: 6 parallel (URLSession default pool limit per host)
-  // Android: 10 parallel (OkHttp handles well with keep-alive)
+  // Fast mode: maximum concurrency for speed (matches Local/Remote file-level concurrency)
+  // iOS: 8 parallel, Android: 10 parallel
   if (fastMode) {
-    return platform === 'android' ? 10 : 6;
+    return platform === 'android' ? 10 : 8;
   }
-  // Default: conservative concurrency to reduce CPU/memory pressure
-  const size = typeof originalSize === 'number' ? originalSize : null;
-  if (size !== null && size >= 1024 * MB) return 2;
-  return 1;
+  // Slow mode: conservative to prevent phone heating
+  // iOS: 2 parallel, Android: 3 parallel
+  return platform === 'android' ? 3 : 2;
 };
 
 export const createConcurrencyLimiter = (maxParallel) => {

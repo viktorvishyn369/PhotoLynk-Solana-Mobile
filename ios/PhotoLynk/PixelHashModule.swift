@@ -14,21 +14,144 @@ class PixelHashModule: NSObject {
   
   @objc
   func hashImagePixels(_ path: String, resolver resolve: @escaping RCTPromiseResolveBlock, rejecter reject: @escaping RCTPromiseRejectBlock) {
-    // Uses 16x16 average hash (aHash) - tolerant to compression/upload/download changes
-    // Similar to image-hash library approach
+    // Uses 9x8 dHash (difference hash) - more resistant to compression/transcoding than aHash
+    // Compares adjacent horizontal pixels, producing 64-bit hash
     DispatchQueue.global(qos: .userInitiated).async { [weak self] in
       autoreleasepool {
         let cleanPath = path.replacingOccurrences(of: "file://", with: "")
-        guard let image = UIImage(contentsOfFile: cleanPath) else {
+        
+        // Use ImageIO to load raw pixels WITHOUT applying EXIF orientation
+        // This matches Android's BitmapFactory.decodeStream() behavior
+        let url = URL(fileURLWithPath: cleanPath)
+        guard let imageSource = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let cgImage = CGImageSourceCreateImageAtIndex(imageSource, 0, nil) else {
           reject("E_LOAD", "Cannot load image: \(path)", nil)
           return
         }
         
-        // Resize to 16x16 using CGContext directly (avoids UIGraphicsImageRenderer scale issues)
-        let hashSize = 16
+        // Get source image dimensions and pixel data (raw, no EXIF rotation)
+        let srcWidth = cgImage.width
+        let srcHeight = cgImage.height
+        let srcBytesPerPixel = 4
+        let srcBytesPerRow = srcBytesPerPixel * srcWidth
+        var srcPixelData = [UInt8](repeating: 0, count: srcWidth * srcHeight * srcBytesPerPixel)
+        
+        guard let srcContext = CGContext(
+          data: &srcPixelData,
+          width: srcWidth,
+          height: srcHeight,
+          bitsPerComponent: 8,
+          bytesPerRow: srcBytesPerRow,
+          space: CGColorSpaceCreateDeviceRGB(),
+          bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else {
+          reject("E_CONTEXT", "Cannot create source context", nil)
+          return
+        }
+        
+        srcContext.draw(cgImage, in: CGRect(x: 0, y: 0, width: srcWidth, height: srcHeight))
+        
+        // Custom bilinear scaling to 9x8 (identical to Android implementation)
+        let hashWidth = 9
+        let hashHeight = 8
+        var scaledPixelData = [UInt8](repeating: 0, count: hashWidth * hashHeight * srcBytesPerPixel)
+        
+        let xRatio = Float(srcWidth - 1) / Float(hashWidth - 1)
+        let yRatio = Float(srcHeight - 1) / Float(hashHeight - 1)
+        
+        for y in 0..<hashHeight {
+          for x in 0..<hashWidth {
+            let srcX = Float(x) * xRatio
+            let srcY = Float(y) * yRatio
+            
+            let x1 = Int(srcX)
+            let y1 = Int(srcY)
+            let x2 = min(x1 + 1, srcWidth - 1)
+            let y2 = min(y1 + 1, srcHeight - 1)
+            
+            let xWeight = srcX - Float(x1)
+            let yWeight = srcY - Float(y1)
+            
+            for c in 0..<3 {
+              let p11 = Float(srcPixelData[(y1 * srcWidth + x1) * srcBytesPerPixel + c])
+              let p21 = Float(srcPixelData[(y1 * srcWidth + x2) * srcBytesPerPixel + c])
+              let p12 = Float(srcPixelData[(y2 * srcWidth + x1) * srcBytesPerPixel + c])
+              let p22 = Float(srcPixelData[(y2 * srcWidth + x2) * srcBytesPerPixel + c])
+              
+              let top = p11 * (1.0 - xWeight) + p21 * xWeight
+              let bottom = p12 * (1.0 - xWeight) + p22 * xWeight
+              let value = top * (1.0 - yWeight) + bottom * yWeight
+              
+              scaledPixelData[(y * hashWidth + x) * srcBytesPerPixel + c] = UInt8(value + 0.5)
+            }
+            scaledPixelData[(y * hashWidth + x) * srcBytesPerPixel + 3] = 255
+          }
+        }
+        
+        let pixelData = scaledPixelData
+        
+        // Compute grayscale values in 2D array for easier adjacent pixel comparison
+        var grayValues = [[UInt8]](repeating: [UInt8](repeating: 0, count: hashWidth), count: hashHeight)
+        
+        let bytesPerPixel = 4
+        for y in 0..<hashHeight {
+          for x in 0..<hashWidth {
+            let offset = (y * hashWidth + x) * bytesPerPixel
+            let r = Int(pixelData[offset])
+            let g = Int(pixelData[offset + 1])
+            let b = Int(pixelData[offset + 2])
+            // Standard grayscale conversion
+            let gray = (r * 299 + g * 587 + b * 114) / 1000
+            grayValues[y][x] = UInt8(gray)
+          }
+        }
+        
+        // Build dHash: compare each pixel to its right neighbor
+        // 8 rows × 8 comparisons = 64 bits = 8 bytes = 16 hex chars
+        var hashBytes = [UInt8](repeating: 0, count: 8)
+        var bitIndex = 0
+        
+        for y in 0..<hashHeight {
+          for x in 0..<(hashWidth - 1) {
+            // If left pixel < right pixel, set bit to 1
+            if grayValues[y][x] < grayValues[y][x + 1] {
+              let byteIndex = bitIndex / 8
+              let bitPos = 7 - (bitIndex % 8)
+              hashBytes[byteIndex] |= UInt8(1 << bitPos)
+            }
+            bitIndex += 1
+          }
+        }
+        
+        let hexString = hashBytes.map { String(format: "%02x", $0) }.joined()
+        resolve(hexString)
+      }
+    }
+  }
+  
+  @objc
+  func hashPixelBufferSHA256(_ path: String, resolver resolve: @escaping RCTPromiseResolveBlock, rejecter reject: @escaping RCTPromiseRejectBlock) {
+    // Decodes image, scales to 256x256, and computes SHA-256 of the pixel buffer
+    // This is pixel-exact at normalized resolution: ignores metadata, filename, format
+    // 256x256 = 65536 pixels = 256KB to hash (fast) while still detecting any visual difference
+    DispatchQueue.global(qos: .userInitiated).async {
+      autoreleasepool {
+        let cleanPath = path.replacingOccurrences(of: "file://", with: "")
+        
+        // Use ImageIO to load raw pixels WITHOUT applying EXIF orientation
+        let url = URL(fileURLWithPath: cleanPath)
+        guard let imageSource = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let cgImage = CGImageSourceCreateImageAtIndex(imageSource, 0, nil) else {
+          reject("E_LOAD", "Cannot load image: \(path)", nil)
+          return
+        }
+        
+        // Scale to fixed 256x256 for fast hashing while maintaining pixel-exactness
+        let hashSize = 256
         let bytesPerPixel = 4
         let bytesPerRow = bytesPerPixel * hashSize
-        var pixelData = [UInt8](repeating: 0, count: hashSize * hashSize * bytesPerPixel)
+        let totalBytes = hashSize * hashSize * bytesPerPixel
+        var pixelData = [UInt8](repeating: 0, count: totalBytes)
         
         guard let context = CGContext(
           data: &pixelData,
@@ -43,42 +166,17 @@ class PixelHashModule: NSObject {
           return
         }
         
-        // Draw image scaled to 16x16 - UIImage.draw handles EXIF orientation
-        UIGraphicsPushContext(context)
-        image.draw(in: CGRect(x: 0, y: 0, width: hashSize, height: hashSize))
-        UIGraphicsPopContext()
+        // Draw scaled to 256x256
+        context.interpolationQuality = .high
+        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: hashSize, height: hashSize))
         
-        // Compute grayscale values and average
-        let pixelCount = hashSize * hashSize
-        var grayValues = [UInt8](repeating: 0, count: pixelCount)
-        var totalGray: Int = 0
-        
-        for i in 0..<pixelCount {
-          let offset = i * bytesPerPixel
-          let r = Int(pixelData[offset])
-          let g = Int(pixelData[offset + 1])
-          let b = Int(pixelData[offset + 2])
-          // Standard grayscale conversion
-          let gray = (r * 299 + g * 587 + b * 114) / 1000
-          grayValues[i] = UInt8(gray)
-          totalGray += gray
+        // Compute SHA-256 of the scaled pixel buffer
+        var hash = [UInt8](repeating: 0, count: Int(CC_SHA256_DIGEST_LENGTH))
+        pixelData.withUnsafeBytes { bufferPointer in
+          _ = CC_SHA256(bufferPointer.baseAddress, CC_LONG(totalBytes), &hash)
         }
         
-        let avgGray = totalGray / pixelCount
-        
-        // Build binary hash: 1 if pixel > average, 0 otherwise
-        // 16x16 = 256 bits = 32 bytes = 64 hex chars
-        var hashBytes = [UInt8](repeating: 0, count: 32)
-        
-        for i in 0..<pixelCount {
-          if Int(grayValues[i]) > avgGray {
-            let byteIndex = i / 8
-            let bitIndex = 7 - (i % 8)
-            hashBytes[byteIndex] |= UInt8(1 << bitIndex)
-          }
-        }
-        
-        let hexString = hashBytes.map { String(format: "%02x", $0) }.joined()
+        let hexString = hash.map { String(format: "%02x", $0) }.joined()
         resolve(hexString)
       }
     }

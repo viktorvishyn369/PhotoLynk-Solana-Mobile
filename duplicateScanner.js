@@ -8,6 +8,8 @@
 import { Platform, NativeModules } from 'react-native';
 import * as MediaLibrary from 'expo-media-library';
 import * as FileSystem from 'expo-file-system';
+import { sha256 } from 'js-sha256';
+import naclUtil from 'tweetnacl-util';
 
 const { PixelHash, MediaDelete } = NativeModules;
 
@@ -35,6 +37,193 @@ const hammingDistance256 = (a, b) => {
 // Similar detection thresholds (like image-hash library)
 const SIMILAR_THRESHOLD = 24; // Max hamming distance for similar (out of 256 bits)
 const SIMILAR_TIME_WINDOW_MS = 60000; // 60 seconds - burst shots are usually within this
+
+// Hamming distance for 16-char hex hash (64 bits) - for dHash cross-platform deduplication
+// Different JPEG decoders (iOS vs Android) produce slightly different pixel values
+// so we need fuzzy matching instead of exact hash comparison
+const hammingDistance64 = (a, b) => {
+  if (!a || !b || a.length !== 16 || b.length !== 16) return Number.MAX_SAFE_INTEGER;
+  let dist = 0;
+  for (let i = 0; i < 16; i += 8) {
+    const valA = parseInt(a.substring(i, i + 8), 16);
+    const valB = parseInt(b.substring(i, i + 8), 16);
+    let x = valA ^ valB;
+    while (x) {
+      dist += x & 1;
+      x >>>= 1;
+    }
+  }
+  return dist;
+};
+
+// Cross-platform deduplication threshold for 64-bit dHash
+// Threshold of 6 bits to account for HEIC decoder differences across platforms
+// (heic-convert on desktop vs native ImageIO on iOS vs ImageDecoder on Android)
+// 6 bits = ~9% difference tolerance, still strict enough to avoid false positives
+const CROSS_PLATFORM_DHASH_THRESHOLD = 6;
+
+// Extract base filename for cross-platform variant deduplication
+// Handles iOS, Android/Google Photos, Windows, and Linux naming patterns:
+// iOS: IMG_1234_1_105_c.jpeg, IMG_1234_4_5005_c.jpeg
+// Android/Google: IMG_20231225_123456_1.jpg, PXL_20231225_123456~2.jpg
+// Windows: IMG_1234 (2).jpg, IMG_1234 - Copy.jpg
+// Linux: IMG_1234 (copy).jpg, IMG_1234_copy.jpg
+const extractBaseFilename = (name) => {
+  if (!name || typeof name !== 'string') return null;
+  const trimmed = name.trim().toLowerCase();
+  if (!trimmed) return null;
+  
+  // Remove extension first
+  const extMatch = trimmed.match(/^(.+)\.(\w+)$/);
+  if (!extMatch) return trimmed;
+  let nameWithoutExt = extMatch[1];
+  
+  // iOS variant patterns: _1_105_c, _4_5005_c, _1_201_a, _2_100_a, etc.
+  nameWithoutExt = nameWithoutExt.replace(/_\d+_\d+_[a-z]$/, '');
+  
+  // Android/Google Photos burst/edit patterns:
+  // Only strip _1, _2 after 6+ digit timestamp (not image numbers like _5730)
+  nameWithoutExt = nameWithoutExt.replace(/(_\d{6,})_\d{1,2}$/, '$1');
+  nameWithoutExt = nameWithoutExt.replace(/~\d+$/, '');           // ~2, ~3 (Google edited)
+  nameWithoutExt = nameWithoutExt.replace(/-(edit|edited|collage|animation)$/i, '');
+  nameWithoutExt = nameWithoutExt.replace(/_burst\d*$/i, '');     // _BURST001
+  
+  // Windows patterns:
+  nameWithoutExt = nameWithoutExt.replace(/ \(\d+\)$/, '');       // " (2)" with space
+  nameWithoutExt = nameWithoutExt.replace(/\(\d+\)$/, '');        // "(2)" no space
+  nameWithoutExt = nameWithoutExt.replace(/ - copy( \(\d+\))?$/i, ''); // " - Copy"
+  
+  // Linux patterns:
+  nameWithoutExt = nameWithoutExt.replace(/ \(copy\)$/i, '');     // " (copy)"
+  nameWithoutExt = nameWithoutExt.replace(/_copy\d*$/i, '');      // "_copy", "_copy2"
+  nameWithoutExt = nameWithoutExt.replace(/\.bak$/i, '');         // ".bak"
+  
+  // Generic patterns:
+  nameWithoutExt = nameWithoutExt.replace(/_backup$/i, '');
+  nameWithoutExt = nameWithoutExt.replace(/-backup$/i, '');
+  nameWithoutExt = nameWithoutExt.replace(/_original$/i, '');
+  
+  return nameWithoutExt.trim();
+};
+
+// Normalize date for comparison - extracts YYYY-MM-DD format
+const normalizeDateForCompare = (dateVal) => {
+  if (!dateVal) return null;
+  try {
+    let date;
+    if (typeof dateVal === 'number') {
+      date = new Date(dateVal > 9999999999 ? dateVal : dateVal * 1000);
+    } else if (typeof dateVal === 'string') {
+      date = new Date(dateVal);
+    } else if (dateVal instanceof Date) {
+      date = dateVal;
+    } else {
+      return null;
+    }
+    if (isNaN(date.getTime())) return null;
+    return date.toISOString().split('T')[0];
+  } catch (e) {
+    return null;
+  }
+};
+
+// Normalize full timestamp for HEIC deduplication - extracts YYYY-MM-DDTHH:MM:SS format
+// This provides second-level precision for matching identical photos across platforms
+// HEIC files from iPhone and desktop have same EXIF timestamp even if bytes differ
+const normalizeFullTimestamp = (dateVal) => {
+  if (!dateVal) return null;
+  try {
+    let date;
+    if (typeof dateVal === 'number') {
+      date = new Date(dateVal > 9999999999 ? dateVal : dateVal * 1000);
+    } else if (typeof dateVal === 'string') {
+      date = new Date(dateVal);
+    } else if (dateVal instanceof Date) {
+      date = dateVal;
+    } else {
+      return null;
+    }
+    if (isNaN(date.getTime())) return null;
+    // Return YYYY-MM-DDTHH:MM:SS format (second precision, no milliseconds)
+    return date.toISOString().replace(/\.\d{3}Z$/, '');
+  } catch (e) {
+    return null;
+  }
+};
+
+// ============================================================================
+// EXIF-BASED DEDUPLICATION - Extract real EXIF data for cross-platform matching
+// ============================================================================
+
+/**
+ * Extract EXIF data from assetInfo for deduplication.
+ * Returns normalized EXIF fields: captureTime, make (manufacturer), model (camera/phone)
+ * @param {Object} assetInfo - expo-media-library AssetInfo with exif property
+ * @param {Object} asset - expo-media-library Asset with creationTime
+ * @returns {Object} { captureTime, make, model } - normalized EXIF data
+ */
+const extractExifForDedup = (assetInfo, asset) => {
+  const result = {
+    captureTime: null,  // EXIF DateTimeOriginal (second precision)
+    make: null,         // EXIF Make (e.g., "Apple", "Samsung")
+    model: null,        // EXIF Model (e.g., "iPhone 14 Pro", "SM-G998B")
+  };
+
+  try {
+    const exif = assetInfo?.exif;
+    
+    // Extract capture time from EXIF DateTimeOriginal or DateTimeDigitized
+    // Format: "YYYY:MM:DD HH:MM:SS" -> normalize to "YYYY-MM-DDTHH:MM:SS"
+    let captureTimeStr = exif?.DateTimeOriginal || exif?.DateTimeDigitized || exif?.DateTime;
+    if (captureTimeStr && typeof captureTimeStr === 'string') {
+      // EXIF format: "2024:01:15 14:32:45" -> ISO: "2024-01-15T14:32:45"
+      const normalized = captureTimeStr.replace(/^(\d{4}):(\d{2}):(\d{2})/, '$1-$2-$3').replace(' ', 'T');
+      if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/.test(normalized)) {
+        result.captureTime = normalized.slice(0, 19); // Trim to second precision
+      }
+    }
+    
+    // Fallback to asset.creationTime if no EXIF timestamp
+    if (!result.captureTime && asset?.creationTime) {
+      result.captureTime = normalizeFullTimestamp(asset.creationTime);
+    }
+
+    // Extract make (manufacturer) - normalize to lowercase for comparison
+    if (exif?.Make && typeof exif.Make === 'string') {
+      result.make = exif.Make.trim().toLowerCase();
+    }
+
+    // Extract model - normalize to lowercase for comparison
+    if (exif?.Model && typeof exif.Model === 'string') {
+      result.model = exif.Model.trim().toLowerCase();
+    }
+  } catch (e) {
+    // Silently fail - EXIF extraction is best-effort
+  }
+
+  return result;
+};
+
+/**
+ * Generate EXIF-based deduplication key for matching across platforms.
+ * Priority: captureTime+make+model > captureTime+model > captureTime+make > captureTime only
+ * @param {Object} exifData - { captureTime, make, model } from extractExifForDedup
+ * @returns {Object} { full, timeModel, timeMake, timeOnly } - dedup keys at different precision levels
+ */
+const generateExifDedupKeys = (exifData) => {
+  const { captureTime, make, model } = exifData || {};
+  
+  return {
+    // Highest confidence: all 3 fields match
+    full: (captureTime && make && model) ? `${captureTime}|${make}|${model}` : null,
+    // High confidence: captureTime + model (different makes can have same model name, rare)
+    timeModel: (captureTime && model) ? `${captureTime}|${model}` : null,
+    // Medium confidence: captureTime + make
+    timeMake: (captureTime && make) ? `${captureTime}|${make}` : null,
+    // Lower confidence: captureTime only (still useful with baseFilename)
+    timeOnly: captureTime || null,
+  };
+};
 
 // Hamming distance for 8-char hex hash (32 bits) - for edge hash
 const hammingDistance32 = (a, b) => {
@@ -71,6 +260,155 @@ const hammingDistance16 = (a, b) => {
 const CORNER_MATCH_THRESHOLD = 2;
 
 // ============================================================================
+// EXACT DUPLICATES - Full file hashing for upload deduplication
+// ============================================================================
+
+/**
+ * Compute exact file hash (SHA-256 of full file contents) for deduplication.
+ * Used by StealthCloud upload to skip files that already exist on server regardless of filename.
+ * @param {string} filePath - Path to the file
+ * @returns {Promise<string|null>} SHA-256 hex string or null on error
+ */
+/**
+ * Compute perceptual hash (visual content hash) for images.
+ * This hash is based on image pixels and is resistant to transcoding, compression, metadata changes.
+ * Used to detect visually identical images even if file bytes differ.
+ * @param {string} filePath - Path to the image file
+ * @param {Object} asset - MediaLibrary asset object (optional, for type checking)
+ * @param {Object} info - Asset info object (optional, for type checking)
+ * @returns {Promise<string|null>} Perceptual hash hex string or null if not an image or error
+ */
+/**
+ * Find a matching perceptual hash in a set using Hamming distance
+ * Returns true if any hash in the set is within threshold distance
+ * @param {string} hash - The hash to check
+ * @param {Set<string>} hashSet - Set of existing hashes
+ * @param {number} threshold - Max Hamming distance for match (default 5)
+ * @returns {boolean} True if a close match exists
+ */
+export { extractBaseFilename, normalizeDateForCompare, normalizeFullTimestamp, extractExifForDedup, generateExifDedupKeys, CROSS_PLATFORM_DHASH_THRESHOLD };
+
+export const findPerceptualHashMatch = (hash, hashSet, threshold = CROSS_PLATFORM_DHASH_THRESHOLD) => {
+  if (!hash || hash.length !== 16 || !hashSet || hashSet.size === 0) return false;
+  
+  // First check exact match (fast path)
+  if (hashSet.has(hash)) return true;
+  
+  // Check Hamming distance for fuzzy match
+  for (const existingHash of hashSet) {
+    if (existingHash && existingHash.length === 16) {
+      const dist = hammingDistance64(hash, existingHash);
+      if (dist <= threshold) {
+        return true;
+      }
+    }
+  }
+  return false;
+};
+
+export const computePerceptualHash = async (filePath, asset = null, info = null) => {
+  try {
+    // Check if PixelHash native module is available
+    if (!PixelHash || typeof PixelHash.hashImagePixels !== 'function') {
+      console.warn('PixelHash native module not available for perceptual hashing');
+      return null;
+    }
+
+    // Only compute for images (photos), not videos
+    if (asset && info && !isImageAsset(info, asset)) {
+      return null;
+    }
+
+    // Compute pixel-based perceptual hash
+    const hashHex = await PixelHash.hashImagePixels(filePath);
+    console.log(`[PixelHash-JS] Native module returned: ${hashHex ? hashHex.length : 0} chars`);
+    return hashHex || null;
+  } catch (e) {
+    console.warn('computePerceptualHash failed:', e?.message);
+    return null;
+  }
+};
+
+export const computeExactFileHash = async (filePath) => {
+  try {
+    const hashCtx = sha256.create();
+    const HASH_CHUNK_BYTES = 256 * 1024;
+
+    if (Platform.OS === 'ios') {
+      const fileUri = filePath.startsWith('/') ? `file://${filePath}` : filePath;
+      let position = 0;
+      const effectiveBytes = HASH_CHUNK_BYTES - (HASH_CHUNK_BYTES % 3);
+      while (true) {
+        let nextB64 = '';
+        try {
+          nextB64 = await FileSystem.readAsStringAsync(fileUri, {
+            encoding: FileSystem.EncodingType.Base64,
+            position,
+            length: effectiveBytes
+          });
+        } catch (e) {
+          const allB64 = await FileSystem.readAsStringAsync(fileUri, { encoding: FileSystem.EncodingType.Base64 });
+          const b64Offset = Math.floor((position / 3) * 4);
+          const chunkB64Len = (effectiveBytes / 3) * 4;
+          nextB64 = allB64.slice(b64Offset, b64Offset + chunkB64Len);
+        }
+        if (!nextB64) break;
+        const plaintext = naclUtil.decodeBase64(nextB64);
+        if (!plaintext || plaintext.length === 0) break;
+        hashCtx.update(plaintext);
+        position += plaintext.length;
+        if (plaintext.length < effectiveBytes) break;
+      }
+    } else {
+      let ReactNativeBlobUtil = null;
+      try {
+        const mod = require('react-native-blob-util');
+        ReactNativeBlobUtil = mod && (mod.default || mod);
+      } catch (e) {}
+      if (!ReactNativeBlobUtil || !ReactNativeBlobUtil.fs || typeof ReactNativeBlobUtil.fs.readStream !== 'function') {
+        throw new Error('Exact file hash requires react-native-blob-util on Android.');
+      }
+      const stream = await ReactNativeBlobUtil.fs.readStream(filePath, 'base64', HASH_CHUNK_BYTES);
+      await new Promise((resolve, reject) => {
+        const queue = [];
+        let draining = false;
+        let ended = false;
+        stream.open();
+        stream.onData((chunkB64) => {
+          queue.push(chunkB64);
+          if (draining) return;
+          draining = true;
+          (async () => {
+            try {
+              while (queue.length) {
+                const nextB64 = queue.shift();
+                const plaintext = naclUtil.decodeBase64(nextB64);
+                hashCtx.update(plaintext);
+              }
+            } catch (e) {
+              reject(e);
+              return;
+            } finally {
+              draining = false;
+            }
+            if (ended && queue.length === 0) resolve();
+          })();
+        });
+        stream.onError((e) => reject(e));
+        stream.onEnd(() => {
+          ended = true;
+          if (!draining && queue.length === 0) resolve();
+        });
+      });
+    }
+    return hashCtx.hex();
+  } catch (e) {
+    console.warn('computeExactFileHash failed:', e?.message || e);
+    return null;
+  }
+};
+
+// ============================================================================
 // EXACT DUPLICATES - Pixel hashing helpers
 // ============================================================================
 
@@ -100,10 +438,9 @@ const getHashTarget = async ({ asset, info, resolveReadableFilePath }) => {
       if (qIdx !== -1) hashTarget = hashTarget.slice(0, qIdx);
       try { hashTarget = decodeURI(hashTarget); } catch (e) {}
     } else if (rawUri.startsWith('ph://') || rawUri.startsWith('content://')) {
-      // Android: PixelHash can read content:// directly (avoid expensive temp copies)
-      if (Platform.OS === 'android' && rawUri.startsWith('content://')) {
-        hashTarget = rawUri;
-      } else {
+      // Always stage to temp file for consistent hashing
+      // Android content:// URIs can return different pixel data (e.g., Google Photos cloud re-encoding)
+      {
         // Need to stage to temp file
         try {
           const resolved = await resolveReadableFilePath({ assetId: asset.id, assetInfo: info });
@@ -269,11 +606,12 @@ export const scanExactDuplicates = async ({ assets, resolveReadableFilePath, onP
     }
 
     try {
-      // Compute pixel hash
+      // Compute 16-char dHash (perceptual hash) - fast and consistent for identical images
+      // Groups by exact hash match (no fuzzy threshold)
       const hashHex = await PixelHash.hashImagePixels(hashTarget);
       
       if (hashedCount < 3) {
-        console.log('DuplicateScanner: Pixel hash computed', {
+        console.log('DuplicateScanner: dHash computed', {
           filename: info?.filename || asset.filename,
           hashStart: hashHex ? hashHex.substring(0, 8) + '...' : 'none',
         });
@@ -546,8 +884,8 @@ export const scanSimilarPhotos = async ({ resolveReadableFilePath, onProgress })
       // Time difference
       const dt = Math.abs((b.createdTs || 0) - (a.createdTs || 0));
       
-      // Hamming distance between 256-bit hashes
-      const dist = hammingDistance256(a.hash, b.hash);
+      // Hamming distance between 64-bit dHash (16-char hex from native module)
+      const dist = hammingDistance64(a.hash, b.hash);
       
       // Edge hash comparison (5% border from all 4 sides)
       // If edges match exactly, photos have same background/scene
@@ -559,42 +897,42 @@ export const scanSimilarPhotos = async ({ resolveReadableFilePath, onProgress })
       const cornerDist = (a.cornerHash && b.cornerHash) ? hammingDistance16(a.cornerHash, b.cornerHash) : Number.MAX_SAFE_INTEGER;
       const cornersMatch = cornerDist <= CORNER_MATCH_THRESHOLD;
       
-      // Determine threshold based on time proximity
+      // Determine threshold based on time proximity (scaled for 64-bit dHash)
       // Burst shots (within 60s): allow more difference (hand shake, posture change)
       // Longer apart: require more similarity
       let threshold;
       if (dt <= 5000) {
-        // Within 5 seconds - very likely burst, allow up to 32 bits different
-        threshold = 32;
+        // Within 5 seconds - very likely burst, allow up to 8 bits different
+        threshold = 8;
       } else if (dt <= 30000) {
-        // Within 30 seconds - likely burst, allow up to 28 bits
-        threshold = 28;
+        // Within 30 seconds - likely burst, allow up to 7 bits
+        threshold = 7;
       } else if (dt <= 60000) {
-        // Within 1 minute - possible burst, allow up to 24 bits
-        threshold = 24;
+        // Within 1 minute - possible burst, allow up to 6 bits
+        threshold = 6;
       } else if (dt <= 300000) {
-        // Within 5 minutes - maybe same session, allow up to 20 bits
-        threshold = 20;
+        // Within 5 minutes - maybe same session, allow up to 5 bits
+        threshold = 5;
       } else {
-        // More than 5 minutes apart - require very similar (16 bits)
-        threshold = 16;
+        // More than 5 minutes apart - require very similar (4 bits)
+        threshold = 4;
       }
       
       // EDGE MATCH BOOST: If edges match (same background/scene), relax threshold significantly
       // This catches cases where subject moved but background is identical
       if (edgesMatch) {
-        threshold = Math.max(threshold, 40); // Allow up to 40 bits different if edges match
+        threshold = Math.max(threshold, 10); // Allow up to 10 bits different if edges match
       }
       
       // CORNER MATCH BOOST: If corners match (same scene framing in B&W), relax threshold
       // This catches cases where center changed but corners are identical
       if (cornersMatch) {
-        threshold = Math.max(threshold, 44); // Allow up to 44 bits different if corners match
+        threshold = Math.max(threshold, 11); // Allow up to 11 bits different if corners match
       }
       
       // DOUBLE MATCH: If both edges AND corners match, very likely same scene
       if (edgesMatch && cornersMatch) {
-        threshold = Math.max(threshold, 50); // Allow up to 50 bits different
+        threshold = Math.max(threshold, 12); // Allow up to 12 bits different
       }
       
       if (dist > threshold) continue;

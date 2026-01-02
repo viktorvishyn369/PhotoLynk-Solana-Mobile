@@ -35,8 +35,14 @@ npx expo install --fix
 
 echo "🔧 Preserving android/ios (no prebuild). If you need full regen: npx expo prebuild --clean"
 
+echo "🔧 Android: cleaning build cache..."
+(cd android && ./gradlew clean)
+
 echo "🔧 Android: ensuring gradle properties..."
 echo "android.kotlinVersion=1.9.25" >> android/gradle.properties
+
+echo "🔧 iOS: cleaning build cache..."
+(cd ios && rm -rf build Pods Podfile.lock)
 
 echo "🔧 iOS: running pod install..."
 (cd ios && pod install)
