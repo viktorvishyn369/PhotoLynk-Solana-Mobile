@@ -308,16 +308,6 @@ export const findPerceptualHashMatch = (hash, hashSet, threshold = CROSS_PLATFOR
 
 export const computePerceptualHash = async (filePath, asset = null, info = null) => {
   try {
-    // Skip perceptual hash for HEIC files - use exact binary hash instead
-    // HEIC decoders (iOS ImageIO, Android ImageDecoder, desktop heic-decode) produce
-    // different pixel values, making perceptual hashing unreliable across platforms.
-    // For HEIC, we rely on exact file hash for deduplication.
-    const isHEIC = filePath && (filePath.toLowerCase().endsWith('.heic') || filePath.toLowerCase().endsWith('.heif'));
-    if (isHEIC) {
-      console.log(`[PerceptualHash] Skipping HEIC file - will use exact binary hash instead`);
-      return null;
-    }
-
     // Check if PixelHash native module is available
     if (!PixelHash || typeof PixelHash.hashImagePixels !== 'function') {
       console.warn('PixelHash native module not available for perceptual hashing');
@@ -329,7 +319,7 @@ export const computePerceptualHash = async (filePath, asset = null, info = null)
       return null;
     }
 
-    // Compute pixel-based perceptual hash for non-HEIC images
+    // Compute pixel-based perceptual hash
     const hashHex = await PixelHash.hashImagePixels(filePath);
     console.log(`[PixelHash-JS] Native module returned: ${hashHex ? hashHex.length : 0} chars`);
     return hashHex || null;
