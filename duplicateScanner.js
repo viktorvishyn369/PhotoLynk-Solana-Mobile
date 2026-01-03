@@ -319,9 +319,26 @@ export const computePerceptualHash = async (filePath, asset = null, info = null)
       return null;
     }
 
-    // Compute pixel-based perceptual hash
-    const hashHex = await PixelHash.hashImagePixels(filePath);
-    console.log(`[PixelHash-JS] Native module returned: ${hashHex ? hashHex.length : 0} chars`);
+    // Normalize path exactly like getHashTarget does for scanSimilarPhotos
+    // This ensures backup dedup uses identical path handling as clean duplicates
+    let hashTarget = filePath;
+    if (hashTarget && typeof hashTarget === 'string') {
+      // Strip file:// prefix
+      if (hashTarget.startsWith('file://')) {
+        hashTarget = hashTarget.replace('file://', '');
+      }
+      // Remove query params and fragments
+      const hashIdx = hashTarget.indexOf('#');
+      if (hashIdx !== -1) hashTarget = hashTarget.slice(0, hashIdx);
+      const qIdx = hashTarget.indexOf('?');
+      if (qIdx !== -1) hashTarget = hashTarget.slice(0, qIdx);
+      // Decode URI-encoded characters (important for filenames with special chars)
+      try { hashTarget = decodeURI(hashTarget); } catch (e) {}
+    }
+
+    // Compute pixel-based perceptual hash (same as scanSimilarPhotos)
+    const hashHex = await PixelHash.hashImagePixels(hashTarget);
+    console.log(`[PixelHash-JS] Native module returned: ${hashHex ? hashHex.length : 0} chars for ${hashTarget}`);
     return hashHex || null;
   } catch (e) {
     console.warn('computePerceptualHash failed:', e?.message);
