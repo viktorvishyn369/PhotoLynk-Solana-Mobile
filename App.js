@@ -321,7 +321,7 @@ export default function App() {
     try {
       const parsed = JSON.parse(data);
       if (parsed.type === 'photolynk-local' && parsed.ip && parsed.port) {
-        // Valid PhotoLynk QR code
+        // Valid PhotoLynk QR code for local server connection
         const serverIp = parsed.ip;
         setLocalHost(serverIp);
         setServerType('local');
@@ -335,11 +335,110 @@ export default function App() {
           'Connected!',
           'Server IP set to ' + serverIp + ':' + parsed.port + (parsed.name ? '\n\nServer: ' + parsed.name : '')
         );
+      } else if (parsed.type === 'photolynk-decrypt' && parsed.sessionId && parsed.server) {
+        // Web portal decryption request - connect via WebSocket
+        setQrScannerOpen(false);
+        await handleWebPortalDecryption(parsed.sessionId, parsed.server);
       } else {
         showDarkAlert('Invalid QR Code', 'This QR code is not from PhotoLynk Server.');
       }
     } catch (e) {
       showDarkAlert('Invalid QR Code', 'Could not parse QR code data.');
+    }
+  };
+
+  // Handle web portal decryption via WebSocket
+  const handleWebPortalDecryption = async (sessionId, serverUrl) => {
+    try {
+      // Get encryption key from secure storage
+      const encryptionKey = await SecureStore.getItemAsync('encryption_key');
+      if (!encryptionKey) {
+        showDarkAlert('No Encryption Key', 'Please log in first to enable decryption.');
+        return;
+      }
+
+      // Connect to WebSocket
+      const wsUrl = serverUrl.replace('https://', 'wss://').replace('http://', 'ws://') + '/ws/portal';
+      const ws = new WebSocket(wsUrl);
+
+      ws.onopen = () => {
+        // Send decryption key to web portal session
+        ws.send(JSON.stringify({
+          type: 'phone_connect',
+          sessionId: sessionId,
+          encryptionKey: encryptionKey
+        }));
+        showDarkAlert('Connected!', 'Your phone is now connected to the web portal.\n\nYou can view your decrypted files in the browser.');
+      };
+
+      ws.onerror = (error) => {
+        console.error('WebSocket error:', error);
+        showDarkAlert('Connection Failed', 'Could not connect to web portal. Please try again.');
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data);
+          if (msg.type === 'decrypt_request') {
+            // Web portal is requesting decryption of a file
+            handleDecryptRequest(ws, msg, encryptionKey);
+          } else if (msg.type === 'session_ended') {
+            ws.close();
+          }
+        } catch (e) {
+          console.error('WebSocket message error:', e);
+        }
+      };
+
+      // Keep connection alive for 5 minutes
+      setTimeout(() => {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.close();
+        }
+      }, 5 * 60 * 1000);
+
+    } catch (error) {
+      console.error('Web portal decryption error:', error);
+      showDarkAlert('Error', 'Failed to connect to web portal.');
+    }
+  };
+
+  // Handle individual file decryption request from web portal
+  const handleDecryptRequest = async (ws, msg, encryptionKey) => {
+    try {
+      const { fileId, encryptedData } = msg;
+      
+      // Decrypt the data using nacl
+      const keyBytes = nacl.hash(new TextEncoder().encode(encryptionKey)).slice(0, 32);
+      const nonce = Uint8Array.from(atob(encryptedData.nonce), c => c.charCodeAt(0));
+      const ciphertext = Uint8Array.from(atob(encryptedData.ciphertext), c => c.charCodeAt(0));
+      
+      const decrypted = nacl.secretbox.open(ciphertext, nonce, keyBytes);
+      
+      if (decrypted) {
+        // Send decrypted data back to web portal
+        ws.send(JSON.stringify({
+          type: 'decrypt_response',
+          fileId: fileId,
+          success: true,
+          data: btoa(String.fromCharCode(...decrypted))
+        }));
+      } else {
+        ws.send(JSON.stringify({
+          type: 'decrypt_response',
+          fileId: fileId,
+          success: false,
+          error: 'Decryption failed'
+        }));
+      }
+    } catch (error) {
+      console.error('Decrypt request error:', error);
+      ws.send(JSON.stringify({
+        type: 'decrypt_response',
+        fileId: msg.fileId,
+        success: false,
+        error: error.message
+      }));
     }
   };
 

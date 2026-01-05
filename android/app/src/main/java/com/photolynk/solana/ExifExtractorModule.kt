@@ -1,4 +1,4 @@
-package com.photosync.app
+package com.photolynk.solana
 
 import android.net.Uri
 import androidx.exifinterface.media.ExifInterface

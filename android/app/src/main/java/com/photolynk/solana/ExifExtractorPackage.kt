@@ -1,4 +1,4 @@
-package com.photosync.app
+package com.photolynk.solana
 
 import com.facebook.react.ReactPackage
 import com.facebook.react.bridge.NativeModule
