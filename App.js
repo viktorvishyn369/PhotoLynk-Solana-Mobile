@@ -350,10 +350,13 @@ export default function App() {
   // Handle web portal decryption via WebSocket
   const handleWebPortalDecryption = async (sessionId, serverUrl) => {
     try {
-      // Get encryption key from secure storage
+      // Get encryption key, token, and device UUID from secure storage
       const encryptionKey = await SecureStore.getItemAsync('encryption_key');
-      if (!encryptionKey) {
-        showDarkAlert('No Encryption Key', 'Please log in first to enable decryption.');
+      const token = await SecureStore.getItemAsync('auth_token');
+      const deviceUuid = await SecureStore.getItemAsync('device_uuid');
+      
+      if (!encryptionKey || !token || !deviceUuid) {
+        showDarkAlert('Not Logged In', 'Please log in first to enable web portal decryption.');
         return;
       }
 
@@ -362,10 +365,12 @@ export default function App() {
       const ws = new WebSocket(wsUrl);
 
       ws.onopen = () => {
-        // Send decryption key to web portal session
+        // Send auth credentials and encryption key to web portal session
         ws.send(JSON.stringify({
           type: 'phone_connect',
           sessionId: sessionId,
+          token: token,
+          deviceUuid: deviceUuid,
           encryptionKey: encryptionKey
         }));
         showDarkAlert('Connected!', 'Your phone is now connected to the web portal.\n\nYou can view your decrypted files in the browser.');
