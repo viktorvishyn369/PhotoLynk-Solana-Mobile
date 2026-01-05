@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Clean build script for PhotoLynk mobile app
+# Clean build script for PhotoLynk Solana app
 # Usage: ./rebuild.sh [android|ios|both]
 
 set -e
@@ -9,6 +9,10 @@ PLATFORM=${1:-both}
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 cd "$PROJECT_DIR"
+
+echo "🚀 Building PhotoLynk Solana App ($PLATFORM)"
+echo "📁 Directory: $PROJECT_DIR"
+echo ""
 
 echo "🛑 Killing Metro bundler and related processes..."
 lsof -ti:8081 | xargs kill -9 2>/dev/null || true
