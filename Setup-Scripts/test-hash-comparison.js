@@ -1,4 +1,9 @@
 const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
+const nacl = require('tweetnacl');
+const naclUtil = require('tweetnacl-util');
+const sha256 = require('js-sha256');
 const heicDecode = require('heic-decode');
 
 // Desktop implementation (current)
@@ -197,24 +202,89 @@ function hammingDistance(hash1, hash2) {
   return dist;
 }
 
-async function test(filePath) {
-  console.log('Testing file:', filePath);
-  console.log('='.repeat(80));
-  
-  const desktopHash = await computeDesktopHash(filePath);
-  const iosHash = await computeIOSStyleHash(filePath);
-  
-  console.log('\n' + '='.repeat(80));
-  console.log('Desktop hash:', desktopHash);
-  console.log('iOS hash:    ', iosHash);
-  console.log('Match:       ', desktopHash === iosHash ? 'YES ✓' : 'NO ✗');
-  
-  if (desktopHash !== iosHash) {
-    const distance = hammingDistance(desktopHash, iosHash);
-    console.log('Hamming distance:', distance, 'bits');
-    console.log('Within threshold (6 bits):', distance <= 6 ? 'YES ✓' : 'NO ✗');
-  }
+// Exact copy of manifest structure used on mobile (values generated here for standalone testing)
+function buildMobileManifestLikeClient(filePath, { perceptualHash, fileHash }) {
+  const stat = fs.statSync(filePath);
+  const originalSize = stat?.size || null;
+  const creationTime = stat?.birthtime ? stat.birthtime.toISOString() : (stat?.mtime ? stat.mtime.toISOString() : null);
+
+  const baseNonce16 = crypto.randomBytes(16);
+  const wrapNonce = crypto.randomBytes(24);
+  const wrappedKey = crypto.randomBytes(32);
+
+  // Simulate chunk info: single chunk using file hash as chunkId placeholder
+  const chunkIds = fileHash ? [fileHash] : [];
+  const chunkSizes = originalSize ? [originalSize] : [];
+
+  const manifest = {
+    v: 1,
+    assetId: filePath,
+    filename: path.basename(filePath),
+    mediaType: 'photo',
+    originalSize,
+    creationTime,
+    exifCaptureTime: null,
+    exifMake: null,
+    exifModel: null,
+    baseNonce16: naclUtil.encodeBase64(baseNonce16),
+    wrapNonce: naclUtil.encodeBase64(wrapNonce),
+    wrappedFileKey: naclUtil.encodeBase64(wrappedKey),
+    chunkIds,
+    chunkSizes,
+    fileHash: fileHash || null,
+    perceptualHash: perceptualHash || null,
+  };
+
+  return manifest;
 }
 
-const filePath = process.argv[2] || '/Users/vishyn369/Downloads/PHOTOS/IMG_9225.HEIC';
-test(filePath).catch(e => console.error('Error:', e.message));
+async function compareTwoFiles(fileA, fileB) {
+  console.log('Comparing files (iOS-style duplicate logic)');
+  console.log('File A:', fileA);
+  console.log('File B:', fileB);
+  console.log('='.repeat(80));
+
+  // Compute iOS-style hashes (what device uses for perceptual dedupe)
+  const iosHashA = await computeIOSStyleHash(fileA);
+  const iosHashB = await computeIOSStyleHash(fileB);
+
+  // Also compute desktop hash for visibility / debugging
+  const desktopHashA = await computeDesktopHash(fileA);
+  const desktopHashB = await computeDesktopHash(fileB);
+
+  const exactHashA = sha256.create().update(fs.readFileSync(fileA)).hex();
+  const exactHashB = sha256.create().update(fs.readFileSync(fileB)).hex();
+
+  const distanceIOS = hammingDistance(iosHashA, iosHashB);
+  const matchIOS = distanceIOS === 0;
+
+  console.log('\n--- iOS-style perceptual hash ---');
+  console.log('A:', iosHashA);
+  console.log('B:', iosHashB);
+  console.log('Hamming distance:', distanceIOS, 'bits');
+  console.log('Exact match:', matchIOS ? 'YES ✓' : 'NO ✗');
+  console.log('Within threshold (6 bits):', distanceIOS <= 6 ? 'YES ✓' : 'NO ✗');
+
+  console.log('\n--- Desktop (legacy) hash ---');
+  console.log('A:', desktopHashA);
+  console.log('B:', desktopHashB);
+  console.log('Exact match:', desktopHashA === desktopHashB ? 'YES ✓' : 'NO ✗');
+  console.log('Hamming distance:', hammingDistance(desktopHashA, desktopHashB), 'bits');
+
+  console.log('\nNote: iOS duplicate detection uses the iOS-style hash above. Desktop hash is shown for comparison only.');
+
+  // Build manifest payloads exactly like mobile client structure (values generated here)
+  const manifestA = buildMobileManifestLikeClient(fileA, { perceptualHash: iosHashA, fileHash: exactHashA });
+  const manifestB = buildMobileManifestLikeClient(fileB, { perceptualHash: iosHashB, fileHash: exactHashB });
+
+  console.log('\n--- Mobile manifest payload (simulated) for A ---');
+  console.log(JSON.stringify(manifestA, null, 2));
+
+  console.log('\n--- Mobile manifest payload (simulated) for B ---');
+  console.log(JSON.stringify(manifestB, null, 2));
+}
+
+const fileA = process.argv[2] || '/Users/vishyn369/Downloads/8491.heic';
+const fileB = process.argv[3] || '/Users/vishyn369/Downloads/7907.heic';
+
+compareTwoFiles(fileA, fileB).catch(e => console.error('Error:', e.message));

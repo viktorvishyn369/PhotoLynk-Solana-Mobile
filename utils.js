@@ -150,3 +150,44 @@ export const computeFileIdentity = (filename, originalSize) => {
   const sizeStr = typeof originalSize === 'number' && !Number.isNaN(originalSize) ? String(originalSize) : '';
   return `${normalizedFilename}:${sizeStr}`;
 };
+
+// Check if a URL is valid
+export const isValidUrl = (string) => {
+  try {
+    new URL(string);
+    return true;
+  } catch (_) {
+    return false;
+  }
+};
+
+// MIME type detection from filename (case-insensitive)
+export const getMimeFromFilename = (filename, fallbackMediaType) => {
+  const ext = (filename || '').split('.').pop()?.toLowerCase();
+  const mimeMap = {
+    // Photos
+    'heic': 'image/heic', 'heif': 'image/heif',
+    'jpg': 'image/jpeg', 'jpeg': 'image/jpeg',
+    'png': 'image/png', 'gif': 'image/gif',
+    'webp': 'image/webp', 'tiff': 'image/tiff', 'tif': 'image/tiff',
+    'bmp': 'image/bmp', 'ico': 'image/x-icon',
+    'svg': 'image/svg+xml', 'avif': 'image/avif',
+    // RAW formats
+    'raw': 'image/raw', 'dng': 'image/dng',
+    'cr2': 'image/x-canon-cr2', 'cr3': 'image/x-canon-cr3',
+    'nef': 'image/x-nikon-nef', 'nrw': 'image/x-nikon-nrw',
+    'arw': 'image/x-sony-arw', 'srf': 'image/x-sony-srf',
+    'orf': 'image/x-olympus-orf', 'pef': 'image/x-pentax-pef',
+    'raf': 'image/x-fuji-raf', 'rw2': 'image/x-panasonic-rw2',
+    'srw': 'image/x-samsung-srw', 'x3f': 'image/x-sigma-x3f',
+    // Videos
+    'mp4': 'video/mp4', 'mov': 'video/quicktime',
+    'avi': 'video/x-msvideo', 'mkv': 'video/x-matroska',
+    'm4v': 'video/x-m4v', '3gp': 'video/3gpp', '3g2': 'video/3gpp2',
+    'webm': 'video/webm', 'wmv': 'video/x-ms-wmv',
+    'flv': 'video/x-flv', 'mpg': 'video/mpeg', 'mpeg': 'video/mpeg',
+    'mts': 'video/mp2t', 'm2ts': 'video/mp2t',
+  };
+  if (mimeMap[ext]) return mimeMap[ext];
+  return fallbackMediaType === 'video' ? 'video/mp4' : 'application/octet-stream';
+};

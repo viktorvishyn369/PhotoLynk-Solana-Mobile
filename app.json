@@ -1,8 +1,8 @@
 {
   "expo": {
     "name": "PhotoLynk",
-    "slug": "photosync",
-    "version": "1.1.1",
+    "slug": "photolynk-solana",
+    "version": "1.2.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
@@ -18,7 +18,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.photosync.app",
-      "buildNumber": "1.1.4",
+      "buildNumber": "1.1.5",
       "infoPlist": {
         "NSPhotoLibraryUsageDescription": "PhotoLynk needs access to your photos to back them up to your secure private cloud.",
         "NSPhotoLibraryAddUsageDescription": "PhotoLynk needs permission to save restored photos to your library.",
@@ -67,8 +67,21 @@
         "android.permission.READ_MEDIA_AUDIO",
         "android.permission.CAMERA"
       ],
-      "package": "com.photosync.app",
-      "versionCode": 10
+      "package": "com.photolynk.solana",
+      "versionCode": 1,
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "data": [
+            {
+              "scheme": "solana",
+              "host": "*"
+            }
+          ],
+          "category": ["BROWSABLE", "DEFAULT"]
+        }
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"

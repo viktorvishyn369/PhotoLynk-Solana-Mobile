@@ -550,10 +550,152 @@ export const localRemoteRestoreCore = async ({
 };
 
 // ============================================================================
+// LOCAL DEDUPLICATION INDEX BUILDER
+// ============================================================================
+
+/**
+ * Builds local deduplication sets by scanning device photos.
+ * Used by stealthCloudRestore to detect files already on device.
+ * 
+ * @param {Object} params
+ * @param {number} params.totalToScan - Total number of assets to scan
+ * @param {Function} params.resolveReadableFilePath - Function to get readable file path
+ * @param {Function} params.onStatus - Callback for status updates
+ * @param {Function} params.onProgress - Callback for progress updates (0-1)
+ * @returns {Promise<{localManifestIds: Set, localFileHashes: Set, localPerceptualHashes: Set, localBaseNameSizes: Map, localBaseNameDates: Map}>}
+ */
+export const buildLocalDeduplicationIndex = async ({
+  totalToScan,
+  resolveReadableFilePath,
+  onStatus = () => {},
+  onProgress = () => {},
+}) => {
+  const localManifestIds = new Set();
+  const localFileHashes = new Set();
+  const localPerceptualHashes = new Set();
+  const localBaseNameSizes = new Map();
+  const localBaseNameDates = new Map();
+
+  if (totalToScan === 0) {
+    return { localManifestIds, localFileHashes, localPerceptualHashes, localBaseNameSizes, localBaseNameDates };
+  }
+
+  let hashScanned = 0;
+  let after = null;
+  const PAGE_SIZE = 100;
+
+  while (true) {
+    const page = await MediaLibrary.getAssetsAsync({
+      first: PAGE_SIZE,
+      after: after || undefined,
+      mediaType: ['photo', 'video'],
+    });
+
+    const assets = page && Array.isArray(page.assets) ? page.assets : [];
+    if (assets.length === 0) break;
+
+    for (const asset of assets) {
+      try {
+        const assetInfo = await MediaLibrary.getAssetInfoAsync(asset.id);
+        const resolved = await resolveReadableFilePath({ assetId: asset.id, assetInfo });
+        const filePath = resolved?.filePath;
+        if (!filePath) {
+          console.warn('[LocalDedup] Missing filePath for asset', asset?.id, assetInfo?.filename || asset?.filename);
+          hashScanned++;
+          continue;
+        }
+
+        // Step 1: Compute manifestId (filename + size)
+        const assetFilename = assetInfo.filename || asset.filename || null;
+        let originalSize = null;
+
+        if (Platform.OS === 'ios') {
+          try {
+            const fileUri = filePath.startsWith('/') ? `file://${filePath}` : filePath;
+            const info = await FileSystem.getInfoAsync(fileUri);
+            originalSize = info && typeof info.size === 'number' ? Number(info.size) : null;
+          } catch (e) {}
+        } else {
+          // Android: use react-native-blob-util for accurate size
+          let ReactNativeBlobUtil = null;
+          try {
+            const mod = require('react-native-blob-util');
+            ReactNativeBlobUtil = mod && (mod.default || mod);
+          } catch (e) {}
+          if (ReactNativeBlobUtil?.fs?.stat) {
+            try {
+              const stat = await ReactNativeBlobUtil.fs.stat(filePath);
+              originalSize = stat && stat.size ? Number(stat.size) : null;
+            } catch (e) {}
+          }
+        }
+
+        const fileIdentity = computeFileIdentity(assetFilename, originalSize);
+        if (fileIdentity) {
+          const { sha256 } = require('js-sha256');
+          const manifestId = sha256(`file:${fileIdentity}`);
+          localManifestIds.add(manifestId);
+        }
+
+        // Build base filename + size/date maps for fallback matching
+        const baseName = assetFilename ? extractBaseFilename(assetFilename) : null;
+        if (baseName) {
+          if (originalSize) {
+            if (!localBaseNameSizes.has(baseName)) localBaseNameSizes.set(baseName, new Set());
+            localBaseNameSizes.get(baseName).add(originalSize);
+          }
+          if (asset.creationTime) {
+            const dateStr = normalizeDateForCompare(asset.creationTime);
+            if (dateStr) {
+              if (!localBaseNameDates.has(baseName)) localBaseNameDates.set(baseName, new Set());
+              localBaseNameDates.get(baseName).add(dateStr);
+            }
+          }
+        }
+
+        const isImage = asset.mediaType === 'photo';
+
+        if (isImage) {
+          // Step 3: Images - compute perceptual hash
+          const pHash = await computePerceptualHash(filePath, asset, assetInfo);
+          if (pHash) {
+            localPerceptualHashes.add(pHash);
+          }
+        } else {
+          // Step 4: Videos - compute exact file hash
+          const fHash = await computeExactFileHash(filePath);
+          if (fHash) {
+            localFileHashes.add(fHash);
+          }
+        }
+
+        hashScanned++;
+        onProgress(hashScanned / totalToScan);
+        // Show count: first 10 by 1, then every 5 (15, 20, 25...)
+        if (hashScanned <= 10 || hashScanned % 5 === 0 || hashScanned === totalToScan) {
+          onStatus(`Analyzing ${hashScanned} of ${totalToScan}`);
+        }
+      } catch (e) {
+        // Skip files we can't hash
+        hashScanned++;
+      }
+    }
+
+    after = page && page.endCursor ? page.endCursor : null;
+    if (!page || page.hasNextPage !== true) break;
+  }
+
+  console.log(`[Dedup Index] Built: ${localManifestIds.size} manifestIds, ${localPerceptualHashes.size} image hashes, ${localFileHashes.size} video hashes, ${localBaseNameSizes.size} name+size, ${localBaseNameDates.size} name+date`);
+
+  return { localManifestIds, localFileHashes, localPerceptualHashes, localBaseNameSizes, localBaseNameDates };
+};
+
+// ============================================================================
 // EXPORTS
 // ============================================================================
 
 export default {
   stealthCloudRestoreCore,
   localRemoteRestoreCore,
+  buildLocalDeduplicationIndex,
 };

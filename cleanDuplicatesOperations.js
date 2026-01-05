@@ -1,0 +1,193 @@
+/**
+ * cleanDuplicatesOperations.js
+ * 
+ * Handles clean duplicates UI operations and coordination with duplicateScanner.
+ * Extracted from App.js to keep codebase modular.
+ */
+
+import { Platform } from 'react-native';
+import * as MediaLibrary from 'expo-media-library';
+
+/**
+ * Starts the similar photos review process.
+ * Scans device for similar photos and returns groups for review.
+ * 
+ * @param {Object} params - Parameters
+ * @param {Function} params.resolveReadableFilePath - Function to resolve file paths
+ * @param {Function} params.onStatus - Status update callback
+ * @param {Function} params.onProgress - Progress update callback
+ * @returns {Promise<Object>} Result with groups or error
+ */
+export const startSimilarShotsReviewCore = async ({
+  resolveReadableFilePath,
+  onStatus,
+  onProgress,
+}) => {
+  onStatus('Analyzing photos...');
+  
+  try {
+    // Check permission first
+    const permission = await MediaLibrary.requestPermissionsAsync();
+    if (permission.status !== 'granted') {
+      return { error: 'Photos permission not granted' };
+    }
+    if (Platform.OS === 'ios' && permission.accessPrivileges && permission.accessPrivileges !== 'all') {
+      return { error: 'Limited Photos Access. Please allow Full Access.' };
+    }
+
+    // Use duplicateScanner module
+    const DuplicateScanner = require('./duplicateScanner').default;
+    const groups = await DuplicateScanner.scanSimilarPhotos({
+      resolveReadableFilePath,
+      onProgress: (current, total, status) => {
+        onStatus(status || `Analyzing ${current}/${total} photos...`);
+        onProgress(total > 0 ? current / total : 0);
+      }
+    });
+
+    if (!groups || groups.length === 0) {
+      return { noGroups: true };
+    }
+
+    return { groups };
+  } catch (e) {
+    return { error: e?.message || 'Could not scan for photos.' };
+  }
+};
+
+/**
+ * Builds default selection for a similar group (select all except first).
+ * 
+ * @param {Array} group - Array of similar items
+ * @returns {Object} Selection map with asset IDs as keys
+ */
+export const buildDefaultSimilarSelection = (group) => {
+  const items = Array.isArray(group) ? group : [];
+  const next = {};
+  for (let i = 1; i < items.length; i++) {
+    const id = items[i] && items[i].id ? String(items[i].id) : '';
+    if (id) next[id] = true;
+  }
+  return next;
+};
+
+/**
+ * Gets array of selected asset IDs from selection map.
+ * 
+ * @param {Object} similarSelected - Selection map
+ * @returns {Array<string>} Array of selected asset IDs
+ */
+export const getSelectedIds = (similarSelected) => {
+  const sel = similarSelected && typeof similarSelected === 'object' ? similarSelected : {};
+  return Object.keys(sel).filter(k => sel[k]);
+};
+
+/**
+ * Toggles selection state for an asset.
+ * 
+ * @param {Object} prevSelected - Previous selection map
+ * @param {string} assetId - Asset ID to toggle
+ * @returns {Object} New selection map
+ */
+export const toggleSelection = (prevSelected, assetId) => {
+  const key = assetId ? String(assetId) : '';
+  if (!key) return prevSelected;
+  const next = { ...(prevSelected || {}) };
+  if (next[key]) {
+    delete next[key];
+  } else {
+    next[key] = true;
+  }
+  return next;
+};
+
+/**
+ * Deletes selected assets from the device.
+ * Uses duplicateScanner's deleteAssets function.
+ * 
+ * @param {Array<string>} ids - Array of asset IDs to delete
+ * @returns {Promise<Object>} Result with success status and deleted count
+ */
+export const deleteSelectedAssets = async (ids) => {
+  if (!ids || ids.length === 0) {
+    return { success: true, deleted: 0 };
+  }
+
+  const DuplicateScanner = require('./duplicateScanner').default;
+  return await DuplicateScanner.deleteAssets(ids);
+};
+
+/**
+ * Starts the exact duplicates scan process.
+ * Scans device for exact duplicate photos using pixel hashing.
+ * 
+ * @param {Object} params - Parameters
+ * @param {Function} params.resolveReadableFilePath - Function to resolve file paths
+ * @param {Function} params.onStatus - Status update callback
+ * @param {Function} params.onProgress - Progress update callback
+ * @returns {Promise<Object>} Result with duplicateGroups, stats, or error
+ */
+export const startExactDuplicatesScanCore = async ({
+  resolveReadableFilePath,
+  onStatus,
+  onProgress,
+}) => {
+  onStatus('Scanning for exact duplicates...');
+  
+  try {
+    // Check permission first
+    const permission = await MediaLibrary.requestPermissionsAsync();
+    if (permission.status !== 'granted') {
+      return { error: 'Photos permission not granted' };
+    }
+    if (Platform.OS === 'ios' && permission.accessPrivileges && permission.accessPrivileges !== 'all') {
+      return { error: 'Limited Photos Access. Please allow Full Access.' };
+    }
+
+    const DuplicateScanner = require('./duplicateScanner').default;
+    
+    // Collect all assets
+    onStatus('Collecting photos...');
+    const assets = await DuplicateScanner.collectAllPhotoAssets();
+    
+    if (!assets || assets.length === 0) {
+      return { noAssets: true };
+    }
+
+    // Scan for exact duplicates
+    const { duplicateGroups, stats } = await DuplicateScanner.scanExactDuplicates({
+      assets,
+      resolveReadableFilePath,
+      onProgress: (hashedCount, totalCount, lastHash) => {
+        onStatus(`Hashing ${hashedCount}/${totalCount} photos...`);
+        onProgress(totalCount > 0 ? hashedCount / totalCount : 0);
+      }
+    });
+
+    if (!duplicateGroups || duplicateGroups.length === 0) {
+      const note = DuplicateScanner.buildNoResultsNote(stats);
+      return { noDuplicates: true, note, stats };
+    }
+
+    // Format for review
+    const reviewGroups = DuplicateScanner.formatDuplicateGroupsForReview(duplicateGroups);
+    const totalDuplicates = DuplicateScanner.countDuplicates(duplicateGroups);
+
+    return {
+      groups: reviewGroups,
+      totalDuplicates,
+      stats,
+    };
+  } catch (e) {
+    return { error: e?.message || 'Could not scan for duplicates.' };
+  }
+};
+
+export default {
+  startSimilarShotsReviewCore,
+  startExactDuplicatesScanCore,
+  buildDefaultSimilarSelection,
+  getSelectedIds,
+  toggleSelection,
+  deleteSelectedAssets,
+};

@@ -8,6 +8,7 @@ import {
   Animated,
   AppState,
   Appearance,
+  Easing,
   FlatList,
   Image,
   Dimensions,
@@ -31,6 +32,7 @@ import {
 import Clipboard from '@react-native-clipboard/clipboard';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import FontAwesome5 from '@expo/vector-icons/FontAwesome5';
+import { BlurView } from 'expo-blur';
 import { styles, THEME } from './styles';
 import {
   sleep,
@@ -47,12 +49,7 @@ import {
   normalizeEmailForDeviceUuid,
   isValidUrl,
   computeFileIdentity,
-  getMimeFromFilename,
 } from './utils';
-import { computeAndroidHardwareId, computeIosHardwareId } from './deviceId';
-import { makeHistoryKey, loadRestoreHistory, saveRestoreHistory, clearRestoreHistory } from './restoreHistory';
-import { GradientSpinner, GlassCard } from './uiComponents';
-import { buildLocalFilenameSetPaged, buildLocalAssetIdSetPaged, fetchAllServerFilesPaged, fetchAllManifestsPaged } from './mediaHelpers';
 import {
   AUTO_UPLOAD_POLL_INTERVAL_SECONDS,
   AUTO_UPLOAD_MIN_CHECK_INTERVAL_SECONDS,
@@ -131,39 +128,8 @@ import {
 import {
   stealthCloudRestoreCore,
   localRemoteRestoreCore,
-  buildLocalDeduplicationIndex,
 } from './syncManager';
-import { fetchStealthCloudPickerPage, fetchLocalRemotePickerPage } from './syncPickerOperations';
-import {
-  validateAuthInputs,
-  resolveEffectiveServerSettings,
-  persistServerSettings,
-  getHardwareDeviceId,
-  buildAuthPayload,
-  storeCredentialsWithBiometrics,
-  handleCredentialsChange,
-  checkFirstLaunchAfterReinstall,
-  loadServerSettings,
-  validateToken,
-  getSavedPasswordWithBiometrics,
-  attemptBiometricReauth,
-  performDevicePasswordReset,
-  logoutCore,
-  getDeviceUUID,
-} from './authHelpers';
 import { computeExactFileHash, computePerceptualHash, findPerceptualHashMatch, extractBaseFilename, normalizeDateForCompare, normalizeFullTimestamp, extractExifForDedup, generateExifDedupKeys, CROSS_PLATFORM_DHASH_THRESHOLD } from './duplicateScanner';
-import { stealthCloudBackupCore, stealthCloudBackupSelectedCore } from './backupOperations';
-import { localRemoteBackupCore, localRemoteBackupSelectedCore } from './uploadOperations';
-import { startSimilarShotsReviewCore, buildDefaultSimilarSelection as buildDefaultSimilarSelectionCore, startExactDuplicatesScanCore } from './cleanDuplicatesOperations';
-import { buildResultMessage, checkTierAvailability } from './uiHelpers';
-
-// Constants moved from inline definitions
-const APP_DISPLAY_NAME = 'PhotoLynk';
-const LEGACY_APP_DISPLAY_NAME = 'PhotoSync';
-const PHOTOLYNK_QR_SCHEMA = 'photolynk';
-const LOCAL_SERVER_QR_SCHEMA = 'photolynk_local';
-const REMOTE_SERVER_QR_SCHEMA = 'photolynk_remote';
-const GITHUB_RELEASES_LATEST_URL = 'https://github.com/viktorvishyn369/PhotoLynk/releases/latest';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -173,6 +139,200 @@ const CLIENT_BUILD = `photolynk-mobile-v2/${Application.nativeApplicationVersion
 
 // Alias for backward compatibility with global function name
 const ensureAutoUploadPolicyAllowsWorkIfBackgrounded = ensureAutoUploadPolicyAllowsWorkIfBackgroundedGlobal;
+
+const GITHUB_RELEASES_LATEST_URL = 'https://github.com/viktorvishyn369/PhotoLynk/releases/latest';
+const APP_DISPLAY_NAME = 'PhotoLynk';
+const LEGACY_APP_DISPLAY_NAME = 'PhotoSync';
+// PHOTO_ALBUM_NAME and LEGACY_PHOTO_ALBUM_NAME are now imported from backupManager.js
+const ANDROID_HW_ID_KEY = 'android_hardware_device_id';
+const IOS_HW_ID_KEY = 'ios_hardware_device_id';
+const RESTORE_HISTORY_KEY = 'restore_history';
+const RESTORE_HISTORY_FILE = `${FileSystem.documentDirectory}restore_history_v2.json`;
+const makeHistoryKey = (type, id) => `${type}:${id}`;
+const PHOTOLYNK_QR_SCHEMA = 'photolynk';
+const LOCAL_SERVER_QR_SCHEMA = 'photolynk_local';
+const REMOTE_SERVER_QR_SCHEMA = 'photolynk_remote';
+
+// Persisted restore history to avoid re-downloading when the OS renames saved assets.
+const loadRestoreHistory = async () => {
+  try {
+    try {
+      const info = await FileSystem.getInfoAsync(RESTORE_HISTORY_FILE);
+      if (info && info.exists) {
+        const rawFile = await FileSystem.readAsStringAsync(RESTORE_HISTORY_FILE);
+        if (rawFile) {
+          const parsedFile = JSON.parse(rawFile);
+          if (Array.isArray(parsedFile)) {
+            return new Set(parsedFile.filter(Boolean));
+          }
+        }
+      }
+    } catch (e) {
+      // ignore
+    }
+    const raw = await SecureStore.getItemAsync(RESTORE_HISTORY_KEY);
+    if (!raw) return new Set();
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return new Set();
+    const set = new Set(parsed.filter(Boolean));
+    try {
+      await FileSystem.writeAsStringAsync(RESTORE_HISTORY_FILE, JSON.stringify([...set]));
+    } catch (e) {
+      // ignore
+    }
+    return set;
+  } catch (e) {
+    return new Set();
+  }
+};
+
+// Compute a stable Android hardware ID.
+// Strategy: Use Application.androidId (SSAID) which is stable per app+device combo on Android 8+.
+// For devices where androidId is null (rare, some custom ROMs/emulators), use deterministic hash.
+// This works across: Pixel, Samsung, Xiaomi, Huawei, Oppo, OnePlus, Solana Mobile, etc.
+const computeAndroidHardwareId = async () => {
+  // 1) Primary: Application.androidId (SSAID)
+  // - Unique per app signing key + device combination
+  // - Persists across app reinstalls (same signing key)
+  // - Persists across OS updates
+  // - Available on Android 8.0+ (API 26+), which covers 99%+ of active devices
+  const androidId = Application.androidId;
+  if (androidId) {
+    console.log('Android HW ID: using androidId (SSAID)');
+    return androidId;
+  }
+
+  // 2) Fallback: Deterministic hash from immutable device properties
+  // Used only when androidId is null (emulators, some custom ROMs)
+  // These properties are set at factory and never change:
+  // - brand: Device brand (e.g., "google", "samsung", "xiaomi", "solana")
+  // - manufacturer: Hardware manufacturer
+  // - modelName: Marketing model name (e.g., "Pixel 8", "Galaxy S24", "Seeker")
+  // - productName: Internal product codename (stable across OS updates)
+  const parts = [
+    Device.brand,
+    Device.manufacturer,
+    Device.modelName,
+    Device.productName,
+  ].filter(Boolean);
+
+  // Add Application.applicationId (package name) to make it app-specific
+  // This ensures different apps on same device get different IDs
+  if (Application.applicationId) {
+    parts.push(Application.applicationId);
+  }
+
+  console.log('Android HW ID: androidId null, using device fingerprint:', parts.join('|'));
+
+  if (parts.length >= 3) {
+    const hash = sha256(parts.join('|'));
+    const hwId = `android_hw_${hash.slice(0, 32)}`;
+    console.log('Android HW ID: generated deterministic:', hwId);
+    return hwId;
+  }
+
+  // 3) Last resort: stored UUID (won't survive reinstall, but covers edge cases)
+  try {
+    const stored = await SecureStore.getItemAsync(ANDROID_HW_ID_KEY);
+    if (stored) {
+      console.log('Android HW ID: using stored UUID');
+      return stored;
+    }
+  } catch (e) {
+    console.log('ANDROID_HW_ID_KEY read error:', e);
+  }
+
+  // Generate and store new UUID
+  const hwId = `android_fallback_${uuidv4()}`;
+  console.log('Android HW ID: generated new UUID fallback');
+  try {
+    await SecureStore.setItemAsync(ANDROID_HW_ID_KEY, hwId);
+  } catch (e) {
+    console.log('ANDROID_HW_ID_KEY write error:', e);
+  }
+
+  return hwId;
+};
+
+// Compute a stable iOS hardware ID.
+// Order: return stored keychain value if present; else use IDFV and persist; else generate and persist.
+const computeIosHardwareId = async () => {
+  const secureStoreOpts = {
+    keychainService: 'photolynk_hw_id',
+    accessible: SecureStore.AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY
+  };
+
+  // 1) Prefer previously stored value (persists in keychain across reinstall/reboot)
+  try {
+    const stored = await SecureStore.getItemAsync(IOS_HW_ID_KEY, secureStoreOpts);
+    if (stored) return stored;
+  } catch (e) {
+    console.log('IOS_HW_ID_KEY read error:', e);
+  }
+
+  // 2) Use IDFV if available, and persist it for future reinstall/reboot
+  try {
+    const idfv = await Application.getIosIdForVendorAsync();
+    if (idfv) {
+      try { await SecureStore.setItemAsync(IOS_HW_ID_KEY, idfv, secureStoreOpts); } catch (e) {}
+      return idfv;
+    }
+  } catch (e) {
+    console.log('IDFV error:', e);
+  }
+
+  // 3) Fallback: generate and persist
+  const generated = `ios_hw_${uuidv4()}`;
+  try { await SecureStore.setItemAsync(IOS_HW_ID_KEY, generated, secureStoreOpts); } catch (e) {}
+  return generated;
+};
+
+const saveRestoreHistory = async (set) => {
+  try {
+    const data = JSON.stringify([...set]);
+    const dataSize = new Blob([data]).size; // Approximate size in bytes
+
+    // Always try FileSystem first (handles large data)
+    try {
+      await FileSystem.writeAsStringAsync(RESTORE_HISTORY_FILE, data);
+    } catch (e) {
+      console.warn('FileSystem save failed:', e.message);
+    }
+
+    // Only use SecureStore for small data to avoid 2048 byte limit
+    if (dataSize <= 1800) { // Leave some buffer below 2048 limit
+      try {
+        await SecureStore.setItemAsync(RESTORE_HISTORY_KEY, data);
+      } catch (e) {
+        console.warn('SecureStore save failed (size limit?):', e.message);
+      }
+    } else {
+      // For large data, try to save a compressed version or clear SecureStore
+      try {
+        await SecureStore.deleteItemAsync(RESTORE_HISTORY_KEY);
+      } catch (e) {
+        // ignore
+      }
+    }
+  } catch (e) {
+    console.warn('saveRestoreHistory failed:', e.message);
+  }
+};
+
+const clearRestoreHistory = async () => {
+  try {
+    await FileSystem.deleteAsync(RESTORE_HISTORY_FILE, { idempotent: true });
+    console.log('Cleared restore history file');
+  } catch (e) {
+    console.warn('Failed to clear restore history file:', e.message);
+  }
+  try {
+    await SecureStore.deleteItemAsync(RESTORE_HISTORY_KEY);
+    console.log('Cleared restore history from SecureStore');
+  } catch (e) {
+    console.warn('Failed to clear restore history from SecureStore:', e.message);
+  }
+};
 
 // Login loading label helpers
 const clearLoginTimers = (timerRef) => {
@@ -209,6 +369,307 @@ const FAST_BATCH_COOLDOWN_MS = 0; // No pause between batches
 const FAST_ASSET_COOLDOWN_MS = 0; // No cooldown between assets
 const FAST_CHUNK_COOLDOWN_MS = 0; // No delay between chunks
 
+// MIME type detection from filename (case-insensitive)
+const getMimeFromFilename = (filename, fallbackMediaType) => {
+  const ext = (filename || '').split('.').pop()?.toLowerCase();
+  const mimeMap = {
+    // Photos
+    'heic': 'image/heic', 'heif': 'image/heif',
+    'jpg': 'image/jpeg', 'jpeg': 'image/jpeg',
+    'png': 'image/png', 'gif': 'image/gif',
+    'webp': 'image/webp', 'tiff': 'image/tiff', 'tif': 'image/tiff',
+    'bmp': 'image/bmp', 'ico': 'image/x-icon',
+    'svg': 'image/svg+xml', 'avif': 'image/avif',
+    // RAW formats
+    'raw': 'image/raw', 'dng': 'image/dng',
+    'cr2': 'image/x-canon-cr2', 'cr3': 'image/x-canon-cr3',
+    'nef': 'image/x-nikon-nef', 'nrw': 'image/x-nikon-nrw',
+    'arw': 'image/x-sony-arw', 'srf': 'image/x-sony-srf',
+    'orf': 'image/x-olympus-orf', 'pef': 'image/x-pentax-pef',
+    'raf': 'image/x-fuji-raf', 'rw2': 'image/x-panasonic-rw2',
+    'srw': 'image/x-samsung-srw', 'x3f': 'image/x-sigma-x3f',
+    // Videos
+    'mp4': 'video/mp4', 'mov': 'video/quicktime',
+    'avi': 'video/x-msvideo', 'mkv': 'video/x-matroska',
+    'm4v': 'video/x-m4v', '3gp': 'video/3gpp', '3g2': 'video/3gpp2',
+    'webm': 'video/webm', 'wmv': 'video/x-ms-wmv',
+    'flv': 'video/x-flv', 'mpg': 'video/mpeg', 'mpeg': 'video/mpeg',
+    'mts': 'video/mp2t', 'm2ts': 'video/mp2t',
+  };
+  if (mimeMap[ext]) return mimeMap[ext];
+  return fallbackMediaType === 'video' ? 'video/mp4' : 'application/octet-stream';
+};
+
+const buildLocalFilenameSetPaged = async ({ mediaType, album = null, maxInitialEmptyWaitMs = 30000 }) => {
+  const PAGE_SIZE = 500;
+  let after = null;
+  const set = new Set();
+  let totalCount = null;
+  let scanned = 0;
+  const maxAttempts = Math.max(1, Math.ceil((Number(maxInitialEmptyWaitMs) || 0) / 500));
+
+  while (true) {
+    let page = null;
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      page = await MediaLibrary.getAssetsAsync({
+        first: PAGE_SIZE,
+        after: after || undefined,
+        mediaType,
+        album: album || undefined,
+      });
+
+      const assetsNow = page && Array.isArray(page.assets) ? page.assets : [];
+      if (!after && scanned === 0 && assetsNow.length === 0 && Platform.OS === 'ios' && attempt < (maxAttempts - 1)) {
+        await new Promise(r => setTimeout(r, 500));
+        continue;
+      }
+      break;
+    }
+
+    if (totalCount === null && page && typeof page.totalCount === 'number') {
+      totalCount = page.totalCount;
+    }
+
+    const assets = page && Array.isArray(page.assets) ? page.assets : [];
+    if (assets.length === 0) break;
+
+    for (const a of assets) {
+      const n1 = normalizeFilenameForCompare(a && a.filename ? a.filename : null);
+      if (n1) {
+        set.add(n1);
+        scanned += 1;
+        continue;
+      }
+
+      try {
+        const info = await MediaLibrary.getAssetInfoAsync(a.id);
+        const n2 = normalizeFilenameForCompare(info && info.filename ? info.filename : null);
+        if (n2) set.add(n2);
+      } catch (e) {
+        // ignore
+      }
+      scanned += 1;
+    }
+
+    after = page && page.endCursor ? page.endCursor : null;
+    if (!page || page.hasNextPage !== true) break;
+  }
+
+  return { set, totalCount, scanned };
+};
+
+const buildLocalAssetIdSetPaged = async ({ album, maxInitialEmptyWaitMs = 30000 }) => {
+  const PAGE_SIZE = 500;
+  let after = null;
+  const set = new Set();
+  const maxAttempts = Math.max(1, Math.ceil((Number(maxInitialEmptyWaitMs) || 0) / 500));
+
+  while (true) {
+    let page = null;
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      page = await MediaLibrary.getAssetsAsync({
+        first: PAGE_SIZE,
+        after: after || undefined,
+        album,
+      });
+
+      const assetsNow = page && Array.isArray(page.assets) ? page.assets : [];
+      if (!after && set.size === 0 && assetsNow.length === 0 && Platform.OS === 'ios' && attempt < (maxAttempts - 1)) {
+        await new Promise(r => setTimeout(r, 500));
+        continue;
+      }
+      break;
+    }
+
+    const assets = page && Array.isArray(page.assets) ? page.assets : [];
+    if (assets.length === 0) break;
+    for (const a of assets) {
+      if (a && a.id) set.add(a.id);
+    }
+
+    after = page && page.endCursor ? page.endCursor : null;
+    if (!page || page.hasNextPage !== true) break;
+  }
+
+  return set;
+};
+
+// Fetch all server files with pagination (for Remote/Local backup/sync)
+const fetchAllServerFilesPaged = async (serverUrl, config) => {
+  const PAGE_LIMIT = 500;
+  const allFiles = [];
+  let offset = 0;
+
+  while (true) {
+    const response = await axios.get(`${serverUrl}/api/files`, {
+      ...config,
+      params: { offset, limit: PAGE_LIMIT }
+    });
+
+    const files = (response.data && response.data.files) ? response.data.files : [];
+    allFiles.push(...files);
+
+    if (!files || files.length < PAGE_LIMIT) break;
+    offset += files.length;
+    const total = typeof response.data?.total === 'number' ? response.data.total : null;
+    if (typeof total === 'number' && offset >= total) break;
+  }
+
+  return allFiles;
+};
+
+// Fetch all StealthCloud manifests with pagination
+const fetchAllManifestsPaged = async (serverUrl, config) => {
+  const PAGE_LIMIT = 500;
+  const allManifests = [];
+  let offset = 0;
+
+  while (true) {
+    const response = await axios.get(`${serverUrl}/api/cloud/manifests`, {
+      ...config,
+      params: { offset, limit: PAGE_LIMIT }
+    });
+
+    const manifests = (response.data && response.data.manifests) ? response.data.manifests : [];
+    allManifests.push(...manifests);
+
+    if (!manifests || manifests.length < PAGE_LIMIT) break;
+    offset += manifests.length;
+    const total = typeof response.data?.total === 'number' ? response.data.total : null;
+    if (typeof total === 'number' && offset >= total) break;
+  }
+
+  return allManifests;
+};
+
+// Beautiful gradient spinner component for loading screen
+const GradientSpinner = ({ size = 80 }) => {
+  const spinValue = useRef(new Animated.Value(0)).current;
+  const pulseValue = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    const spin = Animated.loop(
+      Animated.timing(spinValue, {
+        toValue: 1,
+        duration: 2000,
+        easing: Easing.bezier(0.4, 0.0, 0.2, 1),
+        useNativeDriver: true,
+      })
+    );
+    const pulse = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseValue, {
+          toValue: 1,
+          duration: 1000,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: true,
+        }),
+        Animated.timing(pulseValue, {
+          toValue: 0,
+          duration: 1000,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: true,
+        }),
+      ])
+    );
+    spin.start();
+    pulse.start();
+    return () => { spin.stop(); pulse.stop(); };
+  }, [spinValue, pulseValue]);
+
+  const rotate = spinValue.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['0deg', '360deg'],
+  });
+
+  const scale = pulseValue.interpolate({
+    inputRange: [0, 1],
+    outputRange: [1, 1.1],
+  });
+  // Petal spinner: soft blue “flower”
+  const colors = ['#60A5FA', '#3B82F6', '#2563EB', '#1D4ED8'];
+  const petalCount = 8;
+  const petals = [];
+  for (let i = 0; i < petalCount; i++) {
+    const angle = (i * 360) / petalCount;
+    const colorIndex = i % colors.length;
+    const petalWidth = size * 0.24;
+    const petalHeight = size * 0.56;
+    const opacity = 0.6 + (i / petalCount) * 0.4;
+    petals.push(
+      <View
+        key={i}
+        style={{
+          position: 'absolute',
+          width: petalWidth,
+          height: petalHeight,
+          borderRadius: petalWidth,
+          backgroundColor: colors[colorIndex],
+          opacity,
+          left: (size - petalWidth) / 2,
+          top: (size - petalHeight) / 2,
+          transform: [
+            { rotate: `${angle}deg` },
+            { translateY: -size * 0.12 },
+          ],
+          shadowColor: colors[colorIndex],
+          shadowOffset: { width: 0, height: 0 },
+          shadowOpacity: 0.7,
+          shadowRadius: 10,
+          elevation: 6,
+        }}
+      />
+    );
+  }
+
+  return (
+    <Animated.View style={{ width: size, height: size, transform: [{ rotate }, { scale }] }}>
+      {petals}
+      <View style={{
+        position: 'absolute',
+        left: size / 2 - size * 0.1,
+        top: size / 2 - size * 0.1,
+        width: size * 0.2,
+        height: size * 0.2,
+        borderRadius: size * 0.1,
+        backgroundColor: '#f5f3ff',
+        opacity: 0.95,
+        shadowColor: '#c4b5fd',
+        shadowOffset: { width: 0, height: 0 },
+        shadowOpacity: 0.7,
+        shadowRadius: 10,
+        elevation: 8,
+      }} />
+    </Animated.View>
+  );
+};
+
+// GlassCard component - conditionally renders BlurView or regular View based on glass mode
+const GlassCard = ({ children, style, glassEnabled, intensity = 80, tint = 'dark' }) => {
+  if (glassEnabled) {
+    return (
+      <BlurView
+        intensity={intensity}
+        tint={tint}
+        style={[
+          {
+            overflow: 'hidden',
+            borderRadius: 16,
+            borderWidth: 1,
+            borderColor: 'rgba(255, 255, 255, 0.15)',
+          },
+          style,
+        ]}
+      >
+        <View style={{ backgroundColor: 'rgba(0, 0, 0, 0.3)', flex: 1 }}>
+          {children}
+        </View>
+      </BlurView>
+    );
+  }
+  return <View style={style}>{children}</View>;
+};
+
 export default function App() {
   const [view, setView] = useState('loading'); // loading, auth, home, settings
   const [authMode, setAuthMode] = useState('login'); // login, register, forgot
@@ -239,7 +700,7 @@ export default function App() {
   const [syncPickerLoadingMore, setSyncPickerLoadingMore] = useState(false);
   const [syncPickerSelected, setSyncPickerSelected] = useState({});
   const [syncPickerAuthHeaders, setSyncPickerAuthHeaders] = useState(null);
-  const SYNC_PICKER_PAGE_SIZE = 18; // Items per page
+  const SYNC_PICKER_PAGE_SIZE = 20; // Items per page
   const [cleanupModeOpen, setCleanupModeOpen] = useState(false);
   const [quickSetupOpen, setQuickSetupOpen] = useState(false);
   const [authLoadingLabel, setAuthLoadingLabel] = useState('Signing in...');
@@ -359,7 +820,37 @@ export default function App() {
 
   // Standardized result popup for backup/sync/cleanup operations
   const showResultAlert = (type, stats) => {
-    const { title, message } = buildResultMessage(type, stats);
+    const titles = {
+      backup: { success: 'Backup Complete', error: 'Backup Failed' },
+      sync: { success: 'Sync Complete', error: 'Sync Failed' },
+      clean: { success: 'Cleanup Complete', error: 'Cleanup Failed' },
+      delete: { success: 'Delete Complete', error: 'Delete Failed' },
+    };
+    const isError = stats.error;
+    const title = titles[type]?.[isError ? 'error' : 'success'] || (isError ? 'Error' : 'Complete');
+
+    let message = '';
+    if (isError) {
+      message = stats.error;
+    } else {
+      const lines = [];
+      if (type === 'backup') {
+        if (typeof stats.uploaded === 'number') lines.push(`✓ Uploaded: ${stats.uploaded}`);
+        if (typeof stats.skipped === 'number') lines.push(`○ Skipped: ${stats.skipped}`);
+        if (typeof stats.failed === 'number' && stats.failed > 0) lines.push(`✗ Failed: ${stats.failed}`);
+      } else if (type === 'sync') {
+        if (typeof stats.downloaded === 'number') lines.push(`✓ Downloaded: ${stats.downloaded}`);
+        if (typeof stats.skipped === 'number') lines.push(`○ Skipped: ${stats.skipped}`);
+        if (typeof stats.failed === 'number' && stats.failed > 0) lines.push(`✗ Failed: ${stats.failed}`);
+      } else if (type === 'clean') {
+        if (typeof stats.deleted === 'number') lines.push(`✓ Deleted: ${stats.deleted}`);
+        if (typeof stats.kept === 'number') lines.push(`○ Kept: ${stats.kept}`);
+      } else if (type === 'delete') {
+        if (typeof stats.deleted === 'number') lines.push(`✓ Deleted: ${stats.deleted}`);
+      }
+      message = lines.join('\n');
+    }
+
     showDarkAlert(title, message);
   };
 
@@ -412,25 +903,11 @@ export default function App() {
 
   const refreshSubscriptionStatus = async () => {
     try {
-      const status = await getSubscriptionStatus(token, deviceUuid);
+      const status = await getSubscriptionStatus();
       setSubscriptionStatus(status);
       return status;
     } catch (e) {
-      // Silently ignore subscription status errors (403, network, etc.)
-      return null;
-    }
-  };
-
-  const refreshStealthUsage = async () => {
-    try {
-      const config = await getAuthHeaders();
-      const base = getServerUrl();
-      const res = await axios.get(`${base}/api/cloud/usage`, { ...config, timeout: 10000 });
-      const data = res && res.data ? res.data : null;
-      setStealthUsage(data);
-      return data;
-    } catch (e) {
-      console.log('Failed to refresh usage:', e?.message);
+      console.error('Failed to get subscription status:', e);
       return null;
     }
   };
@@ -440,26 +917,11 @@ export default function App() {
       setPurchaseLoading(true);
       setStatus('Processing purchase...');
 
-      // Get auth token for server authentication
-      let authToken = token;
-      if (!authToken) {
-        try {
-          authToken = await SecureStore.getItemAsync('auth_token');
-        } catch (e) {}
-      }
-      if (!authToken) {
-        showDarkAlert('Error', 'Not logged in. Please logout and login again.');
-        setPurchaseLoading(false);
-        setStatus('Idle');
-        return;
-      }
-
-      const result = await purchaseSubscription(tierGb, authToken);
+      const result = await purchaseSubscription(tierGb);
 
       if (result.success) {
         showDarkAlert('Success!', `Your ${tierGb === 1000 ? '1 TB' : tierGb + ' GB'} plan is now active.`);
         await refreshSubscriptionStatus();
-        await refreshStealthUsage();
         setSelectedStealthPlanGb(tierGb);
       } else if (result.userCancelled) {
         // User cancelled - no message needed
@@ -479,26 +941,11 @@ export default function App() {
       setPurchaseLoading(true);
       setStatus('Restoring purchases...');
 
-      // Get auth token and device UUID for server check
-      let authToken = token;
-      if (!authToken) {
-        try {
-          authToken = await SecureStore.getItemAsync('auth_token');
-        } catch (e) {}
-      }
-      let userUuid = deviceUuid;
-      if (!userUuid) {
-        try {
-          userUuid = await SecureStore.getItemAsync('device_uuid');
-        } catch (e) {}
-      }
-
-      const result = await restorePurchases(authToken, userUuid);
+      const result = await restorePurchases();
 
       if (result.success && result.hasActiveSubscription) {
         showDarkAlert('Restored!', 'Your subscription has been restored.');
         await refreshSubscriptionStatus();
-        await refreshStealthUsage();
       } else if (result.success) {
         showDarkAlert('No Subscription Found', 'No active subscription was found to restore.');
       } else {
@@ -1241,6 +1688,7 @@ export default function App() {
     if (Platform.OS === 'ios') {
       const ap = await getMediaLibraryAccessPrivileges(permission);
       if (ap && ap !== 'all') {
+          // Proceed with limited access
         setStatus('Limited Photos access (Selected Photos). Backing up accessible items...');
       }
     }
@@ -1258,29 +1706,626 @@ export default function App() {
     setLoadingSafe(true);
     setBackgroundWarnEligibleSafe(!autoUploadEnabledRef.current);
     setWasBackgroundedDuringWorkSafe(false);
+    setProgress(0);
+    setStatus('Preparing backup...');
 
     try {
-      const result = await stealthCloudBackupSelectedCore({
-        assets: list,
-        getAuthHeaders,
-        getServerUrl,
-        ensureStealthCloudUploadAllowed,
-        ensureAutoUploadPolicyAllowsWorkIfBackgrounded,
-        fastMode: fastModeEnabledRef.current,
-        onStatus: setStatus,
-        onProgress: setProgress,
-      });
+      const config = await getAuthHeaders();
+      const SERVER_URL = getServerUrl();
 
-      if (result.notAllowed) {
+      const allowed = await ensureStealthCloudUploadAllowed();
+      if (!allowed) {
+        setLoadingSafe(false);
+        setBackgroundWarnEligibleSafe(false);
         return;
       }
 
-      if (result.noAssets) {
-        showDarkAlert('Select items', 'Choose photos & videos to back up.');
-        return;
+      const masterKey = await getStealthCloudMasterKey();
+
+      let existingManifests = [];
+      try {
+        existingManifests = await fetchAllManifestsPaged(SERVER_URL, config);
+      } catch (e) {
+        existingManifests = [];
+      }
+      const already = new Set(existingManifests.map(m => m.manifestId));
+
+      // Build deduplication sets by decrypting manifests (for cross-device duplicate detection)
+      // Images: use perceptualHash only (ignore fileHash)
+      // Videos: use fileHash only (no perceptualHash)
+      const alreadyFilenames = new Set();
+      const alreadyBaseFilenames = new Set();
+      const alreadyBaseNameSizes = new Map(); // baseFilename -> Set of sizes
+      const alreadyBaseNameDates = new Map(); // baseFilename -> Set of date strings (YYYY-MM-DD)
+      const alreadyBaseNameTimestamps = new Map(); // baseFilename -> Set of full timestamps (YYYY-MM-DDTHH:MM:SS) for HEIC
+      const alreadyFileHashes = new Set();
+      const alreadyPerceptualHashes = new Set();
+      if (existingManifests.length > 0) {
+        // iOS: Show analyzing message during dedup preparation (iOS uses hash-based dedup)
+        if (Platform.OS === 'ios') {
+          setStatus('Analyzing existing files...');
+        }
+        let manifestsProcessed = 0;
+        for (const m of existingManifests) {
+          manifestsProcessed++;
+          // iOS: Update progress during manifest analysis (0-50% of prep phase)
+          if (Platform.OS === 'ios' && (manifestsProcessed === 1 || manifestsProcessed % 10 === 0)) {
+            setProgress(0.5 * (manifestsProcessed / existingManifests.length));
+          }
+          try {
+            const manRes = await axios.get(`${SERVER_URL}/api/cloud/manifests/${m.manifestId}`, { headers: config.headers, timeout: 15000 });
+            const payload = manRes.data;
+            const parsed = typeof payload === 'string' ? JSON.parse(payload) : payload;
+            const enc = JSON.parse(parsed.encryptedManifest);
+            const manifestNonce = naclUtil.decodeBase64(enc.manifestNonce);
+            const manifestBox = naclUtil.decodeBase64(enc.manifestBox);
+            const manifestPlain = nacl.secretbox.open(manifestBox, manifestNonce, masterKey);
+            if (manifestPlain) {
+              const manifest = JSON.parse(naclUtil.encodeUTF8(manifestPlain));
+              if (manifest.filename) {
+                alreadyFilenames.add(normalizeFilenameForCompare(manifest.filename));
+                // Add base filename for variant matching
+                const baseName = extractBaseFilename(manifest.filename);
+                if (baseName) {
+                  alreadyBaseFilenames.add(baseName);
+                  // Build size map for fallback matching
+                  if (manifest.originalSize) {
+                    if (!alreadyBaseNameSizes.has(baseName)) alreadyBaseNameSizes.set(baseName, new Set());
+                    alreadyBaseNameSizes.get(baseName).add(manifest.originalSize);
+                  }
+                  // Build date map for fallback matching
+                  if (manifest.creationTime) {
+                    const dateStr = normalizeDateForCompare(manifest.creationTime);
+                    if (dateStr) {
+                      if (!alreadyBaseNameDates.has(baseName)) alreadyBaseNameDates.set(baseName, new Set());
+                      alreadyBaseNameDates.get(baseName).add(dateStr);
+                    }
+                    // Build full timestamp map for HEIC deduplication (second-level precision)
+                    const fullTimestamp = normalizeFullTimestamp(manifest.creationTime);
+                    if (fullTimestamp) {
+                      if (!alreadyBaseNameTimestamps.has(baseName)) alreadyBaseNameTimestamps.set(baseName, new Set());
+                      alreadyBaseNameTimestamps.get(baseName).add(fullTimestamp);
+                    }
+                  }
+                }
+              }
+              // If manifest has perceptualHash, it's an image - use perceptual hash
+              if (manifest.perceptualHash) {
+                alreadyPerceptualHashes.add(manifest.perceptualHash);
+              }
+              // Always add fileHash if present (for both images and videos)
+              // Images need fileHash for byte-identical dedup (AirDrop, copies)
+              if (manifest.fileHash) {
+                alreadyFileHashes.add(manifest.fileHash);
+              }
+            }
+          } catch (e) {
+            // Skip manifests we can't decrypt
+          }
+        }
+        console.log(`StealthCloud: found ${alreadyFilenames.size} filenames, ${alreadyBaseFilenames.size} base names, ${alreadyBaseNameSizes.size} name+size, ${alreadyBaseNameDates.size} name+date, ${alreadyBaseNameTimestamps.size} name+timestamp, ${alreadyFileHashes.size} file hashes, ${alreadyPerceptualHashes.size} perceptual hashes for deduplication`);
+        // iOS: Reset progress for backup phase
+        if (Platform.OS === 'ios') {
+          setProgress(0);
+        }
       }
 
-      const { uploaded, skipped, failed } = result;
+      let uploaded = 0;
+      let skipped = 0;
+      let failed = 0;
+
+      const totalCount = list.length;
+      let processedIndex = 0;
+
+      // Optimization: Skip deduplication checks if no server files exist
+      const hasServerFiles = existingManifests.length > 0;
+      const shouldSkipDeduplication = !hasServerFiles;
+
+      if (shouldSkipDeduplication) {
+        console.log('StealthCloud: No server files found - skipping deduplication checks for faster upload');
+      }
+
+      for (let j = 0; j < list.length; j++) {
+        const asset = list[j];
+        processedIndex += 1;
+
+        if (!(await ensureAutoUploadPolicyAllowsWorkIfBackgrounded())) {
+          break;
+        }
+
+        try {
+          // Show unified "Backing up X of Y" status
+          // Progress starts at beginning of file, ends at processedIndex/totalCount after upload
+          setStatus(`Backing up ${processedIndex} of ${totalCount}`);
+          setProgress((processedIndex - 1) / totalCount);
+
+          let assetInfo;
+          try {
+            // Retry getAssetInfoAsync up to 3 times (iCloud/network issues)
+            assetInfo = await withRetries(async () => {
+              return Platform.OS === 'android'
+                ? await MediaLibrary.getAssetInfoAsync(asset.id, { shouldDownloadFromNetwork: true })
+                : await MediaLibrary.getAssetInfoAsync(asset.id);
+            }, { retries: 5, baseDelayMs: 1000, maxDelayMs: 15000, shouldRetry: () => true });
+          } catch (e) {
+            console.warn('getAssetInfoAsync failed after retries:', asset.id, e?.message);
+            failed += 1;
+            continue;
+          }
+
+          let filePath, tmpCopied, tmpUri;
+          try {
+            const resolved = await resolveReadableFilePath({ assetId: asset.id, assetInfo });
+            filePath = resolved.filePath;
+            tmpCopied = resolved.tmpCopied;
+            tmpUri = resolved.tmpUri;
+          } catch (e) {
+            console.warn('resolveReadableFilePath failed:', asset.id, e?.message);
+            failed += 1;
+            continue;
+          }
+
+          // Get file size first for stable manifestId
+          // CRITICAL: Use original asset size from MediaLibrary, not temporary copy size
+          // Temporary copies may have different sizes (metadata stripped, compression, etc.)
+          // which would create different manifestIds and cause duplicate uploads
+          let originalSize = null;
+          try {
+            originalSize = assetInfo && typeof assetInfo.fileSize === 'number' ? Number(assetInfo.fileSize) : null;
+          } catch (e) {
+            originalSize = null;
+          }
+          
+          // Fallback to file system size if assetInfo.fileSize not available
+          if (!originalSize) {
+            if (Platform.OS === 'ios') {
+              const fileUri = filePath.startsWith('/') ? `file://${filePath}` : (filePath || tmpUri);
+              try {
+                const info = await FileSystem.getInfoAsync(fileUri);
+                originalSize = info && typeof info.size === 'number' ? Number(info.size) : null;
+              } catch (e) {
+                originalSize = null;
+              }
+            } else {
+              let ReactNativeBlobUtil = null;
+              try {
+                const mod = require('react-native-blob-util');
+                ReactNativeBlobUtil = mod && (mod.default || mod);
+              } catch (e) {}
+              if (ReactNativeBlobUtil?.fs?.stat) {
+                try {
+                  const stat = await ReactNativeBlobUtil.fs.stat(filePath);
+                  originalSize = stat && stat.size ? Number(stat.size) : null;
+                } catch (e) {}
+              }
+            }
+          }
+
+          // Compute stable cross-device manifestId from filename + size
+          const assetFilename = assetInfo.filename || asset.filename || null;
+          const fileIdentity = computeFileIdentity(assetFilename, originalSize);
+          const manifestId = fileIdentity ? sha256(`file:${fileIdentity}`) : sha256(`asset:${asset.id}`);
+
+          // Only perform deduplication checks if server has files
+          if (!shouldSkipDeduplication) {
+            // Skip if already uploaded (by stable manifestId)
+            if (already.has(manifestId)) {
+              if (tmpCopied && tmpUri) await FileSystem.deleteAsync(tmpUri, { idempotent: true });
+              skipped += 1;
+              setProgress(processedIndex / totalCount);
+              continue;
+            }
+
+            // Skip if filename already exists on server (fallback for old manifests without fileHash)
+            const normalizedFilename = assetFilename ? normalizeFilenameForCompare(assetFilename) : null;
+            if (normalizedFilename && alreadyFilenames.has(normalizedFilename)) {
+              console.log(`Skipping ${assetFilename} - filename already on server`);
+              if (tmpCopied && tmpUri) await FileSystem.deleteAsync(tmpUri, { idempotent: true });
+              skipped += 1;
+              setProgress(processedIndex / totalCount);
+              continue;
+            }
+            
+            // Cross-platform variant matching using base filename
+            const baseFilename = assetFilename ? extractBaseFilename(assetFilename) : null;
+            
+            // Debug: log why HEIC files aren't being caught by fallbacks
+            if (assetFilename && assetFilename.toLowerCase().endsWith('.heic')) {
+              const hasBaseNameSize = baseFilename && alreadyBaseNameSizes.has(baseFilename);
+              const hasBaseNameDate = baseFilename && alreadyBaseNameDates.has(baseFilename);
+              const hasBaseNameTimestamp = baseFilename && alreadyBaseNameTimestamps.has(baseFilename);
+              const assetTimestamp = asset.creationTime ? normalizeFullTimestamp(asset.creationTime) : null;
+              console.log(`[HEIC Debug] ${assetFilename}: base=${baseFilename}, size=${originalSize}, timestamp=${assetTimestamp}, hasBaseNameSize=${hasBaseNameSize}, hasBaseNameDate=${hasBaseNameDate}, hasBaseNameTimestamp=${hasBaseNameTimestamp}`);
+            }
+
+            // HEIC PRIORITY: Full timestamp match (most reliable for cross-platform HEIC dedup)
+            // HEIC files from iPhone and desktop have identical EXIF timestamps even if bytes differ
+            const assetTimestamp = asset.creationTime ? normalizeFullTimestamp(asset.creationTime) : null;
+            if (baseFilename && assetTimestamp && alreadyBaseNameTimestamps.has(baseFilename)) {
+              const existingTimestamps = alreadyBaseNameTimestamps.get(baseFilename);
+              if (existingTimestamps.has(assetTimestamp)) {
+                console.log(`Skipping ${assetFilename} - baseFilename+timestamp match (${baseFilename}, ${assetTimestamp})`);
+                if (tmpCopied && tmpUri) await FileSystem.deleteAsync(tmpUri, { idempotent: true });
+                skipped += 1;
+                setProgress(processedIndex / totalCount);
+                continue;
+              }
+            }
+            
+            // Fallback 1: base filename + size match (within 20% tolerance for re-compression)
+            let skipByBaseNameSize = false;
+            if (baseFilename && alreadyBaseNameSizes.has(baseFilename)) {
+              const existingSizes = alreadyBaseNameSizes.get(baseFilename);
+              for (const existingSize of existingSizes) {
+                const sizeDiff = Math.abs(originalSize - existingSize) / Math.max(originalSize, existingSize);
+                if (sizeDiff < 0.20) {
+                  console.log(`Skipping ${assetFilename} - baseFilename+size match (${baseFilename}, size diff ${(sizeDiff * 100).toFixed(1)}%)`);
+                  skipByBaseNameSize = true;
+                  break;
+                }
+              }
+            }
+            if (skipByBaseNameSize) {
+              if (tmpCopied && tmpUri) await FileSystem.deleteAsync(tmpUri, { idempotent: true });
+              skipped += 1;
+              setProgress(processedIndex / totalCount);
+              continue;
+            }
+
+            // Fallback 2: base filename + creation date match (day-level precision)
+            const assetDate = asset.creationTime ? normalizeDateForCompare(asset.creationTime) : null;
+            if (baseFilename && assetDate && alreadyBaseNameDates.has(baseFilename)) {
+              const existingDates = alreadyBaseNameDates.get(baseFilename);
+              if (existingDates.has(assetDate)) {
+                console.log(`Skipping ${assetFilename} - baseFilename+date match (${baseFilename}, ${assetDate})`);
+                if (tmpCopied && tmpUri) await FileSystem.deleteAsync(tmpUri, { idempotent: true });
+                skipped += 1;
+                setProgress(processedIndex / totalCount);
+                continue;
+              }
+            }
+          }
+
+          // Determine if this is an image or video
+          const isImage = asset.mediaType === 'photo' || (assetInfo && assetInfo.mediaType === 'photo');
+
+          // For IMAGES: use perceptual hash (transcoding-resistant)
+          // For VIDEOS: use exact file hash (byte-for-byte comparison)
+          let exactFileHash = null;
+          let perceptualHash = null;
+
+          // Only compute hashes for deduplication if server has files
+          if (!shouldSkipDeduplication) {
+            if (isImage) {
+              // Images: compute perceptual hash for transcoding-resistant deduplication
+              try {
+                perceptualHash = await computePerceptualHash(filePath, asset, assetInfo);
+                if (perceptualHash) {
+                  console.log(`[PerceptualHash] ${assetFilename}: ${perceptualHash} (${perceptualHash.length} chars)`);
+                }
+              } catch (e) {
+                console.warn('computePerceptualHash failed:', asset.id, e?.message);
+                perceptualHash = null;
+              }
+
+              // Skip if perceptual hash already exists on server (catches transcoded duplicates)
+              // Use fuzzy matching with cross-platform threshold
+              if (perceptualHash && findPerceptualHashMatch(perceptualHash, alreadyPerceptualHashes, CROSS_PLATFORM_DHASH_THRESHOLD)) {
+                console.log(`Skipping ${assetFilename} - visually identical image already on server (perceptual match)`);
+                if (tmpCopied && tmpUri) await FileSystem.deleteAsync(tmpUri, { idempotent: true });
+                skipped += 1;
+                setProgress(processedIndex / totalCount);
+                continue;
+              }
+
+              // Also compute exact hash for storage in manifest AND for byte-identical deduplication
+              // This catches AirDropped/copied files that have different perceptual hashes due to decoder differences
+              try {
+                exactFileHash = await computeExactFileHash(filePath);
+              } catch (e) {
+                console.warn('computeExactFileHash failed:', asset.id, e?.message);
+              }
+
+              // Skip if exact file hash matches (catches byte-identical copies like AirDrop)
+              if (exactFileHash && alreadyFileHashes && alreadyFileHashes.has(exactFileHash)) {
+                console.log(`Skipping ${assetFilename} - exact file hash already on server (byte-identical)`);
+                if (tmpCopied && tmpUri) await FileSystem.deleteAsync(tmpUri, { idempotent: true });
+                skipped += 1;
+                setProgress(processedIndex / totalCount);
+                continue;
+              }
+            } else {
+              // Videos: compute exact file hash for byte-for-byte deduplication
+              try {
+                exactFileHash = await computeExactFileHash(filePath);
+                console.log(`[FileHash] ${assetFilename}: ${exactFileHash ? exactFileHash.substring(0, 16) + '...' : 'null'}`);
+              } catch (e) {
+                console.warn('computeExactFileHash failed:', asset.id, e?.message);
+                exactFileHash = null;
+              }
+
+              // Skip if exact file hash already exists on server
+              if (exactFileHash && alreadyFileHashes.has(exactFileHash)) {
+                console.log(`Skipping ${assetFilename} - exact file hash already on server`);
+                if (tmpCopied && tmpUri) await FileSystem.deleteAsync(tmpUri, { idempotent: true });
+                skipped += 1;
+                setProgress(processedIndex / totalCount);
+                continue;
+              }
+            }
+          }
+
+          // Always compute hashes for manifest storage (even if skipping deduplication)
+          if (shouldSkipDeduplication) {
+            if (isImage) {
+              try {
+                perceptualHash = await computePerceptualHash(filePath, asset, assetInfo);
+                if (perceptualHash) {
+                  console.log(`[PerceptualHash] ${assetFilename}: ${perceptualHash} (${perceptualHash.length} chars)`);
+                }
+              } catch (e) {
+                console.warn('computePerceptualHash failed:', asset.id, e?.message);
+              }
+              try {
+                exactFileHash = await computeExactFileHash(filePath);
+              } catch (e) {
+                console.warn('computeExactFileHash failed:', asset.id, e?.message);
+              }
+            } else {
+              try {
+                exactFileHash = await computeExactFileHash(filePath);
+                console.log(`[FileHash] ${assetFilename}: ${exactFileHash ? exactFileHash.substring(0, 16) + '...' : 'null'}`);
+              } catch (e) {
+                console.warn('computeExactFileHash failed:', asset.id, e?.message);
+              }
+            }
+          }
+
+          // Status already set to "Backing up X of Y" above
+
+          const fileKey = new Uint8Array(32);
+          global.crypto.getRandomValues(fileKey);
+          const baseNonce16 = new Uint8Array(16);
+          global.crypto.getRandomValues(baseNonce16);
+
+          const wrapNonce = new Uint8Array(24);
+          global.crypto.getRandomValues(wrapNonce);
+          const wrappedKey = nacl.secretbox(fileKey, wrapNonce, masterKey);
+
+          let chunkIndex = 0;
+          const chunkIds = [];
+          const chunkSizes = [];
+
+          let chunkPlainBytes = null;
+          const chunkUploadsInFlight = new Set();
+          let runChunkUpload = null;
+          let maxChunkUploadsInFlight = 1;
+
+          if (Platform.OS === 'ios') {
+            const fileUri = filePath.startsWith('/') ? `file://${filePath}` : (filePath || tmpUri);
+
+            // Status already set to "Backing up X of Y" above
+
+            maxChunkUploadsInFlight = Math.max(1, chooseStealthCloudMaxParallelChunkUploads({ platform: 'ios', originalSize, fastMode: fastModeEnabledRef.current }));
+            runChunkUpload = createConcurrencyLimiter(maxChunkUploadsInFlight);
+
+            chunkPlainBytes = chooseStealthCloudChunkBytes({ platform: 'ios', originalSize, fastMode: fastModeEnabledRef.current });
+            const effectiveBytes = chunkPlainBytes - (chunkPlainBytes % 3);
+
+            let position = 0;
+            while (true) {
+              let nextB64 = '';
+              try {
+                nextB64 = await FileSystem.readAsStringAsync(fileUri, {
+                  encoding: FileSystem.EncodingType.Base64,
+                  position,
+                  length: effectiveBytes
+                });
+              } catch (e) {
+                const allB64 = await FileSystem.readAsStringAsync(fileUri, { encoding: FileSystem.EncodingType.Base64 });
+                const b64Offset = Math.floor((position / 3) * 4);
+                const chunkB64Len = (effectiveBytes / 3) * 4;
+                nextB64 = allB64.slice(b64Offset, b64Offset + chunkB64Len);
+              }
+              if (!nextB64) break;
+              const plaintext = naclUtil.decodeBase64(nextB64);
+              if (!plaintext || plaintext.length === 0) break;
+
+              const nonce = makeChunkNonce(baseNonce16, chunkIndex);
+              await throttleEncryption(chunkIndex, fastModeEnabledRef.current);
+              const boxed = nacl.secretbox(plaintext, nonce, fileKey);
+              const chunkId = sha256.create().update(boxed).hex();
+              // Keep status as "Backing up X of Y" - unified message
+              await trackInFlightPromise(
+                chunkUploadsInFlight,
+                runChunkUpload(() => stealthCloudUploadEncryptedChunk({ SERVER_URL, config, chunkId, encryptedBytes: boxed })),
+                maxChunkUploadsInFlight
+              );
+              chunkIds.push(chunkId);
+              chunkSizes.push(plaintext.length);
+              chunkIndex += 1;
+              position += plaintext.length;
+              // Update progress: file progress + chunk progress within current file
+              if (totalCount) {
+                const fileProgress = (processedIndex - 1) / totalCount;
+                const chunkProgress = originalSize ? (position / originalSize) / totalCount : 0;
+                setProgress(Math.min(fileProgress + chunkProgress, 1));
+              }
+
+              if (plaintext.length < effectiveBytes) {
+                break;
+              }
+            }
+          } else {
+            let ReactNativeBlobUtil = null;
+            try {
+              const mod = require('react-native-blob-util');
+              ReactNativeBlobUtil = mod && (mod.default || mod);
+            } catch (e) {
+              ReactNativeBlobUtil = null;
+            }
+            if (!ReactNativeBlobUtil || !ReactNativeBlobUtil.fs || typeof ReactNativeBlobUtil.fs.readStream !== 'function') {
+              throw new Error('StealthCloud backup requires a development build (react-native-blob-util).');
+            }
+
+            const stat = await ReactNativeBlobUtil.fs.stat(filePath);
+            originalSize = stat && stat.size ? Number(stat.size) : null;
+
+            // Status already set to "Backing up X of Y" above
+            maxChunkUploadsInFlight = Math.max(1, chooseStealthCloudMaxParallelChunkUploads({ platform: 'android', originalSize, fastMode: fastModeEnabledRef.current }));
+            runChunkUpload = createConcurrencyLimiter(maxChunkUploadsInFlight);
+            chunkPlainBytes = chooseStealthCloudChunkBytes({ platform: 'android', originalSize, fastMode: fastModeEnabledRef.current });
+            const stream = await ReactNativeBlobUtil.fs.readStream(filePath, 'base64', chunkPlainBytes);
+            let bytesProcessedInFile = 0;
+
+            await new Promise((resolve, reject) => {
+              const queue = [];
+              let draining = false;
+              let ended = false;
+
+              stream.open();
+
+              stream.onData((chunkB64) => {
+                queue.push(chunkB64);
+                if (draining) return;
+                draining = true;
+
+                (async () => {
+                  try {
+                    while (queue.length) {
+                      const nextB64 = queue.shift();
+                      const plaintext = naclUtil.decodeBase64(nextB64);
+                      const nonce = makeChunkNonce(baseNonce16, chunkIndex);
+                      await throttleEncryption(chunkIndex, fastModeEnabledRef.current);
+                      const boxed = nacl.secretbox(plaintext, nonce, fileKey);
+                      const chunkId = sha256.create().update(boxed).hex();
+                      // Keep status as "Backing up X of Y" - unified message
+                      await trackInFlightPromise(
+                        chunkUploadsInFlight,
+                        runChunkUpload(() => stealthCloudUploadEncryptedChunk({ SERVER_URL, config, chunkId, encryptedBytes: boxed })),
+                        maxChunkUploadsInFlight
+                      );
+
+                      chunkIds.push(chunkId);
+                      chunkSizes.push(plaintext.length);
+                      chunkIndex += 1;
+                      bytesProcessedInFile += plaintext.length;
+                      // Update progress: file progress + chunk progress within current file
+                      if (totalCount) {
+                        const fileProgress = (processedIndex - 1) / totalCount;
+                        const chunkProgress = originalSize ? (bytesProcessedInFile / originalSize) / totalCount : 0;
+                        setProgress(Math.min(fileProgress + chunkProgress, 1));
+                      }
+
+                      if (chunkIndex % 8 === 0) {
+                        await yieldToUi();
+                      }
+                    }
+                  } catch (e) {
+                    reject(e);
+                    return;
+                  } finally {
+                    draining = false;
+                  }
+
+                  if (ended && queue.length === 0) {
+                    resolve();
+                  }
+                })();
+              });
+
+              stream.onError((e) => reject(e));
+              stream.onEnd(() => {
+                ended = true;
+                if (!draining && queue.length === 0) {
+                  resolve();
+                }
+              });
+            });
+          }
+
+          await drainInFlightPromises(chunkUploadsInFlight);
+
+          if (!chunkIds.length) {
+            throw new Error('StealthCloud backup read 0 bytes (no chunks).');
+          }
+
+          // Extract real EXIF data from file for cross-platform deduplication
+          const exifData = extractExifForDedup(assetInfo, asset);
+
+          const manifest = {
+            v: 1,
+            assetId: asset.id,
+            filename: assetInfo.filename || asset.filename || null,
+            mediaType: asset.mediaType || null,
+            originalSize,
+            creationTime: asset.creationTime || null,
+            // EXIF data for cross-platform HEIC deduplication
+            exifCaptureTime: exifData.captureTime || null,
+            exifMake: exifData.make || null,
+            exifModel: exifData.model || null,
+            baseNonce16: naclUtil.encodeBase64(baseNonce16),
+            wrapNonce: naclUtil.encodeBase64(wrapNonce),
+            wrappedFileKey: naclUtil.encodeBase64(wrappedKey),
+            chunkIds,
+            chunkSizes,
+            fileHash: exactFileHash,
+            perceptualHash: perceptualHash,
+          };
+
+          const manifestPlain = naclUtil.decodeUTF8(JSON.stringify(manifest));
+          const manifestNonce = new Uint8Array(24);
+          global.crypto.getRandomValues(manifestNonce);
+          const manifestBox = nacl.secretbox(manifestPlain, manifestNonce, masterKey);
+          const encryptedManifest = JSON.stringify({
+            manifestNonce: naclUtil.encodeBase64(manifestNonce),
+            manifestBox: naclUtil.encodeBase64(manifestBox)
+          });
+
+          // Retry manifest upload up to 3 times
+          const manifestResponse = await withRetries(async () => {
+            return await axios.post(
+              `${SERVER_URL}/api/cloud/manifests`,
+              { manifestId, encryptedManifest, chunkCount: chunkIds.length },
+              { headers: config.headers, timeout: 30000 }
+            );
+          }, {
+            retries: 10,
+            baseDelayMs: 1000,
+            maxDelayMs: 30000,
+            shouldRetry: shouldRetryChunkUpload
+          });
+
+          // Check if server rejected as duplicate (server-side deduplication)
+          if (manifestResponse?.data?.skipped) {
+            console.log(`Server rejected ${assetFilename} as duplicate (reason: ${manifestResponse.data.reason || 'unknown'})`);
+            skipped += 1;
+            continue;
+          }
+
+          uploaded += 1;
+          already.add(manifestId);
+          if (exactFileHash) alreadyFileHashes.add(exactFileHash);
+          if (perceptualHash) alreadyPerceptualHashes.add(perceptualHash);
+
+          if (tmpCopied && tmpUri) {
+            await FileSystem.deleteAsync(tmpUri, { idempotent: true });
+          }
+
+          // CPU cooldown between assets to reduce phone heating
+          const assetCooldown = getThrottleAssetCooldownMs();
+          if (assetCooldown > 0) await sleep(assetCooldown);
+
+          // Thermal batch limit: long cooling pause every N assets
+          const batchLimit = getThrottleBatchLimit();
+          if (uploaded > 0 && uploaded % batchLimit === 0) {
+            await thermalCooldownPause(Math.floor(uploaded / batchLimit));
+          }
+        } catch (e) {
+          failed += 1;
+          continue;
+        }
+      }
 
       if (uploaded === 0 && skipped === 0 && failed === 0) {
         setProgress(1);
@@ -1324,40 +2369,120 @@ export default function App() {
       return stealthCloudBackupSelected({ assets: list });
     }
 
+    const { status: permStatus } = await MediaLibrary.requestPermissionsAsync();
+    if (permStatus !== 'granted') {
+      showDarkAlert('Permission needed', 'We need access to photos to back them up.');
+      return;
+    }
+
     setLoadingSafe(true);
     setBackgroundWarnEligibleSafe(!autoUploadEnabledRef.current);
     setWasBackgroundedDuringWorkSafe(false);
     setProgress(0);
+    setStatus('Preparing backup...');
 
     try {
-      const result = await localRemoteBackupSelectedCore({
-        assets: list,
-        getAuthHeaders,
-        getServerUrl,
-        resolveReadableFilePath,
-        ensureAutoUploadPolicyAllowsWorkIfBackgrounded,
-        onStatus: setStatus,
-        onProgress: setProgress,
-      });
+      const config = await getAuthHeaders();
+      const SERVER_URL = getServerUrl();
+      const allServerFiles = await fetchAllServerFilesPaged(SERVER_URL, config);
+      const serverFiles = new Set(
+        allServerFiles
+          .map(f => normalizeFilenameForCompare(f && f.filename ? f.filename : null))
+          .filter(Boolean)
+      );
 
-      if (result.permissionDenied) {
-        showDarkAlert('Permission needed', 'We need access to photos to back them up.');
-        return;
+      const albums = await MediaLibrary.getAlbumsAsync();
+      const photoSyncAlbum = findFirstAlbumByTitle(albums, [PHOTO_ALBUM_NAME, LEGACY_PHOTO_ALBUM_NAME]);
+      let excludedIds = new Set();
+      if (photoSyncAlbum) {
+        excludedIds = await buildLocalAssetIdSetPaged({ album: photoSyncAlbum });
       }
 
-      if (result.noSelection) {
-        showDarkAlert('Select items', 'Choose photos & videos to back up.');
-        return;
+      const toUpload = [];
+      for (let i = 0; i < list.length; i++) {
+        const asset = list[i];
+        setStatus(`Analyzing ${i + 1} of ${list.length}`);
+        if (excludedIds.has(asset.id)) continue;
+
+        let actualFilename = normalizeFilenameForCompare(asset && asset.filename ? asset.filename : null);
+        if (Platform.OS === 'ios' || !actualFilename) {
+          try {
+            const info = await MediaLibrary.getAssetInfoAsync(asset.id);
+            actualFilename = normalizeFilenameForCompare(info && info.filename ? info.filename : null) || actualFilename;
+          } catch (e) {
+            actualFilename = actualFilename;
+          }
+        }
+
+        if (!actualFilename) continue;
+        if (serverFiles.has(actualFilename)) continue;
+        toUpload.push(asset);
       }
 
-      if (result.alreadyBackedUp) {
+      if (toUpload.length === 0) {
         setStatus('Up to date');
         showDarkAlert('Up to Date', 'All selected items are already on the server (or were excluded).');
         return;
       }
 
+      // Brief pause before starting uploads
+      await new Promise(resolve => setTimeout(resolve, 500));
+
+      let successCount = 0;
+      let failedCount = 0;
+
+      for (let i = 0; i < toUpload.length; i++) {
+        const asset = toUpload[i];
+        try {
+          if (!(await ensureAutoUploadPolicyAllowsWorkIfBackgrounded())) {
+            break;
+          }
+          setStatus(`Backing up ${i + 1} of ${toUpload.length}`);
+
+          const assetInfo = await MediaLibrary.getAssetInfoAsync(asset.id);
+          const resolved = await resolveReadableFilePath({ assetId: asset.id, assetInfo });
+          const filePath = resolved && resolved.filePath ? resolved.filePath : null;
+          if (!filePath) {
+            failedCount++;
+            continue;
+          }
+
+          const actualFilename = assetInfo.filename || asset.filename;
+          const mime = getMimeFromFilename(actualFilename, asset.mediaType);
+          const fileUri = filePath.startsWith('file://') ? filePath : `file://${filePath}`;
+
+          // iOS: use FOREGROUND for HTTP since background sessions require HTTPS
+          const isHttps = SERVER_URL.startsWith('https://');
+          const sessionType = (Platform.OS === 'ios' && !isHttps)
+            ? FileSystem.FileSystemSessionType.FOREGROUND
+            : FileSystem.FileSystemSessionType.BACKGROUND;
+          const uploadRes = await FileSystem.uploadAsync(`${SERVER_URL}/api/upload/raw`, fileUri, {
+            httpMethod: 'POST',
+            uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT,
+            sessionType,
+            headers: {
+              ...config.headers,
+              'Content-Type': mime,
+              'X-Filename': actualFilename,
+            }
+          });
+
+          // Check HTTP status - uploadAsync doesn't throw on 4xx/5xx errors
+          if (!uploadRes || uploadRes.status < 200 || uploadRes.status >= 300) {
+            console.error(`✗ Upload failed for ${actualFilename}: HTTP ${uploadRes?.status || 'unknown'} - ${uploadRes?.body || 'no response'}`);
+            failedCount++;
+            continue;
+          }
+
+          successCount++;
+        } catch (e) {
+          failedCount++;
+        }
+      }
+
+      const skippedCount = list.length - toUpload.length;
       setStatus('Backup complete');
-      showResultAlert('backup', { uploaded: result.uploaded, skipped: result.skipped, failed: result.failed });
+      showResultAlert('backup', { uploaded: successCount, skipped: skippedCount, failed: failedCount });
     } catch (error) {
       setStatus('Backup error');
       showResultAlert('backup', { error: error && error.message ? error.message : 'Unknown error' });
@@ -1547,64 +2672,128 @@ export default function App() {
 
   const startSimilarShotsReview = async () => {
     setBackgroundWarnEligibleSafe(false); setWasBackgroundedDuringWorkSafe(false); setLoadingSafe(true);
-    
-    const result = await startSimilarShotsReviewCore({
-      resolveReadableFilePath,
-      onStatus: setStatus,
-      onProgress: setProgress,
-    });
+    setStatus('Analyzing photos...');
+    try {
+      // Check permission first
+      const permission = await MediaLibrary.requestPermissionsAsync();
+      if (permission.status !== 'granted') {
+        throw new Error('Photos permission not granted');
+      }
+      if (Platform.OS === 'ios' && permission.accessPrivileges && permission.accessPrivileges !== 'all') {
+        throw new Error('Limited Photos Access. Please allow Full Access.');
+      }
 
-    if (result.error) {
+      // Use duplicateScanner module
+      const DuplicateScanner = require('./duplicateScanner').default;
+      const groups = await DuplicateScanner.scanSimilarPhotos({
+        resolveReadableFilePath,
+        onProgress: (current, total, status) => {
+          setStatus(status || `Analyzing ${current}/${total} photos...`);
+          setProgress(total > 0 ? current / total : 0);
+        }
+      });
+
+      if (!groups || groups.length === 0) {
+        setStatus('No similar photos found');
+        showDarkAlert('Similar Photos', 'No similar photo groups found.');
+        setLoadingSafe(false);
+        return;
+      }
       setLoadingSafe(false);
-      showDarkAlert('Similar Photos', result.error);
-      return;
-    }
-
-    if (result.noGroups) {
-      setStatus('No similar photos found');
-      showDarkAlert('Similar Photos', 'No similar photo groups found.');
+      openSimilarGroup({ groups, index: 0 });
+    } catch (e) {
       setLoadingSafe(false);
-      return;
+      showDarkAlert('Similar Photos', e?.message || 'Could not scan for photos.');
     }
-
-    setLoadingSafe(false);
-    openSimilarGroup({ groups: result.groups, index: 0 });
   };
 
   const openSyncPicker = async () => {
     if (loadingRef.current) return;
     resetSyncPickerState(); setSyncPickerOpen(true); setSyncPickerLoading(true);
     try {
-      // Ensure media library permission before listing local assets
-      const permission = await MediaLibrary.requestPermissionsAsync();
-      if (!permission || permission.status !== 'granted') {
-        showDarkAlert('Sync list failed', 'Photos permission is required to list local media.');
-        setSyncPickerOpen(false);
-        return;
-      }
-
       const config = await getAuthHeaders();
       setSyncPickerAuthHeaders(config.headers || {});
       const SERVER_URL = getServerUrl();
 
+      // Build local filename index to filter out files that already exist on device
       const localIndex = await buildLocalFilenameSetPaged({ mediaType: ['photo', 'video'] });
-      syncPickerLocalFilenamesRef.current = localIndex.set;
+      const localFilenames = localIndex.set;
+      syncPickerLocalFilenamesRef.current = localFilenames;
+      console.log('Sync picker: local files on device:', localFilenames.size);
+
+      const pageLimit = SYNC_PICKER_PAGE_SIZE;
+      let nextOffset = 0;
 
       if (serverType === 'stealthcloud') {
         const masterKey = await getStealthCloudMasterKey();
-        const result = await fetchStealthCloudPickerPage({
-          config, SERVER_URL, masterKey, offset: 0, limit: SYNC_PICKER_PAGE_SIZE
-        });
-        setSyncPickerItems(result.items);
-        setSyncPickerTotal(result.total);
-        setSyncPickerOffset(result.nextOffset);
+        const out = [];
+        let total = 0;
+        let decryptSuccess = 0;
+        let decryptFail = 0;
+
+        // Fetch first page of manifests
+        const listRes = await axios.get(`${SERVER_URL}/api/cloud/manifests`, { ...config, params: { offset: nextOffset, limit: pageLimit } });
+        const manifests = (listRes.data && listRes.data.manifests) || [];
+        total = typeof listRes.data?.total === 'number' ? listRes.data.total : manifests.length;
+        setSyncPickerTotal(total);
+        console.log(`Sync picker: fetched ${manifests.length} manifest IDs from server (total: ${total})`);
+
+        for (const m of manifests) {
+          const mid = m && m.manifestId ? String(m.manifestId) : '';
+          if (!mid) continue;
+          try {
+            const manRes = await axios.get(`${SERVER_URL}/api/cloud/manifests/${mid}`, { headers: config.headers, timeout: 15000 });
+            const payload = manRes.data;
+            const parsed = typeof payload === 'string' ? JSON.parse(payload) : payload;
+            const enc = JSON.parse(parsed.encryptedManifest);
+            const manifestNonce = naclUtil.decodeBase64(enc.manifestNonce);
+            const manifestBox = naclUtil.decodeBase64(enc.manifestBox);
+            const manifestPlain = nacl.secretbox.open(manifestBox, manifestNonce, masterKey);
+            if (!manifestPlain) {
+              decryptFail++;
+              console.log(`Sync picker: decrypt returned null for ${mid} (wrong key?)`);
+              // Still add item with manifestId as filename so user can see it
+              out.push({ manifestId: mid, filename: `[encrypted] ${mid.slice(0, 12)}...`, size: null, mediaType: 'photo', assetId: null, decryptFailed: true });
+              continue;
+            }
+            const manifest = JSON.parse(naclUtil.encodeUTF8(manifestPlain));
+            const originalFilename = manifest.filename || manifest.name || manifest.originalFilename || null;
+            const ext = (originalFilename || '').split('.').pop()?.toLowerCase() || '';
+            const isVideo = ['mp4', 'mov', 'avi', 'mkv', 'm4v', '3gp', 'webm'].includes(ext);
+            const detectedMediaType = manifest.mediaType || (isVideo ? 'video' : 'photo');
+            const item = { manifestId: mid, filename: originalFilename || mid, size: manifest.originalSize || manifest.size || null, mediaType: detectedMediaType, assetId: manifest.assetId || null };
+            out.push(item);
+            decryptSuccess++;
+          } catch (e) {
+            decryptFail++;
+            console.log('Sync picker: manifest fetch/parse failed for', mid, e.message);
+            // Still add item so user sees something
+            out.push({ manifestId: mid, filename: `[error] ${mid.slice(0, 12)}...`, size: null, mediaType: 'photo', assetId: null, decryptFailed: true });
+          }
+        }
+
+        nextOffset = manifests.length;
+        console.log(`Sync picker: loaded ${out.length} items (${decryptSuccess} decrypted, ${decryptFail} failed) offset ${nextOffset}/${total}`);
+        setSyncPickerItems(out);
+        setSyncPickerOffset(nextOffset);
       } else {
-        const result = await fetchLocalRemotePickerPage({
-          config, SERVER_URL, offset: 0, limit: SYNC_PICKER_PAGE_SIZE
-        });
-        setSyncPickerItems(result.items);
-        setSyncPickerTotal(result.total);
-        setSyncPickerOffset(result.nextOffset);
+        const out = [];
+        let total = 0;
+
+        // Fetch first page of files
+        const res = await axios.get(`${SERVER_URL}/api/files`, { ...config, params: { offset: nextOffset, limit: pageLimit } });
+        const serverFiles = res?.data?.files || [];
+        total = typeof res?.data?.total === 'number' ? res.data.total : serverFiles.length;
+        setSyncPickerTotal(total);
+
+        for (const f of serverFiles) {
+          out.push(f);
+        }
+
+        nextOffset = serverFiles.length;
+        console.log(`Sync picker: loaded ${out.length} items (offset ${nextOffset}/${total})`);
+        setSyncPickerItems(out);
+        setSyncPickerOffset(nextOffset);
       }
     } catch (e) {
       setSyncPickerItems([]);
@@ -1622,26 +2811,67 @@ export default function App() {
       try {
         const config = await getAuthHeaders();
         const SERVER_URL = getServerUrl();
+        const pageLimit = SYNC_PICKER_PAGE_SIZE;
+        const nextOffset = syncPickerOffset;
+        const out = [];
 
         if (serverType === 'stealthcloud') {
+          const listRes = await axios.get(`${SERVER_URL}/api/cloud/manifests`, { ...config, params: { offset: nextOffset, limit: pageLimit } });
+          const manifests = (listRes.data && listRes.data.manifests) || [];
+          const total = typeof listRes.data?.total === 'number' ? listRes.data.total : syncPickerTotal;
+          if (total !== syncPickerTotal) setSyncPickerTotal(total);
           const masterKey = await getStealthCloudMasterKey();
-          const result = await fetchStealthCloudPickerPage({
-            config, SERVER_URL, masterKey, offset: syncPickerOffset, limit: SYNC_PICKER_PAGE_SIZE
-          });
-          if (result.total !== syncPickerTotal) setSyncPickerTotal(result.total);
-          setSyncPickerOffset(result.nextOffset);
-          if (result.items.length > 0) {
-            setSyncPickerItems(prev => [...prev, ...result.items]);
+          let decryptSuccess = 0;
+          let decryptFail = 0;
+
+          for (const m of manifests) {
+            const mid = m && m.manifestId ? String(m.manifestId) : '';
+            if (!mid) continue;
+            try {
+              const manRes = await axios.get(`${SERVER_URL}/api/cloud/manifests/${mid}`, { headers: config.headers, timeout: 15000 });
+              const payload = manRes.data;
+              const parsed = typeof payload === 'string' ? JSON.parse(payload) : payload;
+              const enc = JSON.parse(parsed.encryptedManifest);
+              const manifestNonce = naclUtil.decodeBase64(enc.manifestNonce);
+              const manifestBox = naclUtil.decodeBase64(enc.manifestBox);
+              const manifestPlain = nacl.secretbox.open(manifestBox, manifestNonce, masterKey);
+              if (!manifestPlain) {
+                decryptFail++;
+                out.push({ manifestId: mid, filename: `[encrypted] ${mid.slice(0, 12)}...`, size: null, mediaType: 'photo', assetId: null, decryptFailed: true });
+                continue;
+              }
+              const manifest = JSON.parse(naclUtil.encodeUTF8(manifestPlain));
+              const originalFilename = manifest.filename || manifest.name || manifest.originalFilename || null;
+              const ext = (originalFilename || '').split('.').pop()?.toLowerCase() || '';
+              const isVideo = ['mp4', 'mov', 'avi', 'mkv', 'm4v', '3gp', 'webm'].includes(ext);
+              const detectedMediaType = manifest.mediaType || (isVideo ? 'video' : 'photo');
+              const item = { manifestId: mid, filename: originalFilename || mid, size: manifest.originalSize || manifest.size || null, mediaType: detectedMediaType, assetId: manifest.assetId || null };
+              out.push(item);
+              decryptSuccess++;
+            } catch (e) {
+              decryptFail++;
+              out.push({ manifestId: mid, filename: `[error] ${mid.slice(0, 12)}...`, size: null, mediaType: 'photo', assetId: null, decryptFailed: true });
+            }
           }
+
+          setSyncPickerOffset(nextOffset + manifests.length);
+          console.log(`Sync picker: loaded ${out.length} more items (${decryptSuccess} ok, ${decryptFail} failed) offset ${nextOffset + manifests.length}/${total}`);
         } else {
-          const result = await fetchLocalRemotePickerPage({
-            config, SERVER_URL, offset: syncPickerOffset, limit: SYNC_PICKER_PAGE_SIZE
-          });
-          if (result.total !== syncPickerTotal) setSyncPickerTotal(result.total);
-          setSyncPickerOffset(result.nextOffset);
-          if (result.items.length > 0) {
-            setSyncPickerItems(prev => [...prev, ...result.items]);
+          const res = await axios.get(`${SERVER_URL}/api/files`, { ...config, params: { offset: nextOffset, limit: pageLimit } });
+          const serverFiles = res?.data?.files || [];
+          const total = typeof res?.data?.total === 'number' ? res.data.total : syncPickerTotal;
+          if (total !== syncPickerTotal) setSyncPickerTotal(total);
+
+          for (const f of serverFiles) {
+            out.push(f);
           }
+
+          setSyncPickerOffset(nextOffset + serverFiles.length);
+          console.log(`Sync picker: loaded ${out.length} more items (offset ${nextOffset + serverFiles.length}/${total})`);
+        }
+
+        if (out.length > 0) {
+          setSyncPickerItems(prev => [...prev, ...out]);
         }
       } catch (e) {
         console.log('Sync picker: load more failed', e.message);
@@ -1951,7 +3181,44 @@ export default function App() {
    * @param {number} tierGb - Tier size in GB (100, 200, 400, 1000)
    * @returns {{canCreate: boolean, message: string|null}} Tier status
    */
-  const getStealthCloudTierStatus = (tierGb) => checkTierAvailability(tierGb, stealthCapacity);
+  const getStealthCloudTierStatus = (tierGb) => {
+    const tierBytes = Number(tierGb) * 1_000_000_000;
+    const c = stealthCapacity && typeof stealthCapacity === 'object' ? stealthCapacity : null;
+    if (!c) return { canCreate: true, message: null };
+
+    const tiers = c.tiers && typeof c.tiers === 'object' ? c.tiers : null;
+    if (tiers) {
+      const direct = tiers[String(tierGb)] || tiers[tierGb];
+      if (direct && typeof direct === 'object') {
+        if (typeof direct.canCreate === 'boolean') {
+          return { canCreate: direct.canCreate, message: direct.message || c.message || null };
+        }
+        if (typeof direct.available === 'boolean') {
+          return { canCreate: direct.available, message: direct.message || c.message || null };
+        }
+      }
+    }
+
+    const totalBytes = typeof c.totalBytes === 'number' ? c.totalBytes : (c.totalBytes ? Number(c.totalBytes) : null);
+    const freeBytes = typeof c.freeBytes === 'number' ? c.freeBytes : (c.freeBytes ? Number(c.freeBytes) : null);
+    const allocatedBytes = typeof c.allocatedBytes === 'number' ? c.allocatedBytes : (c.allocatedBytes ? Number(c.allocatedBytes) : 0);
+    const usedBytes = typeof c.usedBytes === 'number' ? c.usedBytes : (c.usedBytes ? Number(c.usedBytes) : 0);
+
+    let availableBytes = null;
+    if (typeof c.availableBytes === 'number') availableBytes = c.availableBytes;
+    else if (c.availableBytes) availableBytes = Number(c.availableBytes);
+    else if (freeBytes !== null) availableBytes = freeBytes;
+    else if (totalBytes !== null) availableBytes = totalBytes - usedBytes - allocatedBytes;
+
+    if (availableBytes === null || Number.isNaN(availableBytes)) {
+      return { canCreate: true, message: c.message || null };
+    }
+
+    return {
+      canCreate: availableBytes >= tierBytes,
+      message: c.message || null,
+    };
+  };
 
   /**
    * Yields to the UI thread to prevent blocking during long operations.
@@ -2090,8 +3357,77 @@ export default function App() {
    * Backs up all photos to StealthCloud with end-to-end encryption.
    * This is the "Backup All" flow for StealthCloud.
    * @platform Both
+   *
+   * Process:
+   * 1. Request photo permissions
+   * 2. Check subscription status
+   * 3. Fetch existing manifests to skip already-uploaded files
+   * 4. Iterate through all photos, encrypt and upload each
    */
   const stealthCloudBackup = async () => {
+    setStatus('Requesting Photos permission...');
+    const permission = await MediaLibrary.requestPermissionsAsync();
+    if (!permission || permission.status !== 'granted') {
+      showDarkAlert('Permission needed', 'We need access to photos to back them up.');
+      return;
+    }
+
+    // iOS: after the permission sheet, the app can remain in an 'inactive' transition state.
+    // Photos queries can return empty until the app is fully active again.
+    if (Platform.OS === 'ios' && appStateRef.current !== 'active') {
+      const SHOW_DELAY_MS = 250;
+      const MIN_VISIBLE_MS = 900;
+      let shownAtMs = null;
+
+      await new Promise((resolve) => {
+        let done = false;
+        let sub = null;
+
+        const showTimer = setTimeout(() => {
+          if (done) return;
+          shownAtMs = Date.now();
+          setStatus('Finalizing Photos permission...');
+        }, SHOW_DELAY_MS);
+
+        const timeout = setTimeout(() => {
+          if (done) return;
+          done = true;
+          clearTimeout(showTimer);
+          try { sub && sub.remove && sub.remove(); } catch (e) {}
+          resolve();
+        }, 10000);
+
+        sub = AppState.addEventListener('change', (st) => {
+          if (done) return;
+          if (String(st) === 'active') {
+            done = true;
+            clearTimeout(timeout);
+            clearTimeout(showTimer);
+            try { sub && sub.remove && sub.remove(); } catch (e) {}
+            resolve();
+          }
+        });
+      });
+
+      if (shownAtMs !== null) {
+        const elapsed = Date.now() - shownAtMs;
+        if (elapsed < MIN_VISIBLE_MS) {
+          await new Promise((r) => setTimeout(r, MIN_VISIBLE_MS - elapsed));
+        }
+      }
+
+      await yieldToUi();
+    }
+
+    if (Platform.OS === 'ios') {
+      const ap = await getMediaLibraryAccessPrivileges(permission);
+      // If user chose "Selected Photos" (limited) and selected none, iOS will return 0 assets.
+      if (ap && ap !== 'all') {
+        // Proceed; we can still back up the subset iOS allows.
+        setStatus('Limited Photos access (Selected Photos). Backing up accessible items...');
+      }
+    }
+
     if (!(await ensureAutoUploadPolicyAllowsWork({ userInitiated: true }))) {
       return;
     }
@@ -2099,38 +3435,643 @@ export default function App() {
     setLoadingSafe(true);
     setBackgroundWarnEligibleSafe(!autoUploadEnabledRef.current);
     setWasBackgroundedDuringWorkSafe(false);
+    setProgress(0);
+    setStatus('Preparing backup...');
 
     try {
-      const result = await stealthCloudBackupCore({
-        getAuthHeaders,
-        getServerUrl,
-        ensureStealthCloudUploadAllowed,
-        ensureAutoUploadPolicyAllowsWorkIfBackgrounded,
-        appStateRef,
-        fastMode: fastModeEnabledRef.current,
-        onStatus: setStatus,
-        onProgress: setProgress,
-      });
+      const config = await getAuthHeaders();
+      const SERVER_URL = getServerUrl();
 
-      if (result.permissionDenied) {
-        showDarkAlert('Permission needed', 'We need access to photos to back them up.');
+      const allowed = await ensureStealthCloudUploadAllowed();
+      if (!allowed) {
+        setLoadingSafe(false);
+        setBackgroundWarnEligibleSafe(false);
         return;
       }
 
-      if (result.notAllowed) {
-        return;
+      const masterKey = await getStealthCloudMasterKey();
+
+      const PAGE_SIZE = 250;
+      let after = null;
+      let totalCount = null;
+      let processedIndex = 0;
+
+      // list manifests so we can skip already-backed up items (by asset id OR filename)
+      let existingManifests = [];
+      try {
+        existingManifests = await fetchAllManifestsPaged(SERVER_URL, config);
+      } catch (e) {
+        existingManifests = [];
+      }
+      const already = new Set(existingManifests.map(m => m.manifestId));
+
+      // Build deduplication sets by decrypting manifests (for cross-device duplicate detection)
+      // Images: use perceptualHash only (ignore fileHash)
+      // Videos: use fileHash only (no perceptualHash)
+      const alreadyFilenames = new Set();
+      const alreadyBaseFilenames = new Set();
+      const alreadyBaseNameSizes = new Map(); // baseFilename -> Set of sizes
+      const alreadyBaseNameDates = new Map(); // baseFilename -> Set of date strings (YYYY-MM-DD)
+      const alreadyBaseNameTimestamps = new Map(); // baseFilename -> Set of full timestamps (YYYY-MM-DDTHH:MM:SS) for HEIC
+      const alreadyFileHashes = new Set();
+      const alreadyPerceptualHashes = new Set();
+      // EXIF-based deduplication sets for cross-platform HEIC matching
+      const alreadyExifFull = new Set(); // captureTime|make|model (highest confidence)
+      const alreadyExifTimeModel = new Set(); // captureTime|model
+      const alreadyExifTimeMake = new Set(); // captureTime|make
+      if (existingManifests.length > 0) {
+        for (const m of existingManifests) {
+          try {
+            const manRes = await axios.get(`${SERVER_URL}/api/cloud/manifests/${m.manifestId}`, { headers: config.headers, timeout: 15000 });
+            const payload = manRes.data;
+            const parsed = typeof payload === 'string' ? JSON.parse(payload) : payload;
+            const enc = JSON.parse(parsed.encryptedManifest);
+            const manifestNonce = naclUtil.decodeBase64(enc.manifestNonce);
+            const manifestBox = naclUtil.decodeBase64(enc.manifestBox);
+            const manifestPlain = nacl.secretbox.open(manifestBox, manifestNonce, masterKey);
+            if (manifestPlain) {
+              const manifest = JSON.parse(naclUtil.encodeUTF8(manifestPlain));
+              if (manifest.filename) {
+                alreadyFilenames.add(normalizeFilenameForCompare(manifest.filename));
+                // Add base filename for variant matching
+                const baseName = extractBaseFilename(manifest.filename);
+                if (baseName) {
+                  alreadyBaseFilenames.add(baseName);
+                  // Build size map for fallback matching
+                  if (manifest.originalSize) {
+                    if (!alreadyBaseNameSizes.has(baseName)) alreadyBaseNameSizes.set(baseName, new Set());
+                    alreadyBaseNameSizes.get(baseName).add(manifest.originalSize);
+                  }
+                  // Build date map for fallback matching
+                  if (manifest.creationTime) {
+                    const dateStr = normalizeDateForCompare(manifest.creationTime);
+                    if (dateStr) {
+                      if (!alreadyBaseNameDates.has(baseName)) alreadyBaseNameDates.set(baseName, new Set());
+                      alreadyBaseNameDates.get(baseName).add(dateStr);
+                    }
+                    // Build full timestamp map for HEIC deduplication (second-level precision)
+                    const fullTimestamp = normalizeFullTimestamp(manifest.creationTime);
+                    if (fullTimestamp) {
+                      if (!alreadyBaseNameTimestamps.has(baseName)) alreadyBaseNameTimestamps.set(baseName, new Set());
+                      alreadyBaseNameTimestamps.get(baseName).add(fullTimestamp);
+                    }
+                  }
+                }
+              }
+              // If manifest has perceptualHash, it's an image - use perceptual hash
+              if (manifest.perceptualHash) {
+                alreadyPerceptualHashes.add(manifest.perceptualHash);
+              }
+              // Always add fileHash if present (for both images and videos)
+              // Images need fileHash for byte-identical dedup (AirDrop, copies)
+              if (manifest.fileHash) {
+                alreadyFileHashes.add(manifest.fileHash);
+              }
+              // Build EXIF-based deduplication keys from manifest
+              // These are the real EXIF values extracted from the original file during upload
+              if (manifest.exifCaptureTime) {
+                const ct = manifest.exifCaptureTime;
+                const mk = manifest.exifMake;
+                const md = manifest.exifModel;
+                // Generate dedup keys at different confidence levels
+                if (ct && mk && md) alreadyExifFull.add(`${ct}|${mk}|${md}`);
+                if (ct && md) alreadyExifTimeModel.add(`${ct}|${md}`);
+                if (ct && mk) alreadyExifTimeMake.add(`${ct}|${mk}`);
+              }
+            }
+          } catch (e) {
+            // Skip manifests we can't decrypt (different key, corrupted, etc.)
+          }
+        }
+        console.log(`StealthCloud: found ${alreadyFilenames.size} filenames, ${alreadyBaseFilenames.size} base names, ${alreadyBaseNameSizes.size} name+size, ${alreadyBaseNameDates.size} name+date, ${alreadyBaseNameTimestamps.size} name+timestamp, ${alreadyFileHashes.size} file hashes, ${alreadyPerceptualHashes.size} perceptual hashes, ${alreadyExifFull.size} EXIF keys for deduplication`);
       }
 
-      if (result.noFiles) {
-        setProgress(1);
-        setStatus('No files on device');
-        await sleep(1500);
-        setStatus('Idle');
-        setProgress(0);
-        return;
+      let uploaded = 0;
+      let skipped = 0;
+      let failed = 0;
+
+      // Optimization: Skip deduplication checks if no server files exist
+      const hasServerFiles = existingManifests.length > 0;
+      const shouldSkipDeduplication = !hasServerFiles;
+
+      if (shouldSkipDeduplication) {
+        console.log('StealthCloud: No server files found - skipping deduplication checks for faster upload');
       }
 
-      const { uploaded, skipped, failed } = result;
+      const mediaTypeQuery = Platform.OS === 'ios'
+        ? [MediaLibrary.MediaType.photo, MediaLibrary.MediaType.video]
+        : ['photo', 'video'];
+      const sortByQuery = Platform.OS === 'ios'
+        ? [MediaLibrary.SortBy.creationTime]
+        : undefined;
+
+      while (true) {
+        const page = await MediaLibrary.getAssetsAsync({
+          first: PAGE_SIZE,
+          after: after || undefined,
+          mediaType: mediaTypeQuery,
+          sortBy: sortByQuery,
+        });
+
+        if (totalCount === null && page && typeof page.totalCount === 'number') {
+          totalCount = page.totalCount;
+        }
+
+        const assets = page && Array.isArray(page.assets) ? page.assets : [];
+        if (assets.length === 0) {
+          if (processedIndex === 0) {
+            setProgress(1);
+            setStatus('No files on device');
+            await sleep(1500);
+            setStatus('Idle');
+            setLoadingSafe(false);
+            setBackgroundWarnEligibleSafe(false);
+            setProgress(0);
+            return;
+          }
+          break;
+        }
+
+        for (let j = 0; j < assets.length; j++) {
+          const asset = assets[j];
+          processedIndex += 1;
+
+          if (!(await ensureAutoUploadPolicyAllowsWorkIfBackgrounded())) {
+            break;
+          }
+
+        try {
+
+        // Show unified "Backing up X of Y" status
+        setStatus(`Backing up ${processedIndex} of ${totalCount || '?'}`);
+        if (totalCount) setProgress(processedIndex / totalCount);
+
+        let assetInfo;
+        try {
+          // Retry getAssetInfoAsync up to 3 times (iCloud/network issues)
+          assetInfo = await withRetries(async () => {
+            return Platform.OS === 'android'
+              ? await MediaLibrary.getAssetInfoAsync(asset.id, { shouldDownloadFromNetwork: true })
+              : await MediaLibrary.getAssetInfoAsync(asset.id);
+          }, { retries: 5, baseDelayMs: 1000, maxDelayMs: 15000, shouldRetry: () => true });
+        } catch (e) {
+          console.warn('getAssetInfoAsync failed after retries:', asset.id, e?.message);
+          failed++;
+          continue;
+        }
+
+        let filePath, tmpCopied, tmpUri;
+        try {
+          const resolved = await resolveReadableFilePath({ assetId: asset.id, assetInfo });
+          filePath = resolved.filePath;
+          tmpCopied = resolved.tmpCopied;
+          tmpUri = resolved.tmpUri;
+        } catch (e) {
+          console.warn('resolveReadableFilePath failed:', asset.id, e?.message);
+          failed++;
+          continue;
+        }
+
+        // Get file size first for stable manifestId
+        // CRITICAL: Use original asset size from MediaLibrary, not temporary copy size
+        // Temporary copies may have different sizes (metadata stripped, compression, etc.)
+        // which would create different manifestIds and cause duplicate uploads
+        let originalSize = null;
+        try {
+          originalSize = assetInfo && typeof assetInfo.fileSize === 'number' ? Number(assetInfo.fileSize) : null;
+        } catch (e) {
+          originalSize = null;
+        }
+        
+        // Fallback to file system size if assetInfo.fileSize not available
+        if (!originalSize) {
+          if (Platform.OS === 'ios') {
+            const fileUri = filePath.startsWith('/') ? `file://${filePath}` : (filePath || tmpUri);
+            try {
+              const info = await FileSystem.getInfoAsync(fileUri);
+              originalSize = info && typeof info.size === 'number' ? Number(info.size) : null;
+            } catch (e) {
+              originalSize = null;
+            }
+          } else {
+            let ReactNativeBlobUtil = null;
+            try {
+              const mod = require('react-native-blob-util');
+              ReactNativeBlobUtil = mod && (mod.default || mod);
+            } catch (e) {}
+            if (ReactNativeBlobUtil?.fs?.stat) {
+              try {
+                const stat = await ReactNativeBlobUtil.fs.stat(filePath);
+                originalSize = stat && stat.size ? Number(stat.size) : null;
+              } catch (e) {}
+            }
+          }
+        }
+
+        // Compute stable cross-device manifestId from filename + size
+        const assetFilename = assetInfo.filename || asset.filename || null;
+        const fileIdentity = computeFileIdentity(assetFilename, originalSize);
+        const manifestId = fileIdentity ? sha256(`file:${fileIdentity}`) : sha256(`asset:${asset.id}`);
+
+        // Only perform deduplication checks if server has files
+        if (!shouldSkipDeduplication) {
+          // Skip if already uploaded (by stable manifestId)
+          if (already.has(manifestId)) {
+            if (tmpCopied && tmpUri) await FileSystem.deleteAsync(tmpUri, { idempotent: true });
+            skipped++;
+            continue;
+          }
+
+          // Skip if filename already exists on server (fallback for old manifests without fileHash)
+          const normalizedFilename = assetFilename ? normalizeFilenameForCompare(assetFilename) : null;
+          if (normalizedFilename && alreadyFilenames.has(normalizedFilename)) {
+            console.log(`Skipping ${assetFilename} - filename already on server`);
+            if (tmpCopied && tmpUri) await FileSystem.deleteAsync(tmpUri, { idempotent: true });
+            skipped++;
+            continue;
+          }
+
+          // Cross-platform variant matching using base filename
+          const baseFilename = assetFilename ? extractBaseFilename(assetFilename) : null;
+
+          // HEIC PRIORITY: Full timestamp match (most reliable for cross-platform HEIC dedup)
+          // HEIC files from iPhone and desktop have identical EXIF timestamps even if bytes differ
+          const assetTimestamp = asset.creationTime ? normalizeFullTimestamp(asset.creationTime) : null;
+          if (baseFilename && assetTimestamp && alreadyBaseNameTimestamps.has(baseFilename)) {
+            const existingTimestamps = alreadyBaseNameTimestamps.get(baseFilename);
+            if (existingTimestamps.has(assetTimestamp)) {
+              console.log(`Skipping ${assetFilename} - baseFilename+timestamp match (${baseFilename}, ${assetTimestamp})`);
+              if (tmpCopied && tmpUri) await FileSystem.deleteAsync(tmpUri, { idempotent: true });
+              skipped++;
+              continue;
+            }
+          }
+          
+          // Fallback 1: base filename + size match (within 20% tolerance for re-compression)
+          let skipByBaseNameSize = false;
+          if (baseFilename && alreadyBaseNameSizes.has(baseFilename)) {
+            const existingSizes = alreadyBaseNameSizes.get(baseFilename);
+            for (const existingSize of existingSizes) {
+              const sizeDiff = Math.abs(originalSize - existingSize) / Math.max(originalSize, existingSize);
+              if (sizeDiff < 0.20) {
+                console.log(`Skipping ${assetFilename} - baseFilename+size match (${baseFilename}, size diff ${(sizeDiff * 100).toFixed(1)}%)`);
+                skipByBaseNameSize = true;
+                break;
+              }
+            }
+          }
+          if (skipByBaseNameSize) {
+            if (tmpCopied && tmpUri) await FileSystem.deleteAsync(tmpUri, { idempotent: true });
+            skipped++;
+            continue;
+          }
+
+          // Fallback 2: base filename + creation date match
+          const assetDate = asset.creationTime ? normalizeDateForCompare(asset.creationTime) : null;
+          if (baseFilename && assetDate && alreadyBaseNameDates.has(baseFilename)) {
+            const existingDates = alreadyBaseNameDates.get(baseFilename);
+            if (existingDates.has(assetDate)) {
+              console.log(`Skipping ${assetFilename} - baseFilename+date match (${baseFilename}, ${assetDate})`);
+              if (tmpCopied && tmpUri) await FileSystem.deleteAsync(tmpUri, { idempotent: true });
+              skipped++;
+              continue;
+            }
+          }
+        }
+
+        // Determine if this is an image or video
+        const isImage = asset.mediaType === 'photo' || (assetInfo && assetInfo.mediaType === 'photo');
+
+        // For IMAGES: use perceptual hash (transcoding-resistant)
+        // For VIDEOS: use exact file hash (byte-for-byte comparison)
+        let exactFileHash = null;
+        let perceptualHash = null;
+
+        // Only compute hashes for deduplication if server has files
+        if (!shouldSkipDeduplication) {
+          if (isImage) {
+            // Images: compute perceptual hash for transcoding-resistant deduplication
+            try {
+              perceptualHash = await computePerceptualHash(filePath, asset, assetInfo);
+              if (perceptualHash) {
+                console.log(`[PerceptualHash] ${assetFilename}: ${perceptualHash} (${perceptualHash.length} chars)`);
+              }
+            } catch (e) {
+              console.warn('computePerceptualHash failed:', asset.id, e?.message);
+              perceptualHash = null;
+            }
+
+            // Skip if perceptual hash already exists on server (catches transcoded duplicates)
+            // Use fuzzy matching with cross-platform threshold
+            if (perceptualHash && findPerceptualHashMatch(perceptualHash, alreadyPerceptualHashes, CROSS_PLATFORM_DHASH_THRESHOLD)) {
+              console.log(`Skipping ${assetFilename} - visually identical image already on server (perceptual match)`);
+              if (tmpCopied && tmpUri) await FileSystem.deleteAsync(tmpUri, { idempotent: true });
+              skipped++;
+              continue;
+            }
+
+            // Also compute exact hash for storage in manifest (but don't use for deduplication)
+            try {
+              exactFileHash = await computeExactFileHash(filePath);
+            } catch (e) {
+              console.warn('computeExactFileHash failed:', asset.id, e?.message);
+            }
+          } else {
+            // Videos: compute exact file hash for byte-for-byte deduplication
+            try {
+              exactFileHash = await computeExactFileHash(filePath);
+              console.log(`[FileHash] ${assetFilename}: ${exactFileHash ? exactFileHash.substring(0, 16) + '...' : 'null'}`);
+            } catch (e) {
+              console.warn('computeExactFileHash failed:', asset.id, e?.message);
+              exactFileHash = null;
+            }
+
+            // Skip if exact file hash already exists on server
+            if (exactFileHash && alreadyFileHashes.has(exactFileHash)) {
+              console.log(`Skipping ${assetFilename} - exact file hash already on server`);
+              if (tmpCopied && tmpUri) await FileSystem.deleteAsync(tmpUri, { idempotent: true });
+              skipped++;
+              continue;
+            }
+          }
+        }
+
+        // Always compute hashes for manifest storage (even if skipping deduplication)
+        if (shouldSkipDeduplication) {
+          if (isImage) {
+            try {
+              perceptualHash = await computePerceptualHash(filePath, asset, assetInfo);
+              if (perceptualHash) {
+                console.log(`[PerceptualHash] ${assetFilename}: ${perceptualHash} (${perceptualHash.length} chars)`);
+              }
+            } catch (e) {
+              console.warn('computePerceptualHash failed:', asset.id, e?.message);
+            }
+            try {
+              exactFileHash = await computeExactFileHash(filePath);
+            } catch (e) {
+              console.warn('computeExactFileHash failed:', asset.id, e?.message);
+            }
+          } else {
+            try {
+              exactFileHash = await computeExactFileHash(filePath);
+              console.log(`[FileHash] ${assetFilename}: ${exactFileHash ? exactFileHash.substring(0, 16) + '...' : 'null'}`);
+            } catch (e) {
+              console.warn('computeExactFileHash failed:', asset.id, e?.message);
+            }
+          }
+        }
+
+        // Status already set to "Backing up X of Y" above
+
+        // Generate per-file key and base nonce
+        const fileKey = new Uint8Array(32);
+        global.crypto.getRandomValues(fileKey);
+        const baseNonce16 = new Uint8Array(16);
+        global.crypto.getRandomValues(baseNonce16);
+
+        // Wrap fileKey with masterKey (nacl.secretbox) so it can be stored in manifest safely
+        const wrapNonce = new Uint8Array(24);
+        global.crypto.getRandomValues(wrapNonce);
+        const wrappedKey = nacl.secretbox(fileKey, wrapNonce, masterKey);
+
+        // Stream-read plaintext file, encrypt each chunk independently
+        let chunkIndex = 0;
+        const chunkIds = [];
+        const chunkSizes = [];
+
+        let chunkPlainBytes = null;
+        const chunkUploadsInFlight = new Set();
+        let runChunkUpload = null;
+        let maxChunkUploadsInFlight = 1;
+
+        if (Platform.OS === 'ios') {
+          const fileUri = filePath.startsWith('/') ? `file://${filePath}` : (filePath || tmpUri);
+
+          maxChunkUploadsInFlight = Math.max(1, chooseStealthCloudMaxParallelChunkUploads({ platform: 'ios', originalSize, fastMode: fastModeEnabledRef.current }));
+          runChunkUpload = createConcurrencyLimiter(maxChunkUploadsInFlight);
+
+          chunkPlainBytes = chooseStealthCloudChunkBytes({ platform: 'ios', originalSize, fastMode: fastModeEnabledRef.current });
+
+          const effectiveBytes = chunkPlainBytes - (chunkPlainBytes % 3);
+
+          let position = 0;
+          while (true) {
+            let nextB64 = '';
+            try {
+              nextB64 = await FileSystem.readAsStringAsync(fileUri, {
+                encoding: FileSystem.EncodingType.Base64,
+                position,
+                length: effectiveBytes
+              });
+            } catch (e) {
+              // Fallback if this FileSystem build doesn't support ranged reads
+              const allB64 = await FileSystem.readAsStringAsync(fileUri, { encoding: FileSystem.EncodingType.Base64 });
+              const b64Offset = Math.floor((position / 3) * 4);
+              const chunkB64Len = (effectiveBytes / 3) * 4;
+              nextB64 = allB64.slice(b64Offset, b64Offset + chunkB64Len);
+            }
+            if (!nextB64) break;
+            const plaintext = naclUtil.decodeBase64(nextB64);
+            if (!plaintext || plaintext.length === 0) break;
+
+            const nonce = makeChunkNonce(baseNonce16, chunkIndex);
+            await throttleEncryption(chunkIndex, fastModeEnabledRef.current);
+            const boxed = nacl.secretbox(plaintext, nonce, fileKey);
+            const chunkId = sha256.create().update(boxed).hex();
+            // Keep status as "Backing up X of Y" - unified message
+            await trackInFlightPromise(
+              chunkUploadsInFlight,
+              runChunkUpload(() => stealthCloudUploadEncryptedChunk({ SERVER_URL, config, chunkId, encryptedBytes: boxed })),
+              maxChunkUploadsInFlight
+            );
+            chunkIds.push(chunkId);
+            chunkSizes.push(plaintext.length);
+            chunkIndex += 1;
+            position += plaintext.length;
+            // Update progress: file progress + chunk progress within current file
+            if (totalCount) {
+              const fileProgress = (processedIndex - 1) / totalCount;
+              const chunkProgress = originalSize ? (position / originalSize) / totalCount : 0;
+              setProgress(Math.min(fileProgress + chunkProgress, 1));
+            }
+
+            if (plaintext.length < effectiveBytes) {
+              break;
+            }
+          }
+        } else {
+          // react-native-blob-util readStream uses base64 chunks
+          let ReactNativeBlobUtil = null;
+          try {
+            const mod = require('react-native-blob-util');
+            ReactNativeBlobUtil = mod && (mod.default || mod);
+          } catch (e) {
+            ReactNativeBlobUtil = null;
+          }
+          if (!ReactNativeBlobUtil || !ReactNativeBlobUtil.fs || typeof ReactNativeBlobUtil.fs.readStream !== 'function') {
+            throw new Error('StealthCloud backup requires a development build (react-native-blob-util).');
+          }
+
+          const stat = await ReactNativeBlobUtil.fs.stat(filePath);
+          originalSize = stat && stat.size ? Number(stat.size) : null;
+
+          maxChunkUploadsInFlight = Math.max(1, chooseStealthCloudMaxParallelChunkUploads({ platform: 'android', originalSize, fastMode: fastModeEnabledRef.current }));
+          runChunkUpload = createConcurrencyLimiter(maxChunkUploadsInFlight);
+
+          chunkPlainBytes = chooseStealthCloudChunkBytes({ platform: 'android', originalSize, fastMode: fastModeEnabledRef.current });
+
+          const stream = await ReactNativeBlobUtil.fs.readStream(filePath, 'base64', chunkPlainBytes);
+
+          await new Promise((resolve, reject) => {
+            const queue = [];
+            let draining = false;
+            let ended = false;
+
+            stream.open();
+
+            stream.onData((chunkB64) => {
+              queue.push(chunkB64);
+
+              if (draining) return;
+              draining = true;
+
+              (async () => {
+                try {
+                  while (queue.length) {
+                    const nextB64 = queue.shift();
+                    const plaintext = naclUtil.decodeBase64(nextB64);
+                    const nonce = makeChunkNonce(baseNonce16, chunkIndex);
+                    await throttleEncryption(chunkIndex, fastModeEnabledRef.current);
+                    const boxed = nacl.secretbox(plaintext, nonce, fileKey);
+                    const chunkId = sha256.create().update(boxed).hex();
+                    // Keep status as "Backing up X of Y" - unified message
+                    await trackInFlightPromise(
+                      chunkUploadsInFlight,
+                      runChunkUpload(() => stealthCloudUploadEncryptedChunk({ SERVER_URL, config, chunkId, encryptedBytes: boxed })),
+                      maxChunkUploadsInFlight
+                    );
+
+                    chunkIds.push(chunkId);
+                    chunkSizes.push(plaintext.length);
+                    chunkIndex += 1;
+
+                    if (totalCount) setProgress(processedIndex / totalCount);
+                  }
+                } catch (e) {
+                  reject(e);
+                  return;
+                } finally {
+                  draining = false;
+                }
+
+                if (ended && queue.length === 0) {
+                  resolve();
+                }
+              })();
+            });
+
+            stream.onError((e) => reject(e));
+            stream.onEnd(() => {
+              ended = true;
+              if (!draining && queue.length === 0) {
+                resolve();
+              }
+            });
+          });
+        }
+
+        await drainInFlightPromises(chunkUploadsInFlight);
+
+        if (!chunkIds.length) {
+          throw new Error('StealthCloud backup read 0 bytes (no chunks).');
+        }
+
+        // Extract real EXIF data from file for cross-platform deduplication
+        const exifData = extractExifForDedup(assetInfo, asset);
+
+        // Build manifest (then encrypt it with masterKey)
+        const manifest = {
+          v: 1,
+          assetId: asset.id,
+          filename: assetInfo.filename || asset.filename || null,
+          mediaType: asset.mediaType || null,
+          originalSize,
+          creationTime: asset.creationTime || null,
+          // EXIF data for cross-platform HEIC deduplication
+          exifCaptureTime: exifData.captureTime || null,
+          exifMake: exifData.make || null,
+          exifModel: exifData.model || null,
+          baseNonce16: naclUtil.encodeBase64(baseNonce16),
+          wrapNonce: naclUtil.encodeBase64(wrapNonce),
+          wrappedFileKey: naclUtil.encodeBase64(wrappedKey),
+          chunkIds,
+          chunkSizes,
+          fileHash: exactFileHash,
+          perceptualHash: perceptualHash,
+        };
+
+        const manifestPlain = naclUtil.decodeUTF8(JSON.stringify(manifest));
+        const manifestNonce = new Uint8Array(24);
+        global.crypto.getRandomValues(manifestNonce);
+        const manifestBox = nacl.secretbox(manifestPlain, manifestNonce, masterKey);
+        const encryptedManifest = JSON.stringify({
+          manifestNonce: naclUtil.encodeBase64(manifestNonce),
+          manifestBox: naclUtil.encodeBase64(manifestBox)
+        });
+
+        // Retry manifest upload up to 3 times
+        const manifestResponse = await withRetries(async () => {
+          return await axios.post(
+            `${SERVER_URL}/api/cloud/manifests`,
+            { manifestId, encryptedManifest, chunkCount: chunkIds.length },
+            { headers: config.headers, timeout: 30000 }
+          );
+        }, {
+          retries: 10,
+          baseDelayMs: 1000,
+          maxDelayMs: 30000,
+          shouldRetry: shouldRetryChunkUpload
+        });
+
+        // Check if server rejected as duplicate (server-side deduplication)
+        if (manifestResponse?.data?.skipped) {
+          console.log(`Server rejected ${assetInfo.filename || asset.filename} as duplicate (reason: ${manifestResponse.data.reason || 'unknown'})`);
+          skipped++;
+          continue;
+        }
+
+        uploaded += 1;
+        already.add(manifestId);
+        if (exactFileHash) alreadyFileHashes.add(exactFileHash);
+        if (perceptualHash) alreadyPerceptualHashes.add(perceptualHash);
+
+        if (tmpCopied && tmpUri) {
+          await FileSystem.deleteAsync(tmpUri, { idempotent: true });
+        }
+
+        // CPU cooldown between assets to reduce phone heating
+        const assetCooldown = getThrottleAssetCooldownMs();
+        if (assetCooldown > 0) await sleep(assetCooldown);
+
+        // Thermal batch limit: long cooling pause every N assets
+        const batchLimit = getThrottleBatchLimit();
+        if (uploaded > 0 && uploaded % batchLimit === 0) {
+          await thermalCooldownPause(Math.floor(uploaded / batchLimit));
+        }
+
+        } catch (e) {
+          failed += 1;
+          console.warn('StealthCloud asset failed:', asset && asset.id ? asset.id : 'unknown', e && e.message ? e.message : String(e));
+          continue;
+        }
+        }
+
+        after = page && page.endCursor ? page.endCursor : null;
+        if (!page || page.hasNextPage !== true) {
+          break;
+        }
+      }
 
       if (uploaded === 0 && skipped === 0 && failed === 0) {
         setProgress(1);
@@ -2205,35 +4146,217 @@ export default function App() {
       const localFilenames = localIndex.set;
       const isEmptyDevice = localIndex.scanned === 0;
 
-      // Build local deduplication index (both iOS and Android need hash-based dedup)
-      let localManifestIds = new Set();
-      let localFileHashes = new Set();
-      let localPerceptualHashes = new Set();
-      let localBaseNameSizes = new Map();
-      let localBaseNameDates = new Map();
+      // iOS Analyzing: fills 0-100%, then syncing resets to 0 and fills 0-100%
+      // Android: no analyzing, syncing fills 0-100%
 
-      if (localIndex.scanned > 0) {
-        setStatus(`Analyzing 1 of ${localIndex.scanned}`);
-        const dedupIndex = await buildLocalDeduplicationIndex({
-          totalToScan: localIndex.scanned,
-          resolveReadableFilePath,
-          onStatus: setStatus,
-          onProgress: setProgress,
-        });
-        localManifestIds = dedupIndex.localManifestIds;
-        localFileHashes = dedupIndex.localFileHashes;
-        localPerceptualHashes = dedupIndex.localPerceptualHashes;
-        localBaseNameSizes = dedupIndex.localBaseNameSizes;
-        localBaseNameDates = dedupIndex.localBaseNameDates;
-        setProgress(1);
-        await new Promise(r => setTimeout(r, 500));
+      // iOS assigns new filenames when saving, so we need hash-based deduplication
+      // Build local deduplication sets by scanning device photos (same 4 steps as upload)
+      const localManifestIds = new Set();
+      const localFileHashes = new Set();
+      const localPerceptualHashes = new Set();
+      const localBaseNameSizes = new Map(); // baseFilename -> Set of sizes
+      const localBaseNameDates = new Map(); // baseFilename -> Set of date strings
+
+      if (Platform.OS === 'ios') {
+        if (localIndex.scanned > 0) {
+          // Start analyzing from 0, progress to PHASE2_END
+          setStatus(`Analyzing 1 of ${localIndex.scanned}`);
+          let hashScanned = 0;
+          let after = null;
+          const PAGE_SIZE = 100;
+          const totalToScan = localIndex.scanned;
+
+          while (true) {
+            const page = await MediaLibrary.getAssetsAsync({
+              first: PAGE_SIZE,
+              after: after || undefined,
+              mediaType: ['photo', 'video'],
+            });
+
+            const assets = page && Array.isArray(page.assets) ? page.assets : [];
+            if (assets.length === 0) break;
+
+            for (const asset of assets) {
+              try {
+                const assetInfo = await MediaLibrary.getAssetInfoAsync(asset.id);
+                const { filePath } = await resolveReadableFilePath({ assetId: asset.id, assetInfo });
+
+                // Step 1: Compute manifestId (filename + size)
+                const assetFilename = assetInfo.filename || asset.filename || null;
+                let originalSize = null;
+                try {
+                  const fileUri = filePath.startsWith('/') ? `file://${filePath}` : filePath;
+                  const info = await FileSystem.getInfoAsync(fileUri);
+                  originalSize = info && typeof info.size === 'number' ? Number(info.size) : null;
+                } catch (e) {}
+
+                const fileIdentity = computeFileIdentity(assetFilename, originalSize);
+                if (fileIdentity) {
+                  const manifestId = sha256(`file:${fileIdentity}`);
+                  localManifestIds.add(manifestId);
+                }
+
+                // Build base filename + size/date maps for fallback matching
+                const baseName = assetFilename ? extractBaseFilename(assetFilename) : null;
+                if (baseName) {
+                  if (originalSize) {
+                    if (!localBaseNameSizes.has(baseName)) localBaseNameSizes.set(baseName, new Set());
+                    localBaseNameSizes.get(baseName).add(originalSize);
+                  }
+                  if (asset.creationTime) {
+                    const dateStr = normalizeDateForCompare(asset.creationTime);
+                    if (dateStr) {
+                      if (!localBaseNameDates.has(baseName)) localBaseNameDates.set(baseName, new Set());
+                      localBaseNameDates.get(baseName).add(dateStr);
+                    }
+                  }
+                }
+
+                const isImage = asset.mediaType === 'photo';
+
+                if (isImage) {
+                  // Step 3: Images - compute perceptual hash
+                  const pHash = await computePerceptualHash(filePath, asset, assetInfo);
+                  if (pHash) {
+                    localPerceptualHashes.add(pHash);
+                  }
+                } else {
+                  // Step 4: Videos - compute exact file hash
+                  const fHash = await computeExactFileHash(filePath);
+                  if (fHash) {
+                    localFileHashes.add(fHash);
+                  }
+                }
+
+                hashScanned++;
+                // Analyzing fills bar 0-100%
+                setProgress(hashScanned / totalToScan);
+                // Show count: first 10 by 1, then every 5 (15, 20, 25...)
+                if (hashScanned <= 10 || hashScanned % 5 === 0 || hashScanned === totalToScan) {
+                  setStatus(`Analyzing ${hashScanned} of ${totalToScan}`);
+                }
+              } catch (e) {
+                // Skip files we can't hash
+                hashScanned++;
+              }
+            }
+
+            after = page && page.endCursor ? page.endCursor : null;
+            if (!page || page.hasNextPage !== true) break;
+          }
+
+          // Bar stays at 100% when analyzing completes
+          setProgress(1);
+          console.log(`[iOS Restore] Built local dedup index: ${localManifestIds.size} manifestIds, ${localPerceptualHashes.size} image hashes, ${localFileHashes.size} video hashes, ${localBaseNameSizes.size} name+size, ${localBaseNameDates.size} name+date`);
+          await new Promise(r => setTimeout(r, 500));
+        } else {
+          // No local files - show preparing message and fill to 100%
+          setStatus('Preparing sync...');
+          setProgress(1);
+          await new Promise(r => setTimeout(r, 800));
+        }
       } else {
-        setStatus('Preparing sync...');
-        setProgress(1);
-        await new Promise(r => setTimeout(r, 800));
+        // Android: also needs hash-based deduplication (Google Photos sync can rename files)
+        if (localIndex.scanned > 0) {
+          setStatus(`Analyzing 1 of ${localIndex.scanned}`);
+          let hashScanned = 0;
+          let after = null;
+          const PAGE_SIZE = 100;
+          const totalToScan = localIndex.scanned;
+
+          while (true) {
+            const page = await MediaLibrary.getAssetsAsync({
+              first: PAGE_SIZE,
+              after: after || undefined,
+              mediaType: ['photo', 'video'],
+            });
+
+            const assets = page && Array.isArray(page.assets) ? page.assets : [];
+            if (assets.length === 0) break;
+
+            for (const asset of assets) {
+              try {
+                const assetInfo = await MediaLibrary.getAssetInfoAsync(asset.id);
+                const { filePath } = await resolveReadableFilePath({ assetId: asset.id, assetInfo });
+
+                // Step 1: Compute manifestId (filename + size)
+                const assetFilename = assetInfo.filename || asset.filename || null;
+                let originalSize = null;
+                let ReactNativeBlobUtil = null;
+                try {
+                  const mod = require('react-native-blob-util');
+                  ReactNativeBlobUtil = mod && (mod.default || mod);
+                } catch (e) {}
+                if (ReactNativeBlobUtil?.fs?.stat) {
+                  try {
+                    const stat = await ReactNativeBlobUtil.fs.stat(filePath);
+                    originalSize = stat && stat.size ? Number(stat.size) : null;
+                  } catch (e) {}
+                }
+
+                const fileIdentity = computeFileIdentity(assetFilename, originalSize);
+                if (fileIdentity) {
+                  const manifestId = sha256(`file:${fileIdentity}`);
+                  localManifestIds.add(manifestId);
+                }
+
+                // Build base filename + size/date maps for fallback matching
+                const baseName = assetFilename ? extractBaseFilename(assetFilename) : null;
+                if (baseName) {
+                  if (originalSize) {
+                    if (!localBaseNameSizes.has(baseName)) localBaseNameSizes.set(baseName, new Set());
+                    localBaseNameSizes.get(baseName).add(originalSize);
+                  }
+                  if (asset.creationTime) {
+                    const dateStr = normalizeDateForCompare(asset.creationTime);
+                    if (dateStr) {
+                      if (!localBaseNameDates.has(baseName)) localBaseNameDates.set(baseName, new Set());
+                      localBaseNameDates.get(baseName).add(dateStr);
+                    }
+                  }
+                }
+
+                const isImage = asset.mediaType === 'photo';
+
+                if (isImage) {
+                  // Step 3: Images - compute perceptual hash
+                  const pHash = await computePerceptualHash(filePath, asset, assetInfo);
+                  if (pHash) {
+                    localPerceptualHashes.add(pHash);
+                  }
+                } else {
+                  // Step 4: Videos - compute exact file hash
+                  const fHash = await computeExactFileHash(filePath);
+                  if (fHash) {
+                    localFileHashes.add(fHash);
+                  }
+                }
+
+                hashScanned++;
+                setProgress(hashScanned / totalToScan);
+                if (hashScanned <= 10 || hashScanned % 5 === 0 || hashScanned === totalToScan) {
+                  setStatus(`Analyzing ${hashScanned} of ${totalToScan}`);
+                }
+              } catch (e) {
+                hashScanned++;
+              }
+            }
+
+            after = page && page.endCursor ? page.endCursor : null;
+            if (!page || page.hasNextPage !== true) break;
+          }
+
+          setProgress(1);
+          console.log(`[Android Restore] Built local dedup index: ${localManifestIds.size} manifestIds, ${localPerceptualHashes.size} image hashes, ${localFileHashes.size} video hashes, ${localBaseNameSizes.size} name+size, ${localBaseNameDates.size} name+date`);
+          await new Promise(r => setTimeout(r, 500));
+        } else {
+          setStatus('Preparing sync...');
+          setProgress(1);
+          await new Promise(r => setTimeout(r, 800));
+        }
       }
 
-      // Syncing phase starts fresh at 0%
+      // Syncing phase starts fresh at 0% - reset happens in stealthCloudRestoreCore when first status is set
 
       const result = await stealthCloudRestoreCore({
         config,
@@ -2279,18 +4402,119 @@ export default function App() {
     }
   };
 
+  const getDeviceUUID = async (userEmail = null, userPassword = null) => {
+    const normalizedEmail = normalizeEmailForDeviceUuid(userEmail);
+    if (!normalizedEmail) return null;
+
+    const persistedKey = `device_uuid_v3:${normalizedEmail}`;
+    const legacyKey = `device_uuid_v3:${String(userEmail).toLowerCase()}`;
+
+    let persisted = null;
+    try {
+      persisted = await SecureStore.getItemAsync(persistedKey);
+    } catch (e) {
+      persisted = null;
+    }
+
+    if (!persisted) {
+      // Migration path for older builds (non-trimmed key)
+      let legacy = null;
+      try {
+        legacy = await SecureStore.getItemAsync(legacyKey);
+      } catch (e) {
+        legacy = null;
+      }
+      if (legacy) {
+        persisted = legacy;
+        try {
+          await SecureStore.setItemAsync(persistedKey, legacy);
+        } catch (e) {
+          // ignore
+        }
+      }
+    }
+
+    // If password is not provided (e.g. app start), we can only use the persisted UUID.
+    if (!userPassword) {
+      if (persisted) {
+        try {
+          await SecureStore.setItemAsync('device_uuid', persisted);
+        } catch (e) {}
+      }
+      return persisted;
+    }
+
+    // If password is provided (login/register), enforce email+password-derived UUID.
+    const namespace = '6ba7b810-9dad-11d1-80b4-00c04fd430c8';
+    const expected = uuidv5(`${normalizedEmail}:${userPassword}`, namespace);
+
+    if (persisted !== expected) {
+      try {
+        await SecureStore.setItemAsync(persistedKey, expected);
+      } catch (e) {
+        // ignore
+      }
+    }
+
+    try {
+      await SecureStore.setItemAsync('device_uuid', expected);
+    } catch (e) {}
+
+    return expected;
+  };
+
   const getServerUrl = () => computeServerUrl(serverType, localHost, remoteHost);
 
   const checkLogin = async () => {
     try {
-    // Detect first launch after reinstall and clear old credentials
-    const isFirstLaunchAfterReinstall = await checkFirstLaunchAfterReinstall();
+    // CRITICAL: Detect first launch after reinstall and clear old credentials
+    // FileSystem persists across app updates but is cleared on uninstall
+    // SecureStore (Keychain on iOS) persists even after uninstall
+    const firstLaunchMarker = `${FileSystem.documentDirectory}app_initialized.txt`;
+    let isFirstLaunchAfterReinstall = false;
 
-    // Load server settings using helper
-    const serverSettings = await loadServerSettings();
-    if (serverSettings.savedType) setServerType(serverSettings.savedType);
-    if (serverSettings.savedLocalHost) setLocalHost(serverSettings.savedLocalHost);
-    if (serverSettings.normalizedRemoteHost) setRemoteHost(serverSettings.normalizedRemoteHost);
+    try {
+      const markerExists = await FileSystem.getInfoAsync(firstLaunchMarker);
+      if (!markerExists.exists) {
+        // First launch after reinstall - clear SecureStore credentials
+        isFirstLaunchAfterReinstall = true;
+        console.log('[FirstLaunch] Detected first launch after reinstall - clearing old credentials');
+
+        // Clear all auth-related SecureStore items
+        await SecureStore.deleteItemAsync('auth_token').catch(() => {});
+        await SecureStore.deleteItemAsync('user_id').catch(() => {});
+        await SecureStore.deleteItemAsync('user_email').catch(() => {});
+        await SecureStore.deleteItemAsync('device_uuid').catch(() => {});
+        await SecureStore.deleteItemAsync(SAVED_PASSWORD_KEY).catch(() => {});
+        await SecureStore.deleteItemAsync(SAVED_PASSWORD_EMAIL_KEY).catch(() => {});
+
+        // Create marker file to indicate app has been initialized
+        await FileSystem.writeAsStringAsync(firstLaunchMarker, new Date().toISOString());
+        console.log('[FirstLaunch] Credentials cleared, marker created');
+      }
+    } catch (e) {
+      console.log('[FirstLaunch] Error checking/creating marker:', e?.message);
+    }
+
+    // Load server settings
+    const savedType = await SecureStore.getItemAsync('server_type');
+    const savedLocalHost = await SecureStore.getItemAsync('local_host');
+    const savedRemoteHost = await SecureStore.getItemAsync('remote_host');
+    const savedRemoteUrl = await SecureStore.getItemAsync('remote_url');
+    const savedRemoteIp = await SecureStore.getItemAsync('remote_ip');
+    if (savedType) setServerType(savedType);
+
+    if (savedLocalHost) setLocalHost(savedLocalHost);
+    // Normalize any persisted remote values to a plain host (no scheme/port/path)
+    const persistedRemoteRaw = savedRemoteHost || savedRemoteUrl || savedRemoteIp;
+    if (persistedRemoteRaw) {
+      const normalized = normalizeHostInput(persistedRemoteRaw);
+      setRemoteHost(normalized);
+      // Prefer remote_host going forward; clean up legacy keys that may include https:// and break iOS.
+      try { await SecureStore.setItemAsync('remote_host', normalized); } catch (e) {}
+      try { if (savedRemoteUrl) await SecureStore.deleteItemAsync('remote_url'); } catch (e) {}
+      try { if (savedRemoteIp) await SecureStore.deleteItemAsync('remote_ip'); } catch (e) {}
+    }
 
     // Auto Upload UI is hidden for now; prevent auto-start on app relaunch.
     // Force it OFF even if it was previously enabled.
@@ -2357,65 +4581,172 @@ export default function App() {
     // 2. If no token BUT credentials exist -> biometric re-auth to generate new token
     // 3. If no token AND no credentials -> manual login (first run/reinstall)
 
-    const baseUrl = computeServerUrl(
-      serverType || serverSettings.savedType || 'local',
-      serverSettings.savedLocalHost || localHost,
-      serverSettings.normalizedRemoteHost || remoteHost
-    );
+    const persistedType = await SecureStore.getItemAsync('server_type');
+    const persistedLocalHost = await SecureStore.getItemAsync('local_host');
+    const persistedRemoteHost = await SecureStore.getItemAsync('remote_host');
+    const effectiveType = serverType || persistedType || 'local';
+    const effectiveLocalHost = persistedLocalHost || localHost;
+    const effectiveRemoteHost = persistedRemoteHost || remoteHost;
+    const baseUrl = computeServerUrl(effectiveType, effectiveLocalHost, effectiveRemoteHost);
 
     // Case 1: Valid token exists - validate and auto-login
     if (storedToken && storedEmail) {
-      const validationResult = await validateToken({
-        storedToken,
-        storedEmail,
-        storedUserId,
-        uuid,
-        baseUrl,
-        onStatus: setStatus,
-      });
+      try {
+        setStatus('Validating session...');
+        const headers = {
+          'Authorization': `Bearer ${storedToken}`,
+          'X-Device-UUID': uuid || 'unknown'
+        };
 
-      if (validationResult.success) {
-        // Token valid or network error with offline access
-        if (validationResult.savedPassword) {
-          setStatus('Securing session...');
-          await cacheStealthCloudMasterKey(storedEmail, validationResult.savedPassword);
+        await axios.get(`${baseUrl}/api/cloud/usage`, { headers, timeout: 5000 });
+
+        // Token valid - unlock password for master key caching
+        setStatus('Unlock to continue...');
+        let savedPassword = null;
+        try {
+          savedPassword = await SecureStore.getItemAsync(SAVED_PASSWORD_KEY, {
+            requireAuthentication: true,
+            authenticationPrompt: 'Unlock to sign in'
+          });
+        } catch (e) {
+          savedPassword = await SecureStore.getItemAsync(SAVED_PASSWORD_KEY);
         }
+
+        if (savedPassword) {
+          setStatus('Securing session...');
+          await cacheStealthCloudMasterKey(storedEmail, savedPassword);
+        }
+
         setTokenSafe(storedToken);
         if (storedUserId) setUserId(parseInt(storedUserId));
         setStatus('');
         setView('home');
         return;
+      } catch (e) {
+        const isNetworkError = !e?.response && (e?.message?.includes('Network') || e?.code === 'ECONNABORTED' || e?.message?.includes('timeout'));
+
+        if (isNetworkError) {
+          // Network error - don't clear token, allow offline access with biometric
+          console.log('[Auth] Network error - allowing offline access with existing token');
+
+          // Try to get password for master key caching
+          let savedPassword = null;
+          try {
+            savedPassword = await SecureStore.getItemAsync(SAVED_PASSWORD_KEY, {
+              requireAuthentication: true,
+              authenticationPrompt: 'Unlock to sign in'
+            });
+          } catch (bioErr) {
+            savedPassword = await SecureStore.getItemAsync(SAVED_PASSWORD_KEY);
+          }
+
+          if (savedPassword) {
+            setStatus('Securing session...');
+            await cacheStealthCloudMasterKey(storedEmail, savedPassword);
+          }
+
+          setTokenSafe(storedToken);
+          if (storedUserId) setUserId(parseInt(storedUserId));
+          setStatus('');
+          setView('home');
+          return;
+        }
+
+        // Token actually invalid (401/403) - clear and re-auth
+        console.log('Token invalid, clearing:', e?.response?.status || e?.message);
+        await SecureStore.deleteItemAsync('auth_token');
+        await SecureStore.deleteItemAsync('user_id');
+        // Fall through to Case 2 - try biometric re-auth
       }
-      // Token invalid - fall through to Case 2
     }
 
     // Case 2: No valid token but credentials exist - biometric re-auth
-    const reauthResult = await attemptBiometricReauth({
-      storedEmail,
-      baseUrl,
-      getDeviceUUID,
-      onStatus: setStatus,
-    });
+    // Skip if user explicitly logged out (should see login screen instead)
+    const userLoggedOut = await SecureStore.getItemAsync('user_logged_out');
+    if (userLoggedOut === 'true') {
+      console.log('[Auth] User logged out - skipping biometric re-auth');
+      // Clear the flag so it doesn't persist forever
+      await SecureStore.deleteItemAsync('user_logged_out');
+      // Fall through to Case 3 - show login screen
+    } else {
+      const savedPasswordEmail = await SecureStore.getItemAsync(SAVED_PASSWORD_EMAIL_KEY);
+      if (savedPasswordEmail && storedEmail) {
+        try {
+          setStatus('Unlock to sign in...');
+          let savedPassword = null;
+          let biometricCancelled = false;
 
-    if (reauthResult.biometricCancelled) {
-      console.log('[Auth] Showing login screen after biometric cancel');
-      if (storedEmail && !email) setEmail(storedEmail);
-      setStatus('');
-      setView('auth');
-      return;
-    }
+          // Check how password was stored (Android only - iOS always uses biometric)
+          const storedWithBiometric = Platform.OS === 'ios' ||
+            (await SecureStore.getItemAsync('password_stored_with_biometric')) === 'true';
 
-    if (reauthResult.success) {
-      if (reauthResult.deviceId) setDeviceUuid(reauthResult.deviceId);
-      if (reauthResult.userId) setUserId(reauthResult.userId);
+          if (storedWithBiometric) {
+            try {
+              savedPassword = await SecureStore.getItemAsync(SAVED_PASSWORD_KEY, {
+                requireAuthentication: true,
+                authenticationPrompt: 'Unlock to sign in'
+              });
+            } catch (e) {
+              // Check if user cancelled biometric prompt
+              const errMsg = e?.message?.toLowerCase() || '';
+              if (errMsg.includes('cancel') || errMsg.includes('user') || errMsg.includes('authentication') || errMsg.includes('failed')) {
+                console.log('[Auth] Biometric cancelled/failed by user:', errMsg);
+                biometricCancelled = true;
+              }
+            }
+          } else {
+            // Password was stored without biometric (Android fallback)
+            console.log('[Auth] Reading password without biometric (Android silent storage)');
+            savedPassword = await SecureStore.getItemAsync(SAVED_PASSWORD_KEY);
+          }
 
-      setStatus('Securing session...');
-      await cacheStealthCloudMasterKey(storedEmail, reauthResult.savedPassword);
+          // If biometric was cancelled, show login screen but don't clear credentials
+          // User can try again or login manually
+          if (biometricCancelled) {
+            console.log('[Auth] Showing login screen after biometric cancel');
+            if (storedEmail && !email) setEmail(storedEmail);
+            setStatus('');
+            setView('auth');
+            return;
+          }
 
-      setTokenSafe(reauthResult.token);
-      setStatus('');
-      setView('home');
-      return;
+          if (savedPassword) {
+            setStatus('Signing in...');
+
+            const deviceId = await getDeviceUUID(storedEmail, savedPassword);
+            if (deviceId) setDeviceUuid(deviceId);
+
+            const payload = {
+              email: storedEmail,
+              password: savedPassword,
+              device_uuid: deviceId,
+              deviceUuid: deviceId,
+              device_name: Platform.OS + ' ' + Platform.Version,
+            };
+
+            const res = await axios.post(`${baseUrl}/api/login`, payload, { timeout: 15000 });
+            const { token, userId } = res.data;
+
+            await SecureStore.setItemAsync('auth_token', token);
+            if (userId) {
+              await SecureStore.setItemAsync('user_id', String(userId));
+              setUserId(userId);
+            }
+
+            setStatus('Securing session...');
+            await cacheStealthCloudMasterKey(storedEmail, savedPassword);
+
+            setTokenSafe(token);
+            setStatus('');
+            setView('home');
+            return;
+          }
+        } catch (e) {
+          console.log('Biometric re-auth failed:', e?.response?.status || e?.message);
+          setStatus('');
+          // Fall through to manual login
+        }
+      }
     }
 
     // Case 3: No token and no credentials - require manual login
@@ -2478,11 +4809,30 @@ export default function App() {
       setAuthLoadingLabel('Bonding device...');
       await new Promise(resolve => setTimeout(resolve, 1000));
 
-      // Resolve and persist effective server settings
-      const { effectiveType, effectiveLocalHost, effectiveRemoteHost } = await resolveEffectiveServerSettings({
-        serverType, localHost, remoteHost
-      });
-      await persistServerSettings({ effectiveType, effectiveLocalHost, effectiveRemoteHost });
+      // Resolve effective server settings.
+      // On cold start, state may still be default while SecureStore already has the user's saved host.
+      // Also avoid overwriting persisted host with empty string.
+      const persistedType = await SecureStore.getItemAsync('server_type');
+      const persistedLocalHost = await SecureStore.getItemAsync('local_host');
+      const persistedRemoteHost = await SecureStore.getItemAsync('remote_host');
+
+      const effectiveType = serverType || persistedType || 'local';
+      const normalizedLocal = normalizeHostInput(localHost);
+      const normalizedRemote = normalizeHostInput(remoteHost);
+      const effectiveLocalHost = (effectiveType === 'local' && !normalizedLocal && persistedLocalHost)
+        ? persistedLocalHost
+        : localHost;
+      const effectiveRemoteHost = (effectiveType === 'remote' && !normalizedRemote && persistedRemoteHost)
+        ? persistedRemoteHost
+        : remoteHost;
+
+      // Persist effective server settings
+      await SecureStore.setItemAsync('server_type', effectiveType);
+      if (effectiveType === 'remote') {
+        await SecureStore.setItemAsync('remote_host', effectiveRemoteHost);
+      } else if (effectiveType === 'local') {
+        await SecureStore.setItemAsync('local_host', effectiveLocalHost);
+      }
 
       // Ensure in-memory state matches what we used.
       if (serverType !== effectiveType) setServerType(effectiveType);
@@ -2508,15 +4858,36 @@ export default function App() {
       const endpoint = type === 'register' ? '/api/register' : '/api/login';
       const authBaseUrl = computeServerUrl(effectiveType, effectiveLocalHost, effectiveRemoteHost);
 
-      // Build auth payload with hardware device ID for registration
-      const payload = await buildAuthPayload({
-        type,
-        normalizedEmail,
+      // Get persistent hardware device ID for device-bound password reset (StealthCloud only)
+      // Use only stable device-derived ID so it survives reinstall. Do not use SecureStore/uuid.
+      let hardwareDeviceId = null;
+      if (type === 'register' && effectiveType === 'stealthcloud') {
+        try {
+          if (Platform.OS === 'ios') {
+            hardwareDeviceId = await computeIosHardwareId();
+          } else if (Platform.OS === 'android') {
+            hardwareDeviceId = await computeAndroidHardwareId();
+          }
+        } catch (e) {
+          console.log('Could not get hardware device ID:', e);
+        }
+      }
+      const payload = {
+        email: normalizedEmail,
         password,
-        deviceId,
-        effectiveType,
-        selectedStealthPlanGb,
-      });
+        device_uuid: deviceId,
+        deviceUuid: deviceId,
+        device_name: Platform.OS + ' ' + Platform.Version,
+      };
+
+      // Include hardware_device_id during registration for password reset capability
+      if (type === 'register' && hardwareDeviceId) {
+        payload.hardware_device_id = hardwareDeviceId;
+      }
+
+      if (type === 'register' && effectiveType === 'stealthcloud' && selectedStealthPlanGb) {
+        payload.plan_gb = selectedStealthPlanGb;
+      }
 
       const authUrl = authBaseUrl + endpoint;
       console.log('Auth request:', {
@@ -2566,8 +4937,33 @@ export default function App() {
         await SecureStore.setItemAsync('auth_token', token);
         await SecureStore.setItemAsync('user_email', normalizedEmail);
 
-        // Store password with biometrics
-        await storeCredentialsWithBiometrics({ password, normalizedEmail, type: 'login' });
+        // Store password with biometrics (identical logic for iOS and Android)
+        try {
+          if (Platform.OS === 'ios') {
+            // iOS: store the password behind FaceID/TouchID (fallback to device passcode)
+            await SecureStore.setItemAsync(SAVED_PASSWORD_KEY, password, {
+              requireAuthentication: true,
+              authenticationPrompt: 'Unlock to sign in'
+            });
+            await SecureStore.setItemAsync(SAVED_PASSWORD_EMAIL_KEY, normalizedEmail);
+          } else {
+            // Android: try biometric first, fallback to silent storage
+            let storedWithBiometric = false;
+            try {
+              await SecureStore.setItemAsync(SAVED_PASSWORD_KEY, password, {
+                requireAuthentication: true,
+                authenticationPrompt: 'Use fingerprint to unlock'
+              });
+              storedWithBiometric = true;
+            } catch (e) {
+              console.log('[Auth] Android biometric storage failed, using silent storage:', e?.message);
+              await SecureStore.setItemAsync(SAVED_PASSWORD_KEY, password);
+            }
+            await SecureStore.setItemAsync(SAVED_PASSWORD_EMAIL_KEY, normalizedEmail);
+            // Track how password was stored so we know how to read it
+            await SecureStore.setItemAsync('password_stored_with_biometric', storedWithBiometric ? 'true' : 'false');
+          }
+        } catch (e) {}
         if (userId) {
           await SecureStore.setItemAsync('user_id', String(userId));
           setUserId(userId);
@@ -2603,7 +4999,35 @@ export default function App() {
         await SecureStore.setItemAsync('user_email', normalizedEmail);
 
         // Store password with biometrics for future auto-login
-        await storeCredentialsWithBiometrics({ password, normalizedEmail, type: 'register' });
+        try {
+          if (Platform.OS === 'ios') {
+            await SecureStore.setItemAsync(SAVED_PASSWORD_KEY, password, {
+              requireAuthentication: true,
+              authenticationPrompt: 'Secure your account with biometrics'
+            });
+            await SecureStore.setItemAsync(SAVED_PASSWORD_EMAIL_KEY, normalizedEmail);
+          } else {
+            // Android: try biometric first, fallback to silent storage
+            let storedWithBiometric = false;
+            try {
+              await SecureStore.setItemAsync(SAVED_PASSWORD_KEY, password, {
+                requireAuthentication: true,
+                authenticationPrompt: 'Secure your account with fingerprint'
+              });
+              storedWithBiometric = true;
+            } catch (e) {
+              console.log('[Auth] Android biometric storage failed (register), using silent storage:', e?.message);
+              await SecureStore.setItemAsync(SAVED_PASSWORD_KEY, password);
+            }
+            await SecureStore.setItemAsync(SAVED_PASSWORD_EMAIL_KEY, normalizedEmail);
+            await SecureStore.setItemAsync('password_stored_with_biometric', storedWithBiometric ? 'true' : 'false');
+          }
+        } catch (e) {
+          // Fallback: store without biometrics
+          await SecureStore.setItemAsync(SAVED_PASSWORD_KEY, password);
+          await SecureStore.setItemAsync(SAVED_PASSWORD_EMAIL_KEY, normalizedEmail);
+          await SecureStore.setItemAsync('password_stored_with_biometric', 'false');
+        }
 
         if (userId) {
           await SecureStore.setItemAsync('user_id', String(userId));
@@ -2658,10 +5082,21 @@ export default function App() {
   /**
    * Device-bound password reset using hardware device ID
    * Allows password reset if the user is on the same physical device that created the account.
+   * Uses iOS Vendor ID or Android ID which persists across app reinstalls.
    */
   const handleResetPassword = async () => {
     if (!email || !newPassword) {
       showDarkAlert('Error', 'Please enter your email and new password');
+      return;
+    }
+    if (newPassword.length < 6) {
+      showDarkAlert('Error', 'Password must be at least 6 characters');
+      return;
+    }
+
+    const normalizedEmail = normalizeEmailForDeviceUuid(email);
+    if (!normalizedEmail) {
+      showDarkAlert('Error', 'Please enter a valid email address');
       return;
     }
 
@@ -2670,29 +5105,55 @@ export default function App() {
     setAuthLoadingLabel('Verifying device...');
 
     try {
-      const result = await performDevicePasswordReset({
-        email,
-        newPassword,
-        serverType,
-        localHost,
-        remoteHost,
-      });
-
-      if (!result.success) {
-        if (result.hint === 'device_mismatch') {
-          showDarkAlert('Different Device', 'Password reset is only available on the device where you created your account.');
-        } else if (result.hint === 'no_hardware_id_stored') {
-          showDarkAlert('Feature Not Available', 'Password reset is not available for accounts created before this feature was added.');
-        } else {
-          showDarkAlert('Error', result.error);
+      // Get persistent hardware device ID (StealthCloud only) using deterministic device-derived ID
+      let hardwareDeviceId = null;
+      try {
+        if (Platform.OS === 'ios') {
+          hardwareDeviceId = await computeIosHardwareId();
+        } else if (Platform.OS === 'android') {
+          hardwareDeviceId = await computeAndroidHardwareId();
         }
+      } catch (e) {
+        console.log('Could not get hardware device ID:', e);
+      }
+
+      if (!hardwareDeviceId) {
+        showDarkAlert(
+          'Device ID Unavailable',
+          'Could not retrieve device identifier. Password reset requires device verification. Please ensure you registered on this device.'
+        );
+        setLoadingSafe(false);
         return;
       }
+
+      setAuthLoadingLabel('Resetting password...');
+      const baseUrl = computeServerUrl(serverType, localHost, remoteHost);
+      await axios.post(`${baseUrl}/api/reset-password-device`, {
+        email: normalizedEmail,
+        hardware_device_id: hardwareDeviceId,
+        newPassword
+      });
 
       showDarkAlert('Success', 'Your password has been reset. Please login with your new password.');
       setPassword(newPassword);
       setAuthMode('login');
       setNewPassword('');
+    } catch (error) {
+      console.error('Reset password error:', error);
+      const hint = error.response?.data?.hint;
+      if (hint === 'device_mismatch') {
+        showDarkAlert(
+          'Different Device',
+          'Password reset is only available on the device where you created your account. This appears to be a different device.'
+        );
+      } else if (hint === 'no_hardware_id_stored') {
+        showDarkAlert(
+          'Feature Not Available',
+          'Password reset is not available for accounts created before this feature was added. Please contact support.'
+        );
+      } else {
+        showDarkAlert('Error', error.response?.data?.error || 'Failed to reset password');
+      }
     } finally {
       setLoadingSafe(false);
       setAuthLoadingLabel('Signing in...');
@@ -2708,47 +5169,74 @@ export default function App() {
     setBackgroundWarnEligibleSafe(false);
     setWasBackgroundedDuringWorkSafe(false);
     setLoadingSafe(true);
+    setStatus('Analyzing files...');
 
     try {
-      const result = await startExactDuplicatesScanCore({
+      // Request permission
+      const permission = await MediaLibrary.requestPermissionsAsync();
+      if (permission.status !== 'granted') {
+        showDarkAlert('Permission needed', 'We need access to photos to safely scan for duplicates.');
+        setLoadingSafe(false);
+        return;
+      }
+
+      // iOS: require full access
+      if (Platform.OS === 'ios' && permission.accessPrivileges && permission.accessPrivileges !== 'all') {
+        showDarkAlert(
+          'Limited Photos Access',
+          `Clean Duplicates needs Full Access to your Photos library.\n\nGo to Settings → ${APP_DISPLAY_NAME} → Photos → Full Access.`
+        );
+        setLoadingSafe(false);
+        return;
+      }
+
+      // Import scanner module
+      const DuplicateScanner = require('./duplicateScanner').default;
+
+      // Collect all photos
+      setStatus('Collecting photos...');
+      const assets = await DuplicateScanner.collectAllPhotoAssets();
+
+      if (!assets || assets.length === 0) {
+        showDarkAlert('No Media', 'No photos were found on this device.');
+        setLoadingSafe(false);
+        return;
+      }
+
+      setStatus(`Analyzing ${assets.length} photos...`);
+
+      // Scan for duplicates
+      const { duplicateGroups, stats } = await DuplicateScanner.scanExactDuplicates({
+        assets,
         resolveReadableFilePath,
-        onStatus: setStatus,
-        onProgress: setProgress,
+        onProgress: (hashedCount, totalCount, lastHash) => {
+          setStatus(`Analyzing: ${hashedCount}/${totalCount} photos...`);
+          setProgress(totalCount > 0 ? hashedCount / totalCount : 0);
+        }
       });
 
-      if (result.error) {
-        if (result.error.includes('Limited')) {
-          showDarkAlert('Limited Photos Access', `Clean Duplicates needs Full Access to your Photos library.\n\nGo to Settings → ${APP_DISPLAY_NAME} → Photos → Full Access.`);
-        } else if (result.error.includes('permission')) {
-          showDarkAlert('Permission needed', 'We need access to photos to safely scan for duplicates.');
-        } else {
-          showDarkAlert('Error', result.error);
-        }
-        return;
-      }
-
-      if (result.noAssets) {
-        showDarkAlert('No Media', 'No photos were found on this device.');
-        return;
-      }
-
-      if (result.noDuplicates) {
+      if (duplicateGroups.length === 0) {
+        const note = DuplicateScanner.buildNoResultsNote(stats);
         setStatus('No best matches found');
-        showDarkAlert('Best Matches', 'No best matches found.' + (result.note || ''));
+        showDarkAlert('Best Matches', 'No best matches found.' + note);
+        setLoadingSafe(false);
+        setBackgroundWarnEligibleSafe(false);
+        setWasBackgroundedDuringWorkSafe(false);
         return;
       }
 
-      const DuplicateScanner = require('./duplicateScanner').default;
-      const duplicateCount = DuplicateScanner.countDuplicates(result.groups);
+      // Format for review UI
+      const duplicateCount = DuplicateScanner.countDuplicates(duplicateGroups);
+      const reviewGroups = DuplicateScanner.formatDuplicateGroupsForReview(duplicateGroups);
 
       setDuplicateReview({
         mode: 'pixel-hash',
-        duplicateCount: result.totalDuplicates,
-        groupCount: result.groups.length,
-        groups: result.groups
+        duplicateCount,
+        groupCount: duplicateGroups.length,
+        groups: reviewGroups
       });
 
-      setStatus(`Found ${result.totalDuplicates} best photo matches in ${result.groups.length} group${result.groups.length !== 1 ? 's' : ''}`);
+      setStatus(`Found ${duplicateCount} best photo matches in ${duplicateGroups.length} group${duplicateGroups.length !== 1 ? 's' : ''}`);
     } catch (error) {
       console.error('Clean duplicates error:', error);
       setStatus('Error during duplicate cleanup: ' + error.message);
@@ -2767,11 +5255,30 @@ export default function App() {
   const logout = async (opts = null) => {
     const forgetCredentials = !!(opts && opts.forgetCredentials);
 
-    // Use core logout logic from authHelpers
-    await logoutCore({ forgetCredentials });
+    // Always clear token on logout - user must re-authenticate
+    // Token will be regenerated on next successful login
+    await SecureStore.deleteItemAsync('auth_token');
+    await SecureStore.deleteItemAsync('user_id');
+
+    // Set flag to prevent biometric auto-login on next app launch
+    // User explicitly logged out, so they should see login screen
+    await SecureStore.setItemAsync('user_logged_out', 'true');
+
+    // Only delete saved credentials if explicitly forgetting
+    // This allows manual re-login without re-entering password
+    if (forgetCredentials) {
+      await SecureStore.deleteItemAsync('user_email');
+      await SecureStore.deleteItemAsync('device_uuid');
+      await SecureStore.deleteItemAsync(SAVED_PASSWORD_KEY);
+      await SecureStore.deleteItemAsync(SAVED_PASSWORD_EMAIL_KEY);
+    }
 
     // Always clear cached master key on logout
     await clearStealthCloudMasterKeyCache();
+
+    // NOTE: Do NOT clear cache on logout - this causes data to not show on app restart
+    // Cache contains thumbnails and other data that should persist across sessions
+    // Only clear cache when user explicitly requests it or on account deletion
 
     // Clear StealthCloud usage data so it re-fetches on next login
     setStealthUsage(null);
@@ -2864,65 +5371,264 @@ export default function App() {
       return stealthCloudBackup();
     }
 
+    // Show status immediately on button press
+    setStatus('Preparing backup...');
+    setProgress(0);
     setLoadingSafe(true);
+
+    const permission = await MediaLibrary.requestPermissionsAsync();
+    if (!permission || permission.status !== 'granted') {
+      showDarkAlert('Permission needed', 'We need access to photos to back them up.');
+      setLoadingSafe(false);
+      setStatus('');
+      return;
+    }
+
+    if (Platform.OS === 'ios' && permission.accessPrivileges && permission.accessPrivileges !== 'all') {
+      setStatus('Limited photo access. Please allow full access to back up.');
+      showDarkAlert(
+        'Limited Photos Access',
+        `Backup needs Full Access to your Photos library.\n\nGo to Settings → ${APP_DISPLAY_NAME} → Photos → Full Access.`
+      );
+      setLoadingSafe(false);
+      return;
+    }
     setBackgroundWarnEligibleSafe(!autoUploadEnabledRef.current);
     setWasBackgroundedDuringWorkSafe(false);
 
     try {
-      const result = await localRemoteBackupCore({
-        getAuthHeaders,
-        getServerUrl,
-        resolveReadableFilePath,
-        ensureAutoUploadPolicyAllowsWorkIfBackgrounded,
-        fastMode: fastModeEnabledRef.current,
-        onStatus: setStatus,
-        onProgress: setProgress,
-      });
+      console.log('\n🔍 ===== BACKUP TRACE START =====');
 
-      if (result.permissionDenied) {
-        showDarkAlert('Permission needed', 'We need access to photos to back them up.');
-        setStatus('');
-        return;
+      // 1. Get Server List (with pagination to get ALL files)
+      const config = await getAuthHeaders();
+      const SERVER_URL = getServerUrl();
+      console.log('Using server URL for backup:', SERVER_URL);
+      const allServerFiles = await fetchAllServerFilesPaged(SERVER_URL, config);
+
+      console.log(`\n☁️  Server response: ${allServerFiles.length} files`);
+
+      const serverFiles = new Set(
+        allServerFiles
+          .map(f => normalizeFilenameForCompare(f && f.filename ? f.filename : null))
+          .filter(Boolean)
+      );
+
+      console.log(`📊 Server files (unique, lowercase): ${serverFiles.size}`);
+
+      // 2. Exclude files already in app album to prevent re-uploading restored files
+      const albums = await MediaLibrary.getAlbumsAsync();
+      console.log(`📂 All albums: ${albums.map(a => `${a.title} (${a.assetCount})`).join(', ')}`);
+
+      const photoSyncAlbum = findFirstAlbumByTitle(albums, [PHOTO_ALBUM_NAME, LEGACY_PHOTO_ALBUM_NAME]);
+      let excludedIds = new Set();
+
+      if (photoSyncAlbum) {
+        excludedIds = await buildLocalAssetIdSetPaged({ album: photoSyncAlbum });
+        console.log(`📂 Album "${photoSyncAlbum.title}" has ${excludedIds.size} files (will exclude)`);
       }
 
-      if (result.limitedAccess) {
-        setStatus('Limited photo access. Please allow full access to back up.');
-        showDarkAlert(
-          'Limited Photos Access',
-          `Backup needs Full Access to your Photos library.\n\nGo to Settings → ${APP_DISPLAY_NAME} → Photos → Full Access.`
-        );
-        return;
+      // 3. Scan local assets (paged) and decide which are missing on the server
+      let after = null;
+      let totalCount = null;
+      let checkedCount = 0;
+      const toUpload = [];
+      const duplicateFilenames = {};
+
+      while (true) {
+        const page = await MediaLibrary.getAssetsAsync({
+          first: 500,
+          after: after || undefined,
+          mediaType: ['photo', 'video'],
+        });
+
+        if (totalCount === null && page && typeof page.totalCount === 'number') {
+          totalCount = page.totalCount;
+        }
+
+        const pageAssets = page && Array.isArray(page.assets) ? page.assets : [];
+        if (pageAssets.length === 0) {
+          if (checkedCount === 0) {
+            setProgress(1);
+            setStatus('No files on device');
+            await sleep(1500);
+            setStatus('Idle');
+            setLoadingSafe(false);
+            setBackgroundWarnEligibleSafe(false);
+            setProgress(0);
+            return;
+          }
+          break;
+        }
+
+        for (const asset of pageAssets) {
+          if (excludedIds.has(asset.id)) continue;
+          checkedCount += 1;
+          setStatus(`Analyzing ${checkedCount} of ${totalCount || '?'}`);
+          if (totalCount) setProgress(checkedCount / totalCount);
+
+          let actualFilename = normalizeFilenameForCompare(asset && asset.filename ? asset.filename : null);
+          if (Platform.OS === 'ios' || !actualFilename) {
+            try {
+              const assetInfo = await MediaLibrary.getAssetInfoAsync(asset.id);
+              actualFilename = normalizeFilenameForCompare(assetInfo && assetInfo.filename ? assetInfo.filename : null) || actualFilename;
+            } catch (e) {
+              actualFilename = actualFilename;
+            }
+          }
+
+          if (!actualFilename) continue;
+
+          if (duplicateFilenames[actualFilename]) {
+            duplicateFilenames[actualFilename]++;
+          } else {
+            duplicateFilenames[actualFilename] = 1;
+          }
+
+          const exists = serverFiles.has(actualFilename);
+          if (!exists) {
+            toUpload.push(asset);
+          }
+        }
+
+        after = page && page.endCursor ? page.endCursor : null;
+        if (!page || page.hasNextPage !== true) break;
       }
 
-      if (result.noFiles) {
-        setProgress(1);
-        setStatus('No files on device');
-        await sleep(1500);
-        setStatus('Idle');
-        setProgress(0);
-        return;
-      }
+      console.log(`📊 Assets to backup (after excluding album): ${checkedCount}`);
+      // Status will be updated below based on what we found
 
-      if (result.noFilesToBackup) {
+      if (checkedCount === 0) {
         setStatus('No files to backup');
         showDarkAlert('No Photos', 'No photos or videos found on device.');
+        setLoadingSafe(false);
+        setBackgroundWarnEligibleSafe(false);
+        setWasBackgroundedDuringWorkSafe(false);
         return;
       }
 
-      if (result.alreadyBackedUp) {
-        setStatus(`All ${result.checkedCount} files already backed up.`);
-        showDarkAlert('Up to Date', `All ${result.checkedCount} photos & videos are already on the server.`);
+      // Log device duplicates
+      const deviceDuplicates = Object.entries(duplicateFilenames).filter(([_, count]) => count > 1);
+      if (deviceDuplicates.length > 0) {
+        console.log(`\n📱 Device has ${deviceDuplicates.length} duplicate filenames:`);
+        deviceDuplicates.forEach(([filename, count]) => {
+          console.log(`  - ${filename}: ${count} copies`);
+        });
+      }
+
+      console.log(`Local: ${checkedCount}, Server: ${serverFiles.size}, To upload: ${toUpload.length}`);
+
+      if (toUpload.length === 0) {
+        setStatus(`All ${checkedCount} files already backed up.`);
+        showDarkAlert('Up to Date', `All ${checkedCount} photos & videos are already on the server.`);
+        setLoadingSafe(false);
+        setBackgroundWarnEligibleSafe(false);
+        setWasBackgroundedDuringWorkSafe(false);
         return;
       }
 
-      const { uploaded, skipped, failed } = result;
+      // Brief pause before starting uploads
+      await new Promise(resolve => setTimeout(resolve, 500));
+
+      // 4. Upload Loop with per-file error handling (parallel)
+      let successCount = 0;
+      let duplicateCount = 0;
+      let failedCount = 0;
+      const failedFiles = [];
+      let processedCount = 0;
+
+      // Concurrency: Fast Mode Android=10 / iOS=8; Slow Mode Android=5 / iOS=4
+      const maxParallelUploads = fastModeEnabledRef.current
+        ? (Platform.OS === 'android' ? 10 : 8)
+        : (Platform.OS === 'android' ? 5 : 4);
+      const runUpload = createConcurrencyLimiter(maxParallelUploads);
+
+      const uploadTasks = toUpload.map((asset, idx) => runUpload(async () => {
+        try {
+          if (!(await ensureAutoUploadPolicyAllowsWorkIfBackgrounded())) return;
+
+          // Get file info
+          const assetInfo = await MediaLibrary.getAssetInfoAsync(asset.id);
+          const resolved = await resolveReadableFilePath({ assetId: asset.id, assetInfo });
+          const filePath = resolved && resolved.filePath ? resolved.filePath : null;
+
+          if (!filePath) {
+            console.warn(`Skipping ${asset.filename}: no URI`);
+            failedCount++;
+            failedFiles.push(asset.filename);
+            return;
+          }
+
+          // iOS fix: Use the actual filename from assetInfo, not the UUID
+          const actualFilename = assetInfo.filename || asset.filename;
+
+          const mime = getMimeFromFilename(actualFilename, asset.mediaType);
+          const fileUri = filePath.startsWith('file://') ? filePath : `file://${filePath}`;
+
+          // Mobile: use FOREGROUND uploads
+          const sessionTypeUpload = FileSystem.FileSystemSessionType.FOREGROUND;
+          const uploadRes = await FileSystem.uploadAsync(`${SERVER_URL}/api/upload/raw`, fileUri, {
+            httpMethod: 'POST',
+            uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT,
+            sessionType: sessionTypeUpload,
+            headers: {
+              ...config.headers,
+              'Content-Type': mime,
+              'X-Filename': actualFilename,
+            }
+          });
+
+          if (!uploadRes || uploadRes.status < 200 || uploadRes.status >= 300) {
+            console.error(`✗ Upload failed for ${actualFilename}: HTTP ${uploadRes?.status || 'unknown'} - ${uploadRes?.body || 'no response'}`);
+            failedCount++;
+            failedFiles.push(actualFilename);
+            return;
+          }
+
+          let parsed = null;
+          try {
+            parsed = uploadRes && uploadRes.body ? JSON.parse(uploadRes.body) : null;
+          } catch (e) { parsed = null; }
+
+          if (parsed && parsed.duplicate) {
+            duplicateCount++;
+            console.log(`⊘ Skipped (duplicate): ${actualFilename}`);
+          } else {
+            successCount++;
+            console.log(`✓ Uploaded: ${actualFilename}`);
+          }
+        } catch (fileError) {
+          console.error(`✗ Failed to upload ${asset.filename}:`, fileError.message);
+          failedCount++;
+          failedFiles.push(asset.filename);
+        } finally {
+          processedCount++;
+          setStatus(`Backing up ${processedCount} of ${toUpload.length}`);
+          setProgress(processedCount / toUpload.length);
+        }
+      }));
+
+      await Promise.all(uploadTasks);
+
+      // Show detailed completion status
+      console.log('\n📊 ===== BACKUP SUMMARY =====');
+      console.log(`Total on device: ${totalCount || checkedCount}`);
+      console.log(`Album excluded: ${excludedIds.size}`);
+      console.log(`To check: ${checkedCount}`);
+      console.log(`On server before: ${serverFiles.size}`);
+      console.log(`Marked for upload: ${toUpload.length}`);
+      console.log(`Actually uploaded: ${successCount}`);
+      console.log(`Duplicates skipped: ${duplicateCount}`);
+      console.log(`Failed: ${failedCount}`);
+      console.log('===== END BACKUP TRACE =====\n');
+
+      const skippedCount = checkedCount - toUpload.length + duplicateCount;
       setStatus('Backup complete');
-      showResultAlert('backup', { uploaded, skipped, failed });
-      setProgress(0);
+      showResultAlert('backup', { uploaded: successCount, skipped: skippedCount, failed: failedCount });
+      setProgress(0); // Reset progress after completion
     } catch (error) {
       console.error(error);
       setStatus('Backup failed');
-      setProgress(0);
+      setProgress(0); // Reset progress on error
       showResultAlert('backup', { error: error && error.message ? error.message : 'Unknown error' });
     } finally {
       setLoadingSafe(false);
@@ -2949,10 +5655,13 @@ export default function App() {
       return stealthCloudRestore(opts);
     }
 
+    // Show status immediately on button press
     setStatus('Preparing sync...');
     setProgress(0);
     setLoadingSafe(true);
 
+    // Request full media library permission (read is required to check what already exists locally,
+    // and write is required to save restored items)
     const permission = await MediaLibrary.requestPermissionsAsync();
     if (permission.status !== 'granted') {
       showDarkAlert('Permission Required', 'Media library permission is required to sync photos to your gallery.');
@@ -2963,11 +5672,12 @@ export default function App() {
       return;
     }
 
+    // iOS: if user selected "Limited" photo access, we cannot reliably compare filenames or sync.
     if (Platform.OS === 'ios' && permission.accessPrivileges && permission.accessPrivileges !== 'all') {
       setStatus('Limited photo access. Please allow full access to sync from cloud.');
       showDarkAlert(
         'Limited Photos Access',
-        `Sync from Cloud needs Full Access to your Photos library.\n\nGo to Settings → ${APP_DISPLAY_NAME} → Photos → Full Access.`
+        `Sync from Cloud needs Full Access to your Photos library to check what already exists and save new items.\n\nGo to Settings → ${APP_DISPLAY_NAME} → Photos → Full Access.`
       );
       setLoadingSafe(false);
       setBackgroundWarnEligibleSafe(false);
@@ -2979,52 +5689,198 @@ export default function App() {
     setBackgroundWarnEligibleSafe(true);
     setWasBackgroundedDuringWorkSafe(false);
 
-    try {
-      const config = await getAuthHeaders();
-      const SERVER_URL = getServerUrl();
+    console.log('\n⬇️  ===== RESTORE TRACE START =====');
 
+    setProgress(0); // Reset progress
+
+    try {
+      // 1. Get Server Files (with pagination to get ALL files)
+      const config = await getAuthHeaders();
+      let serverFiles = await fetchAllServerFilesPaged(getServerUrl(), config);
+
+      if (opts && Array.isArray(opts.onlyFilenames) && opts.onlyFilenames.length > 0) {
+        const allowed = new Set(opts.onlyFilenames.map(v => normalizeFilenameForCompare(v)).filter(Boolean));
+        serverFiles = (serverFiles || []).filter(f => {
+          const nf = normalizeFilenameForCompare(f && f.filename ? f.filename : null);
+          return nf ? allowed.has(nf) : false;
+        });
+      }
+      console.log(`☁️  Server has ${serverFiles.length} files`);
+
+      // 2. Get local device photos to check what already exists
       setStatus('Analyzing local files...');
       const localIndex = await buildLocalFilenameSetPaged({ mediaType: ['photo', 'video'] });
       const localFilenames = localIndex.set;
+      console.log(`📱 Scanned assets on device: ${localIndex.scanned}${localIndex.totalCount ? `/${localIndex.totalCount}` : ''}`);
+      console.log(`📊 Unique filenames on device: ${localFilenames.size}`);
 
-      const result = await localRemoteRestoreCore({
-        config,
-        SERVER_URL,
-        localFilenames,
-        onlyFilenames: opts?.onlyFilenames || null,
-        onStatus: setStatus,
-        onProgress: setProgress,
-      });
-
-      if (result.noFiles) {
+      if (serverFiles.length === 0) {
         setProgress(1);
         setStatus('No files to sync');
         await sleep(800);
         showDarkAlert('No Files', 'There are no files on the server to download.');
         await sleep(500);
+        setLoadingSafe(false);
+        setBackgroundWarnEligibleSafe(false);
+        setWasBackgroundedDuringWorkSafe(false);
         setProgress(0);
         return;
       }
 
-      if (result.allSynced) {
+      // Only download files that don't exist locally (case-insensitive check)
+      const toDownload = serverFiles.filter(f => {
+        const normalizedFilename = normalizeFilenameForCompare(f && f.filename ? f.filename : null);
+        const exists = normalizedFilename ? localFilenames.has(normalizedFilename) : false;
+        if (exists) {
+          console.log(`✓ Skipping ${f.filename} - already exists locally`);
+        } else {
+          console.log(`⬇️ Will download ${f.filename} - not found locally`);
+        }
+        return !exists;
+      });
+
+      console.log(`\n📊 Restore Summary:`);
+      console.log(`Server: ${serverFiles.length}, Local: ${localFilenames.size}, To download: ${toDownload.length}`);
+
+      if (toDownload.length === 0) {
         setProgress(1);
-        setStatus(`All ${result.serverTotal} files already synced.`);
+        setStatus(`All ${serverFiles.length} files already synced.`);
         await sleep(800);
-        showDarkAlert('Up to Date', `All ${result.serverTotal} server files are already on your device.`);
+        showDarkAlert('Up to Date', `All ${serverFiles.length} server files are already on your device.`);
         await sleep(500);
+        setLoadingSafe(false);
+        setBackgroundWarnEligibleSafe(false);
+        setWasBackgroundedDuringWorkSafe(false);
         setProgress(0);
         return;
       }
+
+      // Brief pause before starting downloads
+      await new Promise(resolve => setTimeout(resolve, 500));
+
+      // 3. Download Loop - download new files in parallel
+      const downloadedUris = [];
+      let processedCount = 0;
+
+      // Fast Mode: parallel downloads (Android=10, iOS=8)
+      // Slow Mode: Android=5, iOS=4
+      const maxParallelDownloads = fastModeEnabledRef.current
+        ? (Platform.OS === 'android' ? 10 : 8)
+        : (Platform.OS === 'android' ? 5 : 4);
+      const runDownload = createConcurrencyLimiter(maxParallelDownloads);
+
+      const downloadTasks = toDownload.map((file) => runDownload(async () => {
+        try {
+          const downloadPath = FileSystem.cacheDirectory + file.filename;
+
+          // Delete cached file if it exists to prevent conflicts
+          const cachedFileInfo = await FileSystem.getInfoAsync(downloadPath);
+          if (cachedFileInfo.exists) {
+            await FileSystem.deleteAsync(downloadPath, { idempotent: true });
+          }
+
+          const downloadRes = await FileSystem.downloadAsync(
+            `${getServerUrl()}/api/files/${file.filename}`,
+            downloadPath,
+            { headers: config.headers }
+          );
+
+          if (downloadRes.status === 200) {
+            const fileInfo = await FileSystem.getInfoAsync(downloadRes.uri);
+            if (fileInfo.exists && fileInfo.size > 0) {
+              downloadedUris.push({ uri: downloadRes.uri, filename: file.filename });
+              console.log(`Downloaded ${file.filename} (${fileInfo.size} bytes)`);
+            }
+          }
+        } catch (fileError) {
+          console.error(`Error downloading ${file.filename}:`, fileError);
+        } finally {
+          processedCount++;
+          setStatus(`Syncing ${processedCount} of ${toDownload.length}`);
+        }
+      }));
+
+      await Promise.all(downloadTasks);
+
+      // 4. Save all downloaded files to gallery in batch
+      let successCount = 0;
+      let downloadFailedCount = toDownload.length - downloadedUris.length;
+      if (downloadedUris.length > 0) {
+        setStatus('Saving to gallery...');
+        try {
+          // Get or create app album
+          const albums = await MediaLibrary.getAlbumsAsync();
+          let photoSyncAlbum = findFirstAlbumByTitle(albums, [PHOTO_ALBUM_NAME, LEGACY_PHOTO_ALBUM_NAME]);
+
+          // Save files to library using saveToLibraryAsync (asks permission once)
+          const assets = [];
+          for (const item of downloadedUris) {
+            try {
+              const asset = await MediaLibrary.saveToLibraryAsync(item.uri);
+              assets.push(asset);
+              successCount++;
+            } catch (err) {
+              console.log(`Could not save ${item.filename}: ${err.message}`);
+            }
+          }
+
+          // Add all assets to album at once
+          if (assets.length > 0) {
+            if (photoSyncAlbum) {
+              await MediaLibrary.addAssetsToAlbumAsync(assets, photoSyncAlbum, false);
+            } else {
+              await MediaLibrary.createAlbumAsync(PHOTO_ALBUM_NAME, assets[0], false);
+              if (assets.length > 1) {
+                const newAlbums = await MediaLibrary.getAlbumsAsync();
+                photoSyncAlbum = findFirstAlbumByTitle(newAlbums, [PHOTO_ALBUM_NAME, LEGACY_PHOTO_ALBUM_NAME]);
+                if (photoSyncAlbum) {
+                  await MediaLibrary.addAssetsToAlbumAsync(assets.slice(1), photoSyncAlbum, false);
+                }
+              }
+            }
+            console.log(`Saved ${assets.length} files to ${PHOTO_ALBUM_NAME} album`);
+          }
+
+          // Clean up cache files after saving to gallery
+          for (const item of downloadedUris) {
+            try {
+              await FileSystem.deleteAsync(item.uri, { idempotent: true });
+              console.log(`Cleaned up cache: ${item.filename}`);
+            } catch (err) {
+              console.log(`Could not delete cache file ${item.filename}: ${err.message}`);
+            }
+          }
+        } catch (galleryError) {
+          console.log(`Gallery save error: ${galleryError.message}`);
+        }
+      }
+
+      console.log('\n📊 ===== RESTORE SUMMARY =====');
+      console.log(`Server files: ${serverFiles.length}`);
+      console.log(`Device assets before: ${localIndex.scanned}${localIndex.totalCount ? `/${localIndex.totalCount}` : ''}`);
+      console.log(`Unique filenames on device: ${localFilenames.size}`);
+      console.log(`Marked for download: ${toDownload.length}`);
+      console.log(`Successfully downloaded to cache: ${downloadedUris.length}`);
+      console.log(`Successfully saved to gallery: ${successCount}`);
+      console.log(`Failed to download: ${downloadFailedCount}`);
+      console.log(`Failed to save to gallery: ${downloadedUris.length - successCount}`);
+      console.log('===== END RESTORE TRACE =====\n');
 
       setStatus('Sync complete');
-      setProgress(0);
-      showResultAlert('sync', { downloaded: result.restored, skipped: result.skipped, failed: result.failed });
+      setProgress(0); // Reset progress after completion
+
+      const skippedCount = serverFiles.length - toDownload.length;
+      const totalFailedCount = downloadFailedCount + (downloadedUris.length - successCount);
+      showResultAlert('sync', { downloaded: successCount, skipped: skippedCount, failed: totalFailedCount });
+
+      // Clear sync picker state to force refresh on next open
+      // This prevents showing stale data (e.g., files that were just downloaded)
       resetSyncPickerState();
 
     } catch (error) {
       console.error('Restore error:', error);
       setStatus('Sync failed');
-      setProgress(0);
+      setProgress(0); // Reset progress on error
       showResultAlert('sync', { error: error.message });
     } finally {
       setLoadingSafe(false);
@@ -4042,7 +6898,7 @@ export default function App() {
                           <View style={styles.usageItem}>
                             <Text style={styles.serverInfoLabel}>Status</Text>
                             <Text style={[styles.serverInfoText, isExpired && { color: '#FF6B6B' }, isGrace && !isExpired && { color: '#FFB347' }]}>
-                              {subStatus === 'active' ? (sub.expiresAt ? `✓ Exp ${new Date(sub.expiresAt).toLocaleDateString()}` : '✓ Active') :
+                              {subStatus === 'active' ? '✓ Active' :
                                subStatus === 'trial' ? '🎁 Free Trial' :
                                subStatus === 'grace' ? `⚠️ Expired (${GRACE_PERIOD_DAYS} days to sync)` :
                                subStatus === 'grace_expired' ? '❌ Grace Period Ended' :
@@ -4142,22 +6998,6 @@ export default function App() {
               <View style={styles.resourceContent}>
                 <Text style={styles.resourceTitle}>GitHub</Text>
                 <Text style={styles.resourceDesc}>Download server & docs</Text>
-              </View>
-              <Text style={styles.resourceArrow}>→</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.resourceBtn}
-              onPress={() => {
-                const deleteAccountUrl = 'https://viktorvishyn369.github.io/PhotoLynk/delete-account.html';
-                Linking.openURL(deleteAccountUrl).catch(err => {
-                  showDarkAlert('Error', 'Could not open link');
-                });
-              }}>
-              <Text style={styles.resourceIcon}>🗑️</Text>
-              <View style={styles.resourceContent}>
-                <Text style={styles.resourceTitle}>Delete Account</Text>
-                <Text style={styles.resourceDesc}>Request account & data deletion</Text>
               </View>
               <Text style={styles.resourceArrow}>→</Text>
             </TouchableOpacity>
@@ -4644,15 +7484,15 @@ export default function App() {
               </TouchableOpacity>
             </View>
 
-            <ScrollView contentContainerStyle={serverType === 'stealthcloud' ? styles.syncPickerList : styles.pickerGrid}>
+            <ScrollView contentContainerStyle={styles.syncPickerList}>
               {syncPickerLoading ? (
                 <View style={{ width: '100%', paddingVertical: 32, alignItems: 'center' }}>
                   <ActivityIndicator size="small" color={THEME.secondary} />
                   <Text style={{ color: '#888', fontSize: 13, marginTop: 10 }}>Loading files...</Text>
                 </View>
-              ) : serverType === 'stealthcloud' ? (
+              ) : (
                 <>
-                  {/* StealthCloud: list view with icons (encrypted, no thumbnails) */}
+                  {/* File count header */}
                   <View style={{ paddingHorizontal: 12, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: '#222' }}>
                     <Text style={{ color: '#888', fontSize: 12 }}>
                       Showing {syncPickerItems.length}{syncPickerTotal > 0 ? ` of ${syncPickerTotal}` : ''} files
@@ -4660,12 +7500,17 @@ export default function App() {
                   </View>
 
                   {(syncPickerItems || []).map((it) => {
-                    const key = String(it && it.manifestId ? it.manifestId : '');
+                    const key = serverType === 'stealthcloud'
+                      ? String(it && it.manifestId ? it.manifestId : '')
+                      : String(it && it.filename ? it.filename : '');
                     if (!key) return null;
                     const selected = !!(syncPickerSelected && syncPickerSelected[key]);
+                    // Display filename (decrypted for StealthCloud, original for classic)
                     const displayName = it && it.filename ? it.filename : key;
+                    // Handle size: null means unknown, 0 means actually 0 bytes (treat as unknown too)
                     const rawSize = it && typeof it.size === 'number' ? it.size : null;
                     const fileSize = rawSize !== null && rawSize > 0 ? rawSize : null;
+                    // Determine file type from mediaType or extension
                     const mediaType = it && it.mediaType ? it.mediaType : null;
                     const ext = (displayName || '').split('.').pop()?.toLowerCase() || '';
                     const isVideo = mediaType === 'video' || ['mp4', 'mov', 'avi', 'mkv', 'm4v', '3gp', 'webm'].includes(ext);
@@ -4676,6 +7521,7 @@ export default function App() {
                         key={key}
                         style={[styles.syncPickerRow, selected && styles.syncPickerRowSelected]}
                         onPress={() => toggleSyncPickerSelected(key)}>
+                        {/* Always show file type icon - thumbnails not available for encrypted files */}
                         <View style={{ width: 44, height: 44, borderRadius: 6, marginRight: 10, backgroundColor: isVideo ? '#1a1a2e' : '#1e3a2e', alignItems: 'center', justifyContent: 'center' }}>
                           <Text style={{ fontSize: 22 }}>{fileIcon}</Text>
                         </View>
@@ -4692,9 +7538,17 @@ export default function App() {
                     );
                   })}
 
+                  {/* Load More button */}
                   {syncPickerHasMore && (
                     <TouchableOpacity
-                      style={{ marginVertical: 16, marginHorizontal: 12, paddingVertical: 14, backgroundColor: THEME.secondary, borderRadius: 10, alignItems: 'center' }}
+                      style={{
+                        marginVertical: 16,
+                        marginHorizontal: 12,
+                        paddingVertical: 14,
+                        backgroundColor: THEME.secondary,
+                        borderRadius: 10,
+                        alignItems: 'center'
+                      }}
                       onPress={loadMoreSyncPickerItems}
                       disabled={syncPickerLoadingMore}>
                       {syncPickerLoadingMore ? (
@@ -4706,56 +7560,6 @@ export default function App() {
                       )}
                     </TouchableOpacity>
                   )}
-                </>
-              ) : (
-                <>
-                  {/* Local/Remote: grid view with real thumbnails */}
-                  {(syncPickerItems || []).map((it) => {
-                    const key = String(it && it.filename ? it.filename : '');
-                    if (!key) return null;
-                    const selected = !!(syncPickerSelected && syncPickerSelected[key]);
-                    const ext = (key || '').split('.').pop()?.toLowerCase() || '';
-                    const isVideo = ['mp4', 'mov', 'avi', 'mkv', 'm4v', '3gp', 'webm'].includes(ext);
-                    const thumbUri = it.thumbUri;
-                    return (
-                      <TouchableOpacity
-                        key={key}
-                        style={[styles.pickerItem, selected && styles.pickerItemSelected]}
-                        onPress={() => toggleSyncPickerSelected(key)}>
-                        {thumbUri ? (
-                          <Image source={{ uri: thumbUri }} style={styles.pickerThumb} />
-                        ) : (
-                          <View style={[styles.pickerThumb, { backgroundColor: isVideo ? '#1a1a2e' : '#1e3a2e', alignItems: 'center', justifyContent: 'center' }]}>
-                            <Text style={{ fontSize: 32 }}>{isVideo ? '🎬' : '📄'}</Text>
-                          </View>
-                        )}
-                        {isVideo && (
-                          <View style={styles.pickerBadge}>
-                            <Text style={styles.pickerBadgeText}>VIDEO</Text>
-                          </View>
-                        )}
-                        {selected && (
-                          <View style={styles.pickerCheck}>
-                            <Text style={styles.pickerCheckText}>✓</Text>
-                          </View>
-                        )}
-                      </TouchableOpacity>
-                    );
-                  })}
-
-                  <View style={{ width: '100%', paddingVertical: 12 }}>
-                    {syncPickerLoadingMore ? (
-                      <ActivityIndicator size="small" color={THEME.secondary} />
-                    ) : (
-                      syncPickerHasMore && (
-                        <TouchableOpacity
-                          style={[styles.overlayBtnSecondary, glassModeEnabled && styles.overlayBtnSecondaryGlass]}
-                          onPress={loadMoreSyncPickerItems}>
-                          <Text style={styles.overlayBtnSecondaryText}>Load more</Text>
-                        </TouchableOpacity>
-                      )
-                    )}
-                  </View>
                 </>
               )}
             </ScrollView>
