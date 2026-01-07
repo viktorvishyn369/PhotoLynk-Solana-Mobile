@@ -588,7 +588,7 @@ const uploadSingleAssetToStealthCloud = async ({
       { manifestId, encryptedManifest, chunkCount: chunkIds.length },
       { headers: config.headers, timeout: 30000 }
     );
-  }, { retries: 10, baseDelayMs: 1000, maxDelayMs: 30000, shouldRetry: shouldRetryChunkUpload });
+  }, { retries: 20, baseDelayMs: 2000, maxDelayMs: 30000, shouldRetry: shouldRetryChunkUpload });
 
   if (manifestResponse?.data?.skipped) {
     console.log(`Server rejected ${assetFilename} as duplicate (reason: ${manifestResponse.data.reason || 'unknown'})`);
@@ -633,6 +633,7 @@ export const stealthCloudBackupCore = async ({
   fastMode,
   onStatus,
   onProgress,
+  abortRef,
 }) => {
   onStatus('Requesting Photos permission...');
   const permission = await MediaLibrary.requestPermissionsAsync();
@@ -716,6 +717,12 @@ export const stealthCloudBackupCore = async ({
     }
 
     for (let j = 0; j < assets.length; j++) {
+      // Check abort signal
+      if (abortRef && abortRef.current) {
+        console.log('StealthCloud backup aborted by user');
+        return { uploaded, skipped, failed, aborted: true };
+      }
+
       const asset = assets[j];
       processedIndex += 1;
 
@@ -784,6 +791,7 @@ export const stealthCloudBackupSelectedCore = async ({
   fastMode,
   onStatus,
   onProgress,
+  abortRef,
 }) => {
   const list = Array.isArray(assets) ? assets.filter(a => a && a.id) : [];
   if (list.length === 0) {
@@ -833,6 +841,12 @@ export const stealthCloudBackupSelectedCore = async ({
   }
 
   for (let j = 0; j < list.length; j++) {
+    // Check abort signal
+    if (abortRef && abortRef.current) {
+      console.log('StealthCloud backup selected aborted by user');
+      return { uploaded, skipped, failed, aborted: true };
+    }
+
     const asset = list[j];
     const processedIndex = j + 1;
 

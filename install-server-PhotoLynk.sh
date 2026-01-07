@@ -740,6 +740,15 @@ EOF
 
   $SUDO systemctl daemon-reload
   $SUDO systemctl enable "$SERVICE_NAME"
+  
+  # Kill any process using port 3000 before restarting to avoid EADDRINUSE
+  if command -v lsof >/dev/null 2>&1; then
+    $SUDO kill $($SUDO lsof -t -i:3000) 2>/dev/null || true
+  else
+    $SUDO pkill -f "node.*server\.js" 2>/dev/null || true
+  fi
+  sleep 1
+  
   $SUDO systemctl restart "$SERVICE_NAME"
 
   # Run capacity generator at least once now, then enable periodic updates

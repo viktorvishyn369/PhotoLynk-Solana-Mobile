@@ -116,6 +116,7 @@ export const stealthCloudRestoreCore = async ({
   fastMode = false,
   onStatus = () => {},
   onProgress = () => {},
+  abortRef,
 }) => {
   let historyWrites = 0;
   const shouldRetryRestoreDownload = (e) => {
@@ -150,6 +151,12 @@ export const stealthCloudRestoreCore = async ({
   let downloadNum = 0;  // Counts actual downloads for status
 
   for (let i = 0; i < manifests.length; i++) {
+    // Check abort signal
+    if (abortRef && abortRef.current) {
+      console.log('StealthCloud restore aborted by user');
+      return { restored, skipped, failed, aborted: true };
+    }
+
     const mid = manifests[i].manifestId;
     
     try {
@@ -323,7 +330,7 @@ export const stealthCloudRestoreCore = async ({
         await FileSystem.deleteAsync(tmpChunkPath, { idempotent: true });
         await withRetries(async () => {
           await FileSystem.downloadAsync(`${SERVER_URL}/api/cloud/chunks/${chunkId}`, tmpChunkPath, { headers: config.headers });
-        }, { retries: 10, baseDelayMs: 1000, maxDelayMs: 30000, shouldRetry: shouldRetryRestoreDownload });
+        }, { retries: 20, baseDelayMs: 2000, maxDelayMs: 30000, shouldRetry: shouldRetryRestoreDownload });
         const chunkB64 = await FileSystem.readAsStringAsync(tmpChunkPath, { encoding: FileSystem.EncodingType.Base64 });
         await FileSystem.deleteAsync(tmpChunkPath, { idempotent: true });
         return chunkB64;
@@ -673,7 +680,7 @@ export const buildLocalDeduplicationIndex = async ({
         onProgress(hashScanned / totalToScan);
         // Show count: first 10 by 1, then every 5 (15, 20, 25...)
         if (hashScanned <= 10 || hashScanned % 5 === 0 || hashScanned === totalToScan) {
-          onStatus(`Analyzing ${hashScanned} of ${totalToScan}`);
+          onStatus(`Analyzing ${hashScanned}/${totalToScan} photos...`);
         }
       } catch (e) {
         // Skip files we can't hash

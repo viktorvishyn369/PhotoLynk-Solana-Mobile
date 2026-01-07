@@ -31,7 +31,7 @@ import {
 import Clipboard from '@react-native-clipboard/clipboard';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import FontAwesome5 from '@expo/vector-icons/FontAwesome5';
-import { styles, THEME } from './styles';
+import { styles, THEME, scale, scaleSpacing, isTablet } from './styles';
 import {
   sleep,
   withRetries,
@@ -268,6 +268,7 @@ export default function App() {
   const [deviceUuid, setDeviceUuid] = useState(null);
   const [status, setStatus] = useState('Idle');
   const [progress, setProgress] = useState(0);
+  const [progressAction, setProgressAction] = useState(null); // 'cleanup' | 'backup' | 'sync' | null
   const [duplicateReview, setDuplicateReview] = useState(null);
   const [loading, setLoading] = useState(false);
   const [wasBackgroundedDuringWork, setWasBackgroundedDuringWork] = useState(false);
@@ -288,6 +289,8 @@ export default function App() {
   const autoUploadNightRunnerActiveRef = useRef(false);
   const [autoUploadNightRunnerCancelRef] = useState({ current: false });
   const autoUploadNightRunnerSessionIdRef = useRef(0);
+  const abortOperationsRef = useRef(false);
+  const currentOperationIdRef = useRef(0);
   const autoUploadNightRunnerHeartbeatMsRef = useRef(0);
   const autoUploadNightRunnerStartingRef = useRef(false);
   const autoUploadNightNextTimerRef = useRef(null);
@@ -298,6 +301,36 @@ export default function App() {
   const autoUploadAssetLogMsRef = useRef(0);
   const autoUploadSummaryLogMsRef = useRef(0);
   const autoUploadRunnerExitLogMsRef = useRef(0);
+
+  // Cancels any in-flight user-initiated work (backup/sync/cleanup) before starting a new one
+  const cancelInFlightOperations = async () => {
+    abortOperationsRef.current = true;
+    currentOperationIdRef.current += 1; // Invalidate all previous operation callbacks
+    // Give in-flight loops a tick to observe the abort flag
+    await new Promise(resolve => setTimeout(resolve, 100));
+    // Reset abort flag so new operation can proceed
+    abortOperationsRef.current = false;
+    // Reset UI to a clean state
+    setLoadingSafe(false);
+    setBackgroundWarnEligibleSafe(false);
+    setWasBackgroundedDuringWorkSafe(false);
+    setProgress(0);
+    setProgressAction(null);
+    setStatus('');
+  };
+
+  // Wrapped setters that check operation ID to prevent stale callbacks from updating UI
+  const setStatusSafe = (operationId, statusText) => {
+    if (operationId === currentOperationIdRef.current) {
+      setStatus(statusText);
+    }
+  };
+
+  const setProgressSafe = (operationId, progressValue) => {
+    if (operationId === currentOperationIdRef.current) {
+      setProgress(progressValue);
+    }
+  };
 
   const logAutoUploadRunnerCondition = (reason, extra = null) => {
     try {
@@ -1342,6 +1375,14 @@ export default function App() {
       return;
     }
 
+    await cancelInFlightOperations();
+    const opId = currentOperationIdRef.current;
+    setLoadingSafe(true);
+    setBackgroundWarnEligibleSafe(!autoUploadEnabledRef.current);
+    setWasBackgroundedDuringWorkSafe(false);
+    setProgress(0);
+    setProgressAction('backup');
+
     if (Platform.OS === 'ios') {
       const ap = await getMediaLibraryAccessPrivileges(permission);
       if (ap && ap !== 'all') {
@@ -1359,10 +1400,6 @@ export default function App() {
       return;
     }
 
-    setLoadingSafe(true);
-    setBackgroundWarnEligibleSafe(!autoUploadEnabledRef.current);
-    setWasBackgroundedDuringWorkSafe(false);
-
     try {
       const result = await stealthCloudBackupSelectedCore({
         assets: list,
@@ -1371,9 +1408,14 @@ export default function App() {
         ensureStealthCloudUploadAllowed,
         ensureAutoUploadPolicyAllowsWorkIfBackgrounded,
         fastMode: fastModeEnabledRef.current,
-        onStatus: setStatus,
-        onProgress: setProgress,
+        onStatus: (s) => setStatusSafe(opId, s),
+        onProgress: (p) => setProgressSafe(opId, p),
+        abortRef: abortOperationsRef,
       });
+
+      if (result.aborted) {
+        return;
+      }
 
       if (result.notAllowed) {
         return;
@@ -1420,6 +1462,7 @@ export default function App() {
       return;
     }
 
+    await cancelInFlightOperations();
     if (!(await ensureAutoUploadPolicyAllowsWork({ userInitiated: true }))) {
       return;
     }
@@ -1432,6 +1475,7 @@ export default function App() {
     setBackgroundWarnEligibleSafe(!autoUploadEnabledRef.current);
     setWasBackgroundedDuringWorkSafe(false);
     setProgress(0);
+    setProgressAction('backup');
 
     try {
       const result = await localRemoteBackupSelectedCore({
@@ -1650,13 +1694,23 @@ export default function App() {
   };
 
   const startSimilarShotsReview = async () => {
+    await cancelInFlightOperations();
+    const opId = currentOperationIdRef.current;
     setBackgroundWarnEligibleSafe(false); setWasBackgroundedDuringWorkSafe(false); setLoadingSafe(true);
+    setProgress(0);
+    setProgressAction('cleanup');
     
     const result = await startSimilarShotsReviewCore({
       resolveReadableFilePath,
-      onStatus: setStatus,
-      onProgress: setProgress,
+      onStatus: (s) => setStatusSafe(opId, s),
+      onProgress: (p) => setProgressSafe(opId, p),
+      abortRef: abortOperationsRef,
     });
+
+    if (result.aborted) {
+      setLoadingSafe(false);
+      return;
+    }
 
     if (result.error) {
       setLoadingSafe(false);
@@ -1853,6 +1907,7 @@ export default function App() {
     if (loading) return;
     if (autoUploadNightRunnerActiveRef.current) return;
     setProgress(0);
+    setProgressAction(null);
     setStatus(`Idle • ${fastModeEnabled ? 'Fast' : 'Slow'} Mode`);
   }, [loading, view, status, fastModeEnabled]);
 
@@ -2200,9 +2255,13 @@ export default function App() {
       return;
     }
 
+    await cancelInFlightOperations();
+    const opId = currentOperationIdRef.current;
     setLoadingSafe(true);
     setBackgroundWarnEligibleSafe(!autoUploadEnabledRef.current);
     setWasBackgroundedDuringWorkSafe(false);
+    setProgress(0);
+    setProgressAction('backup');
 
     try {
       const result = await stealthCloudBackupCore({
@@ -2212,9 +2271,14 @@ export default function App() {
         ensureAutoUploadPolicyAllowsWorkIfBackgrounded,
         appStateRef,
         fastMode: fastModeEnabledRef.current,
-        onStatus: setStatus,
-        onProgress: setProgress,
+        onStatus: (s) => setStatusSafe(opId, s),
+        onProgress: (p) => setProgressSafe(opId, p),
+        abortRef: abortOperationsRef,
       });
+
+      if (result.aborted) {
+        return;
+      }
 
       if (result.permissionDenied) {
         showDarkAlert('Permission needed', 'We need access to photos to back them up.');
@@ -2275,10 +2339,13 @@ export default function App() {
    * 4. For each manifest: download chunks, decrypt, save to gallery
    */
   const stealthCloudRestore = async (opts = null) => {
+    await cancelInFlightOperations();
+    const opId = currentOperationIdRef.current;
     setLoadingSafe(true);
     setBackgroundWarnEligibleSafe(true);
     setWasBackgroundedDuringWorkSafe(false);
     setProgress(0);
+    setProgressAction('sync');
     setStatus('Preparing sync...');
 
     const permission = await MediaLibrary.requestPermissionsAsync();
@@ -2317,7 +2384,7 @@ export default function App() {
       let localBaseNameDates = new Map();
 
       if (localIndex.scanned > 0) {
-        setStatus(`Analyzing 1 of ${localIndex.scanned}`);
+        setStatus(`Analyzing 1/${localIndex.scanned} photos...`);
         const dedupIndex = await buildLocalDeduplicationIndex({
           totalToScan: localIndex.scanned,
           resolveReadableFilePath,
@@ -2354,9 +2421,14 @@ export default function App() {
         makeHistoryKey,
         manifestIds: opts?.manifestIds || null,
         fastMode: fastModeEnabledRef.current,
-        onStatus: setStatus,
-        onProgress: (p) => setProgress(p),
+        onStatus: (s) => setStatusSafe(opId, s),
+        onProgress: (p) => setProgressSafe(opId, p),
+        abortRef: abortOperationsRef,
       });
+
+      if (result.aborted) {
+        return;
+      }
 
       if (result.noBackups) {
         setProgress(1);
@@ -2632,11 +2704,67 @@ export default function App() {
         platform: Platform.OS,
       });
 
-      // Step 2: Generating token
+      // Step 2: Generating token / Authenticating with retry for StealthCloud
       setAuthLoadingLabel(type === 'register' ? 'Generating token...' : 'Authenticating...');
       await new Promise(resolve => setTimeout(resolve, 1000));
 
-      const res = await axios.post(authUrl, payload);
+      // StealthCloud retry logic with rotating status messages (server may be rebooting ~2-3 min)
+      const STEALTHCLOUD_MAX_RETRIES = 20; // ~3+ minutes of retries
+      const STEALTHCLOUD_RETRY_DELAY_MS = 10000; // 10 seconds between retries
+      const STEALTHCLOUD_RETRY_MESSAGES = [
+        'Connecting...',
+        'Establishing connection...',
+        'Reaching StealthCloud...',
+        'Waiting for server...',
+        'Retrying connection...',
+        'Still connecting...',
+        'Please wait...',
+        'Almost there...',
+      ];
+
+      let res;
+      let lastNetworkError = null;
+
+      if (effectiveType === 'stealthcloud') {
+        for (let attempt = 0; attempt < STEALTHCLOUD_MAX_RETRIES; attempt++) {
+          try {
+            res = await axios.post(authUrl, payload, { timeout: 15000 });
+            lastNetworkError = null;
+            break; // Success - exit retry loop
+          } catch (err) {
+            // Check if it's a retryable error:
+            // - Network errors (no response)
+            // - 5xx server errors (server down, Cloudflare 530, etc.)
+            const status = err.response?.status;
+            const isServerError = status && status >= 500 && status < 600;
+            const isNetworkError = !err.response;
+            
+            // 4xx errors are client errors - don't retry (wrong password, etc.)
+            if (err.response && !isServerError) {
+              throw err;
+            }
+            
+            // Retryable error - retry with rotating status message
+            lastNetworkError = err;
+            const msgIndex = attempt % STEALTHCLOUD_RETRY_MESSAGES.length;
+            setAuthLoadingLabel(STEALTHCLOUD_RETRY_MESSAGES[msgIndex]);
+            console.log(`StealthCloud connection attempt ${attempt + 1}/${STEALTHCLOUD_MAX_RETRIES} failed:`, 
+              isServerError ? `HTTP ${status}` : err?.message);
+            
+            if (attempt < STEALTHCLOUD_MAX_RETRIES - 1) {
+              await new Promise(resolve => setTimeout(resolve, STEALTHCLOUD_RETRY_DELAY_MS));
+            }
+          }
+        }
+        
+        // If all retries failed, throw the last error
+        if (lastNetworkError && !res) {
+          throw lastNetworkError;
+        }
+      } else {
+        // Local/Remote - no retry, fail immediately
+        res = await axios.post(authUrl, payload);
+      }
       await new Promise(resolve => setTimeout(resolve, 200));
 
       console.log('Attempting auth:', type, authUrl, {
@@ -2739,8 +2867,18 @@ export default function App() {
     } catch (error) {
       // Only log actual server errors, not Metro bundler noise
       if (error.response) {
-        console.error('Auth Error:', error.response.status, error.response.data);
-        showDarkAlert('Error', error.response?.data?.error || 'Connection failed');
+        const status = error.response.status;
+        console.error('Auth Error:', status, error.response.data);
+        
+        // 5xx errors after retries exhausted - server is down
+        if (status >= 500 && status < 600 && serverType === 'stealthcloud') {
+          showDarkAlert(
+            'Server Temporarily Unavailable',
+            'StealthCloud is currently undergoing maintenance. Please try again in a few minutes.'
+          );
+        } else {
+          showDarkAlert('Error', error.response?.data?.error || 'Connection failed');
+        }
       } else if (error.request) {
         console.error('Network Error - cannot reach server', {
           message: error?.message,
@@ -2749,7 +2887,11 @@ export default function App() {
           method: error?.config?.method,
           baseURL: error?.config?.baseURL,
         });
-        showDarkAlert('Error', 'Cannot reach server. Check your connection.');
+        const serverLabel = serverType === 'stealthcloud' ? 'StealthCloud' : 'your local server';
+        const hint = serverType === 'stealthcloud' 
+          ? 'Please check your internet connection and try again.' 
+          : 'Make sure the server is running and both devices are on the same network. Follow Quick Setup below for help.';
+        showDarkAlert('Connection Failed', `Cannot reach ${serverLabel}. ${hint}`);
       }
     } finally {
       resetAuthLoadingLabel(loginStatusTimerRef, loginLabelTimerRef, setAuthLoadingLabel, 'Signing in...');
@@ -2809,16 +2951,25 @@ export default function App() {
    * @platform Both
    */
   const cleanDeviceDuplicates = async () => {
+    await cancelInFlightOperations();
+    const opId = currentOperationIdRef.current;
     setBackgroundWarnEligibleSafe(false);
     setWasBackgroundedDuringWorkSafe(false);
     setLoadingSafe(true);
+    setProgress(0);
+    setProgressAction('cleanup');
 
     try {
       const result = await startExactDuplicatesScanCore({
         resolveReadableFilePath,
-        onStatus: setStatus,
-        onProgress: setProgress,
+        onStatus: (s) => setStatusSafe(opId, s),
+        onProgress: (p) => setProgressSafe(opId, p),
+        abortRef: abortOperationsRef,
       });
+
+      if (result.aborted) {
+        return;
+      }
 
       if (result.error) {
         if (result.error.includes('Limited')) {
@@ -2871,6 +3022,14 @@ export default function App() {
   const logout = async (opts = null) => {
     const forgetCredentials = !!(opts && opts.forgetCredentials);
 
+    // Signal all running operations to abort immediately
+    abortOperationsRef.current = true;
+    currentOperationIdRef.current += 1; // Invalidate all previous operation callbacks
+
+    // Show signing out spinner
+    setLoadingSafe(true);
+    setAuthLoadingLabel('Signing out...');
+
     // Use core logout logic from authHelpers
     await logoutCore({ forgetCredentials });
 
@@ -2887,6 +3046,18 @@ export default function App() {
     setDeviceUuid(null);
     setPassword('');
     setView('auth');
+    
+    // Reset progress state on logout
+    setProgress(0);
+    setProgressAction(null);
+    setStatus('Idle');
+    
+    // Hide spinner after logout complete
+    setLoadingSafe(false);
+    setAuthLoadingLabel('Signing in...');
+    
+    // DO NOT reset abort flag here - it must stay true until user starts a new operation
+    // The abort flag will be reset by cancelInFlightOperations when a new operation starts
   };
 
   /**
@@ -2968,9 +3139,13 @@ export default function App() {
       return stealthCloudBackup();
     }
 
+    await cancelInFlightOperations();
+    const opId = currentOperationIdRef.current;
     setLoadingSafe(true);
     setBackgroundWarnEligibleSafe(!autoUploadEnabledRef.current);
     setWasBackgroundedDuringWorkSafe(false);
+    setProgress(0);
+    setProgressAction('backup');
 
     try {
       const result = await localRemoteBackupCore({
@@ -2979,8 +3154,8 @@ export default function App() {
         resolveReadableFilePath,
         ensureAutoUploadPolicyAllowsWorkIfBackgrounded,
         fastMode: fastModeEnabledRef.current,
-        onStatus: setStatus,
-        onProgress: setProgress,
+        onStatus: (s) => setStatusSafe(opId, s),
+        onProgress: (p) => setProgressSafe(opId, p),
       });
 
       if (result.permissionDenied) {
@@ -3053,8 +3228,11 @@ export default function App() {
       return stealthCloudRestore(opts);
     }
 
+    await cancelInFlightOperations();
+    const opId = currentOperationIdRef.current;
     setStatus('Preparing sync...');
     setProgress(0);
+    setProgressAction('sync');
     setLoadingSafe(true);
 
     const permission = await MediaLibrary.requestPermissionsAsync();
@@ -3063,6 +3241,7 @@ export default function App() {
       setLoadingSafe(false);
       setStatus('');
       setBackgroundWarnEligibleSafe(false);
+      setProgressAction(null);
       setWasBackgroundedDuringWorkSafe(false);
       return;
     }
@@ -3096,8 +3275,8 @@ export default function App() {
         SERVER_URL,
         localFilenames,
         onlyFilenames: opts?.onlyFilenames || null,
-        onStatus: setStatus,
-        onProgress: setProgress,
+        onStatus: (s) => setStatusSafe(opId, s),
+        onProgress: (p) => setProgressSafe(opId, p),
       });
 
       if (result.noFiles) {
@@ -3468,7 +3647,7 @@ export default function App() {
                   }}
                   disabled={loading}
                 >
-                  <Text style={{ color: '#4A9FE8', fontSize: 14 }}>Create Account</Text>
+                  <Text style={{ color: '#4A9FE8', fontSize: scale(14) }}>Create Account</Text>
                 </TouchableOpacity>
 
                 {serverType === 'stealthcloud' && (
@@ -3476,7 +3655,7 @@ export default function App() {
                     onPress={() => setAuthMode('forgot')}
                     disabled={loading}
                   >
-                    <Text style={{ color: '#888', fontSize: 14 }}>Forgot Password?</Text>
+                    <Text style={{ color: '#888', fontSize: scale(14) }}>Forgot Password?</Text>
                   </TouchableOpacity>
                 )}
               </View>
@@ -3485,16 +3664,16 @@ export default function App() {
 
           {authMode === 'register' && (
             <>
-              <View style={{ flexDirection: 'row', alignItems: 'flex-start', marginBottom: 16, paddingHorizontal: 4 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'flex-start', marginBottom: scaleSpacing(16), paddingHorizontal: scaleSpacing(4) }}>
                 <TouchableOpacity
                   onPress={() => setTermsAccepted(!termsAccepted)}
-                  style={{ marginRight: 10, marginTop: 2 }}
+                  style={{ marginRight: scaleSpacing(10), marginTop: scaleSpacing(2) }}
                   activeOpacity={0.7}
                 >
                   <View style={{
-                    width: 22,
-                    height: 22,
-                    borderRadius: 4,
+                    width: isTablet ? 28 : 22,
+                    height: isTablet ? 28 : 22,
+                    borderRadius: scaleSpacing(4),
                     borderWidth: 2,
                     borderColor: termsAccepted ? '#4A9FE8' : '#555',
                     backgroundColor: termsAccepted ? '#4A9FE8' : 'transparent',
@@ -3502,12 +3681,12 @@ export default function App() {
                     justifyContent: 'center',
                   }}>
                     {termsAccepted && (
-                      <Text style={{ color: '#fff', fontSize: 14, fontWeight: '700' }}>✓</Text>
+                      <Text style={{ color: '#fff', fontSize: scale(14), fontWeight: '700' }}>✓</Text>
                     )}
                   </View>
                 </TouchableOpacity>
                 <View style={{ flex: 1 }}>
-                  <Text style={{ color: '#AAA', fontSize: 13, lineHeight: 18 }}>
+                  <Text style={{ color: '#AAA', fontSize: scale(13), lineHeight: scale(18) }}>
                     I agree to the{' '}
                     <Text
                       style={{ color: '#4A9FE8', textDecorationLine: 'underline' }}
@@ -3557,7 +3736,7 @@ export default function App() {
 
           {authMode === 'forgot' && (
             <>
-              <Text style={{ color: '#CCC', fontSize: 14, textAlign: 'center', marginBottom: 16, lineHeight: 20 }}>
+              <Text style={{ color: '#CCC', fontSize: scale(14), textAlign: 'center', marginBottom: scaleSpacing(16), lineHeight: scale(20) }}>
                 If you created your account on this device, you can reset your password below.
               </Text>
 
@@ -3606,23 +3785,23 @@ export default function App() {
         {loading && (
         <View style={[styles.overlay, { backgroundColor: '#000' }]}>
           <View style={{ alignItems: 'center', justifyContent: 'center' }}>
-            <GradientSpinner size={70} />
-            <Text style={{ color: '#fff', fontSize: 16, fontWeight: '600', marginTop: 20 }}>{authLoadingLabel}</Text>
-            <Text style={{ color: '#888', fontSize: 13, marginTop: 8 }}>Please wait...</Text>
+            <GradientSpinner size={isTablet ? 90 : 70} />
+            <Text style={{ color: '#fff', fontSize: scale(16), fontWeight: '600', marginTop: scaleSpacing(20) }}>{authLoadingLabel}</Text>
+            <Text style={{ color: '#888', fontSize: scale(13), marginTop: scaleSpacing(8) }}>Please wait...</Text>
           </View>
         </View>
       )}
 
       {customAlert && (
         <View style={[styles.overlay, glassModeEnabled && styles.overlayGlass]}>
-          <View style={[styles.overlayCard, glassModeEnabled && styles.overlayCardGlass, { backgroundColor: glassModeEnabled ? 'rgba(42, 42, 42, 0.9)' : '#2A2A2A', maxWidth: 320 }]}>
-            <Text style={[styles.overlayTitle, { fontSize: 18, marginBottom: 8 }]}>{customAlert.title}</Text>
-            <Text style={{ color: '#CCC', fontSize: 14, textAlign: 'center', marginBottom: 20, lineHeight: 20 }}>{customAlert.message}</Text>
-            <View style={{ flexDirection: 'row', justifyContent: 'center', gap: 12 }}>
+          <View style={[styles.overlayCard, glassModeEnabled && styles.overlayCardGlass, { backgroundColor: glassModeEnabled ? 'rgba(42, 42, 42, 0.9)' : '#2A2A2A', maxWidth: isTablet ? 450 : 320 }]}>
+            <Text style={[styles.overlayTitle, { fontSize: scale(18), marginBottom: scaleSpacing(8) }]}>{customAlert.title}</Text>
+            <Text style={{ color: '#CCC', fontSize: scale(14), textAlign: 'center', marginBottom: scaleSpacing(20), lineHeight: scale(20) }}>{customAlert.message}</Text>
+            <View style={{ flexDirection: 'row', justifyContent: 'center', gap: scaleSpacing(12) }}>
               {(customAlert.buttons || []).map((btn, idx) => (
                 <TouchableOpacity
                   key={idx}
-                  style={[styles.overlayBtnPrimary, glassModeEnabled && styles.overlayBtnPrimaryGlass, { paddingVertical: 10, paddingHorizontal: 24, minWidth: 80 }]}
+                  style={[styles.overlayBtnPrimary, glassModeEnabled && styles.overlayBtnPrimaryGlass, { paddingVertical: scaleSpacing(10), paddingHorizontal: scaleSpacing(24), minWidth: isTablet ? 100 : 80 }]}
                   onPress={() => { closeDarkAlert(); if (btn.onPress) btn.onPress(); }}>
                   <Text style={styles.overlayBtnPrimaryText}>{btn.text}</Text>
                 </TouchableOpacity>
@@ -3635,14 +3814,14 @@ export default function App() {
       {qrScannerOpen && (
         <View style={[styles.overlay, {backgroundColor: 'rgba(0,0,0,0.95)'}]}>
           <View style={{flex: 1, width: '100%', justifyContent: 'center', alignItems: 'center'}}>
-            <Text style={{color: '#fff', fontSize: 20, fontWeight: '600', marginBottom: 8}}>
+            <Text style={{color: '#fff', fontSize: scale(20), fontWeight: '600', marginBottom: scaleSpacing(8)}}>
               📷 Scan QR Code
             </Text>
-            <Text style={{color: '#aaa', fontSize: 14, marginBottom: 20, textAlign: 'center', paddingHorizontal: 40}}>
+            <Text style={{color: '#aaa', fontSize: scale(14), marginBottom: scaleSpacing(20), textAlign: 'center', paddingHorizontal: scaleSpacing(40)}}>
               Point your camera at the QR code shown in the PhotoLynk Server tray app
             </Text>
 
-            <View style={{width: 280, height: 280, borderRadius: 16, overflow: 'hidden', backgroundColor: '#000'}}>
+            <View style={{width: isTablet ? 350 : 280, height: isTablet ? 350 : 280, borderRadius: scaleSpacing(16), overflow: 'hidden', backgroundColor: '#000'}}>
               {cameraPermission?.granted ? (
                 <CameraView
                   style={{flex: 1}}
@@ -3658,22 +3837,22 @@ export default function App() {
                 />
               ) : (
                 <View style={{flex: 1, justifyContent: 'center', alignItems: 'center'}}>
-                  <Text style={{color: '#888', textAlign: 'center', padding: 20}}>
+                  <Text style={{color: '#888', textAlign: 'center', padding: scaleSpacing(20), fontSize: scale(14)}}>
                     Camera permission required
                   </Text>
                   <TouchableOpacity
-                    style={{backgroundColor: '#4a90d9', paddingHorizontal: 20, paddingVertical: 10, borderRadius: 8}}
+                    style={{backgroundColor: '#4a90d9', paddingHorizontal: scaleSpacing(20), paddingVertical: scaleSpacing(10), borderRadius: scaleSpacing(8)}}
                     onPress={requestCameraPermission}>
-                    <Text style={{color: '#fff', fontWeight: '600'}}>Grant Permission</Text>
+                    <Text style={{color: '#fff', fontWeight: '600', fontSize: scale(14)}}>Grant Permission</Text>
                   </TouchableOpacity>
                 </View>
               )}
             </View>
 
             <TouchableOpacity
-              style={{marginTop: 24, paddingVertical: 14, paddingHorizontal: 40, backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 8}}
+              style={{marginTop: scaleSpacing(24), paddingVertical: scaleSpacing(14), paddingHorizontal: scaleSpacing(40), backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: scaleSpacing(8)}}
               onPress={() => setQrScannerOpen(false)}>
-              <Text style={{color: '#fff', fontSize: 16, fontWeight: '600'}}>Cancel</Text>
+              <Text style={{color: '#fff', fontSize: scale(16), fontWeight: '600'}}>Cancel</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -3830,7 +4009,7 @@ export default function App() {
               </Text>
 
               <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                <Text style={{ color: '#FFFFFF', fontSize: 16, fontWeight: '600' }}>Auto Upload</Text>
+                <Text style={{ color: '#FFFFFF', fontSize: scale(16), fontWeight: '600' }}>Auto Upload</Text>
                 <Switch
                   value={autoUploadEnabled}
                   onValueChange={(next) => {
@@ -4008,14 +4187,14 @@ export default function App() {
         {qrScannerOpen && (
           <View style={[styles.overlay, {backgroundColor: 'rgba(0,0,0,0.95)'}]}>
             <View style={{flex: 1, width: '100%', justifyContent: 'center', alignItems: 'center'}}>
-              <Text style={{color: '#fff', fontSize: 20, fontWeight: '600', marginBottom: 8}}>
+              <Text style={{color: '#fff', fontSize: scale(20), fontWeight: '600', marginBottom: scaleSpacing(8)}}>
                 📷 Scan QR Code
               </Text>
-              <Text style={{color: '#aaa', fontSize: 14, marginBottom: 20, textAlign: 'center', paddingHorizontal: 40}}>
+              <Text style={{color: '#aaa', fontSize: scale(14), marginBottom: scaleSpacing(20), textAlign: 'center', paddingHorizontal: scaleSpacing(40)}}>
                 Point your camera at the QR code shown in the PhotoLynk Server tray app
               </Text>
 
-              <View style={{width: 280, height: 280, borderRadius: 16, overflow: 'hidden', backgroundColor: '#000'}}>
+              <View style={{width: isTablet ? 350 : 280, height: isTablet ? 350 : 280, borderRadius: scaleSpacing(16), overflow: 'hidden', backgroundColor: '#000'}}>
                 {cameraPermission?.granted ? (
                   <CameraView
                     style={{flex: 1}}
@@ -4031,22 +4210,22 @@ export default function App() {
                   />
                 ) : (
                   <View style={{flex: 1, justifyContent: 'center', alignItems: 'center'}}>
-                    <Text style={{color: '#888', textAlign: 'center', padding: 20}}>
+                    <Text style={{color: '#888', textAlign: 'center', padding: scaleSpacing(20), fontSize: scale(14)}}>
                       Camera permission required
                     </Text>
                     <TouchableOpacity
-                      style={{backgroundColor: '#4a90d9', paddingHorizontal: 20, paddingVertical: 10, borderRadius: 8}}
+                      style={{backgroundColor: '#4a90d9', paddingHorizontal: scaleSpacing(20), paddingVertical: scaleSpacing(10), borderRadius: scaleSpacing(8)}}
                       onPress={requestCameraPermission}>
-                      <Text style={{color: '#fff', fontWeight: '600'}}>Grant Permission</Text>
+                      <Text style={{color: '#fff', fontWeight: '600', fontSize: scale(14)}}>Grant Permission</Text>
                     </TouchableOpacity>
                   </View>
                 )}
               </View>
 
               <TouchableOpacity
-                style={{marginTop: 24, paddingVertical: 14, paddingHorizontal: 40, backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 8}}
+                style={{marginTop: scaleSpacing(24), paddingVertical: scaleSpacing(14), paddingHorizontal: scaleSpacing(40), backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: scaleSpacing(8)}}
                 onPress={() => setQrScannerOpen(false)}>
-                <Text style={{color: '#fff', fontSize: 16, fontWeight: '600'}}>Cancel</Text>
+                <Text style={{color: '#fff', fontSize: scale(16), fontWeight: '600'}}>Cancel</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -4054,14 +4233,14 @@ export default function App() {
 
         {customAlert && (
           <View style={[styles.overlay, glassModeEnabled && styles.overlayGlass]}>
-            <View style={[styles.overlayCard, glassModeEnabled && styles.overlayCardGlass, { backgroundColor: glassModeEnabled ? 'rgba(42, 42, 42, 0.9)' : '#2A2A2A', maxWidth: 320 }]}>
-              <Text style={[styles.overlayTitle, { fontSize: 18, marginBottom: 8 }]}>{customAlert.title}</Text>
-              <Text style={{ color: '#CCC', fontSize: 14, textAlign: 'center', marginBottom: 20, lineHeight: 20 }}>{customAlert.message}</Text>
-              <View style={{ flexDirection: 'row', justifyContent: 'center', gap: 12 }}>
+            <View style={[styles.overlayCard, glassModeEnabled && styles.overlayCardGlass, { backgroundColor: glassModeEnabled ? 'rgba(42, 42, 42, 0.9)' : '#2A2A2A', maxWidth: isTablet ? 450 : 320 }]}>
+              <Text style={[styles.overlayTitle, { fontSize: scale(18), marginBottom: scaleSpacing(8) }]}>{customAlert.title}</Text>
+              <Text style={{ color: '#CCC', fontSize: scale(14), textAlign: 'center', marginBottom: scaleSpacing(20), lineHeight: scale(20) }}>{customAlert.message}</Text>
+              <View style={{ flexDirection: 'row', justifyContent: 'center', gap: scaleSpacing(12) }}>
                 {(customAlert.buttons || []).map((btn, idx) => (
                   <TouchableOpacity
                     key={idx}
-                    style={[styles.overlayBtnPrimary, glassModeEnabled && styles.overlayBtnPrimaryGlass, { paddingVertical: 10, paddingHorizontal: 24, minWidth: 80 }]}
+                    style={[styles.overlayBtnPrimary, glassModeEnabled && styles.overlayBtnPrimaryGlass, { paddingVertical: scaleSpacing(10), paddingHorizontal: scaleSpacing(24), minWidth: isTablet ? 100 : 80 }]}
                     onPress={() => {
                       closeDarkAlert();
                       if (btn.onPress) btn.onPress();
@@ -4275,14 +4454,14 @@ export default function App() {
 
         {customAlert && (
           <View style={[styles.overlay, glassModeEnabled && styles.overlayGlass]}>
-            <View style={[styles.overlayCard, glassModeEnabled && styles.overlayCardGlass, { backgroundColor: glassModeEnabled ? 'rgba(42, 42, 42, 0.9)' : '#2A2A2A', maxWidth: 320 }]}>
-              <Text style={[styles.overlayTitle, { fontSize: 18, marginBottom: 8 }]}>{customAlert.title}</Text>
-              <Text style={{ color: '#CCC', fontSize: 14, textAlign: 'center', marginBottom: 20, lineHeight: 20 }}>{customAlert.message}</Text>
-              <View style={{ flexDirection: 'row', justifyContent: 'center', gap: 12, flexWrap: 'wrap' }}>
+            <View style={[styles.overlayCard, glassModeEnabled && styles.overlayCardGlass, { backgroundColor: glassModeEnabled ? 'rgba(42, 42, 42, 0.9)' : '#2A2A2A', maxWidth: isTablet ? 450 : 320 }]}>
+              <Text style={[styles.overlayTitle, { fontSize: scale(18), marginBottom: scaleSpacing(8) }]}>{customAlert.title}</Text>
+              <Text style={{ color: '#CCC', fontSize: scale(14), textAlign: 'center', marginBottom: scaleSpacing(20), lineHeight: scale(20) }}>{customAlert.message}</Text>
+              <View style={{ flexDirection: 'row', justifyContent: 'center', gap: scaleSpacing(12), flexWrap: 'wrap' }}>
                 {(customAlert.buttons || []).map((btn, idx) => (
                   <TouchableOpacity
                     key={idx}
-                    style={[styles.overlayBtnPrimary, glassModeEnabled && styles.overlayBtnPrimaryGlass, { paddingVertical: 10, paddingHorizontal: 24, minWidth: 80 }]}
+                    style={[styles.overlayBtnPrimary, glassModeEnabled && styles.overlayBtnPrimaryGlass, { paddingVertical: scaleSpacing(10), paddingHorizontal: scaleSpacing(24), minWidth: isTablet ? 100 : 80 }]}
                     onPress={() => {
                       closeDarkAlert();
                       if (btn.onPress) btn.onPress();
@@ -4297,7 +4476,7 @@ export default function App() {
 
         {paywallTierGb && (
           <View style={[styles.overlay, glassModeEnabled && styles.overlayGlass]}>
-            <View style={[styles.overlayCard, glassModeEnabled && styles.overlayCardGlass, { backgroundColor: glassModeEnabled ? 'rgba(30, 30, 30, 0.9)' : '#1E1E1E', maxWidth: 340 }]}>
+            <View style={[styles.overlayCard, glassModeEnabled && styles.overlayCardGlass, { backgroundColor: glassModeEnabled ? 'rgba(30, 30, 30, 0.9)' : '#1E1E1E', maxWidth: isTablet ? 480 : 340 }]}>
               {(() => {
                 const gb = paywallTierGb;
                 const plan = availablePlans.find(p => p.tierGb === gb);
@@ -4309,14 +4488,14 @@ export default function App() {
 
                 return (
                   <>
-                    <Text style={[styles.overlayTitle, { fontSize: 18, marginBottom: 8 }]}>{title}</Text>
-                    <Text style={{ color: '#CCC', fontSize: 14, textAlign: 'center', marginBottom: 14, lineHeight: 20 }}>
+                    <Text style={[styles.overlayTitle, { fontSize: scale(18), marginBottom: scaleSpacing(8) }]}>{title}</Text>
+                    <Text style={{ color: '#CCC', fontSize: scale(14), textAlign: 'center', marginBottom: scaleSpacing(14), lineHeight: scale(20) }}>
                       {priceStr !== '—' ? `${priceStr} / month` : 'Pricing unavailable. Please try again later.'}
                     </Text>
-                    <Text style={[styles.inputHint, { textAlign: 'center', marginBottom: 14 }]}>Price shown in your local currency from Apple/Google. Taxes may apply. Cancel anytime.</Text>
-                    <View style={{ flexDirection: 'row', justifyContent: 'center', gap: 12, flexWrap: 'wrap' }}>
+                    <Text style={[styles.inputHint, { textAlign: 'center', marginBottom: scaleSpacing(14) }]}>Price shown in your local currency from Apple/Google. Taxes may apply. Cancel anytime.</Text>
+                    <View style={{ flexDirection: 'row', justifyContent: 'center', gap: scaleSpacing(12), flexWrap: 'wrap' }}>
                       <TouchableOpacity
-                        style={[styles.overlayBtnPrimary, glassModeEnabled && styles.overlayBtnPrimaryGlass, { paddingVertical: 10, paddingHorizontal: 24, minWidth: 90, opacity: purchaseLoading ? 0.6 : 1 }]}
+                        style={[styles.overlayBtnPrimary, glassModeEnabled && styles.overlayBtnPrimaryGlass, { paddingVertical: scaleSpacing(10), paddingHorizontal: scaleSpacing(24), minWidth: isTablet ? 110 : 90, opacity: purchaseLoading ? 0.6 : 1 }]}
                         onPress={closePaywall}
                         disabled={purchaseLoading}
                       >
@@ -4324,7 +4503,7 @@ export default function App() {
                       </TouchableOpacity>
 
                       <TouchableOpacity
-                        style={[styles.overlayBtnPrimary, glassModeEnabled && styles.overlayBtnPrimaryGlass, { paddingVertical: 10, paddingHorizontal: 24, minWidth: 110, opacity: canSubscribe ? 1 : 0.5 }]}
+                        style={[styles.overlayBtnPrimary, glassModeEnabled && styles.overlayBtnPrimaryGlass, { paddingVertical: scaleSpacing(10), paddingHorizontal: scaleSpacing(24), minWidth: isTablet ? 130 : 110, opacity: canSubscribe ? 1 : 0.5 }]}
                         onPress={() => {
                           if (!canSubscribe) return;
                           closePaywall();
@@ -4337,7 +4516,7 @@ export default function App() {
                     </View>
 
                     <TouchableOpacity
-                      style={[styles.restorePurchasesBtn, { marginTop: 14 }]}
+                      style={[styles.restorePurchasesBtn, { marginTop: scaleSpacing(14) }]}
                       onPress={() => {
                         closePaywall();
                         handleRestorePurchases();
@@ -4402,7 +4581,15 @@ export default function App() {
 
           </Text>
           <View style={styles.progressBar}>
-            <View style={[styles.progressFill, { width: `${Math.min(Math.max(progress, 0), 1) * 100}%` }]} />
+            <Animated.View 
+              style={[
+                styles.progressFill, 
+                { width: `${Math.min(Math.max(progress, 0), 1) * 100}%` },
+                progressAction === 'cleanup' && { backgroundColor: '#6366F1' },
+                progressAction === 'backup' && { backgroundColor: '#2196F3' },
+                progressAction === 'sync' && { backgroundColor: '#4CAF50' },
+              ]} 
+            />
           </View>
         </View>
 
@@ -4750,15 +4937,15 @@ export default function App() {
 
             <ScrollView contentContainerStyle={serverType === 'stealthcloud' ? styles.syncPickerList : styles.pickerGrid}>
               {syncPickerLoading ? (
-                <View style={{ width: '100%', paddingVertical: 32, alignItems: 'center' }}>
-                  <ActivityIndicator size="small" color={THEME.secondary} />
-                  <Text style={{ color: '#888', fontSize: 13, marginTop: 10 }}>Loading files...</Text>
+                <View style={{ width: '100%', paddingVertical: scaleSpacing(32), alignItems: 'center' }}>
+                  <ActivityIndicator size={isTablet ? 'large' : 'small'} color={THEME.secondary} />
+                  <Text style={{ color: '#888', fontSize: scale(13), marginTop: scaleSpacing(10) }}>Loading files...</Text>
                 </View>
               ) : serverType === 'stealthcloud' ? (
                 <>
                   {/* StealthCloud: list view with icons (encrypted, no thumbnails) */}
-                  <View style={{ paddingHorizontal: 12, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: '#222' }}>
-                    <Text style={{ color: '#888', fontSize: 12 }}>
+                  <View style={{ paddingHorizontal: scaleSpacing(12), paddingVertical: scaleSpacing(8), borderBottomWidth: 1, borderBottomColor: '#222' }}>
+                    <Text style={{ color: '#888', fontSize: scale(12) }}>
                       Showing {syncPickerItems.length}{syncPickerTotal > 0 ? ` of ${syncPickerTotal}` : ''} files
                     </Text>
                   </View>
@@ -4780,8 +4967,8 @@ export default function App() {
                         key={key}
                         style={[styles.syncPickerRow, selected && styles.syncPickerRowSelected]}
                         onPress={() => toggleSyncPickerSelected(key)}>
-                        <View style={{ width: 44, height: 44, borderRadius: 6, marginRight: 10, backgroundColor: isVideo ? '#1a1a2e' : '#1e3a2e', alignItems: 'center', justifyContent: 'center' }}>
-                          <Text style={{ fontSize: 22 }}>{fileIcon}</Text>
+                        <View style={{ width: isTablet ? 56 : 44, height: isTablet ? 56 : 44, borderRadius: scaleSpacing(6), marginRight: scaleSpacing(10), backgroundColor: isVideo ? '#1a1a2e' : '#1e3a2e', alignItems: 'center', justifyContent: 'center' }}>
+                          <Text style={{ fontSize: scale(22) }}>{fileIcon}</Text>
                         </View>
                         <View style={[styles.syncPickerRowLeft, { flex: 1 }]}>
                           <Text style={styles.syncPickerRowTitle} numberOfLines={1} ellipsizeMode="middle">{displayName}</Text>
@@ -4798,13 +4985,13 @@ export default function App() {
 
                   {syncPickerHasMore && (
                     <TouchableOpacity
-                      style={{ marginVertical: 16, marginHorizontal: 12, paddingVertical: 14, backgroundColor: THEME.secondary, borderRadius: 10, alignItems: 'center' }}
+                      style={{ marginVertical: scaleSpacing(16), marginHorizontal: scaleSpacing(12), paddingVertical: scaleSpacing(14), backgroundColor: THEME.secondary, borderRadius: scaleSpacing(10), alignItems: 'center' }}
                       onPress={loadMoreSyncPickerItems}
                       disabled={syncPickerLoadingMore}>
                       {syncPickerLoadingMore ? (
-                        <ActivityIndicator size="small" color="#000" />
+                        <ActivityIndicator size={isTablet ? 'large' : 'small'} color="#000" />
                       ) : (
-                        <Text style={{ color: '#000', fontWeight: '600', fontSize: 15 }}>
+                        <Text style={{ color: '#000', fontWeight: '600', fontSize: scale(15) }}>
                           Load More ({Math.max(0, (syncPickerTotal || 0) - (syncPickerOffset || 0))} remaining)
                         </Text>
                       )}
@@ -4987,14 +5174,14 @@ export default function App() {
 
       {customAlert && (
         <View style={[styles.overlay, glassModeEnabled && styles.overlayGlass]}>
-          <View style={[styles.overlayCard, glassModeEnabled && styles.overlayCardGlass, { backgroundColor: glassModeEnabled ? 'rgba(42, 42, 42, 0.9)' : '#2A2A2A', maxWidth: 320 }]}>
-            <Text style={[styles.overlayTitle, { fontSize: 18, marginBottom: 8 }]}>{customAlert.title}</Text>
-            <Text style={{ color: '#CCC', fontSize: 14, textAlign: 'center', marginBottom: 20, lineHeight: 20 }}>{customAlert.message}</Text>
-            <View style={{ flexDirection: 'row', justifyContent: 'center', gap: 12 }}>
+          <View style={[styles.overlayCard, glassModeEnabled && styles.overlayCardGlass, { backgroundColor: glassModeEnabled ? 'rgba(42, 42, 42, 0.9)' : '#2A2A2A', maxWidth: isTablet ? 450 : 320 }]}>
+            <Text style={[styles.overlayTitle, { fontSize: scale(18), marginBottom: scaleSpacing(8) }]}>{customAlert.title}</Text>
+            <Text style={{ color: '#CCC', fontSize: scale(14), textAlign: 'center', marginBottom: scaleSpacing(20), lineHeight: scale(20) }}>{customAlert.message}</Text>
+            <View style={{ flexDirection: 'row', justifyContent: 'center', gap: scaleSpacing(12) }}>
               {(customAlert.buttons || []).map((btn, idx) => (
                 <TouchableOpacity
                   key={idx}
-                  style={[styles.overlayBtnPrimary, glassModeEnabled && styles.overlayBtnPrimaryGlass, { paddingVertical: 10, paddingHorizontal: 24, minWidth: 80 }]}
+                  style={[styles.overlayBtnPrimary, glassModeEnabled && styles.overlayBtnPrimaryGlass, { paddingVertical: scaleSpacing(10), paddingHorizontal: scaleSpacing(24), minWidth: isTablet ? 100 : 80 }]}
                   onPress={() => {
                     closeDarkAlert();
                     if (btn.onPress) btn.onPress();

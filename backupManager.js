@@ -121,7 +121,7 @@ const stealthCloudUploadEncryptedChunk = async ({ SERVER_URL, config, chunkId, e
         throw err;
       }
       return res;
-    }, { retries: 10, baseDelayMs: 1000, maxDelayMs: 30000, shouldRetry: shouldRetryChunkUpload });
+    }, { retries: 20, baseDelayMs: 2000, maxDelayMs: 30000, shouldRetry: shouldRetryChunkUpload });
     await FileSystem.deleteAsync(tmpUri, { idempotent: true });
     return;
   }
@@ -150,7 +150,7 @@ const stealthCloudUploadEncryptedChunk = async ({ SERVER_URL, config, chunkId, e
           throw new Error(`Chunk upload failed: HTTP ${status}${body ? ` ${body}` : ''}`);
         }
         return r;
-      }, { retries: 10, baseDelayMs: 1000, maxDelayMs: 30000, shouldRetry: shouldRetryChunkUpload });
+      }, { retries: 20, baseDelayMs: 2000, maxDelayMs: 30000, shouldRetry: shouldRetryChunkUpload });
       await FileSystem.deleteAsync(tmpUri, { idempotent: true });
       return;
     } catch (e) {
@@ -169,7 +169,7 @@ const stealthCloudUploadEncryptedChunk = async ({ SERVER_URL, config, chunkId, e
           }
           return r2;
         }, {
-          retries: 10, baseDelayMs: 1000, maxDelayMs: 30000,
+          retries: 20, baseDelayMs: 2000, maxDelayMs: 30000,
           shouldRetry: (e2) => {
             const msg = (e2 && e2.message ? e2.message : '').toLowerCase();
             if (msg.includes(' 429') || msg.includes(' 503') || msg.includes(' 500') || msg.includes(' 502') || msg.includes(' 504')) return true;
@@ -352,7 +352,7 @@ const uploadOneAssetToStealthCloud = async ({
 
   await withRetries(async () => {
     await axios.post(`${SERVER_URL}/api/cloud/manifests`, { manifestId, encryptedManifest, chunkCount: chunkIds.length }, { headers: config.headers, timeout: 30000 });
-  }, { retries: 10, baseDelayMs: 1000, maxDelayMs: 30000, shouldRetry: shouldRetryChunkUpload });
+  }, { retries: 20, baseDelayMs: 2000, maxDelayMs: 30000, shouldRetry: shouldRetryChunkUpload });
 
   if (tmpCopied && tmpUri) await FileSystem.deleteAsync(tmpUri, { idempotent: true });
   return { uploaded: 1, skipped: 0, failed: 0 };

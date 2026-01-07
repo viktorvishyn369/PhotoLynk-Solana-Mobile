@@ -568,7 +568,7 @@ export const collectAllPhotoAssets = async () => {
  * @param {Function} params.onProgress - Progress callback (hashedCount, totalCount, lastHash)
  * @returns {Promise<{duplicateGroups: Array, stats: Object}>}
  */
-export const scanExactDuplicates = async ({ assets, resolveReadableFilePath, onProgress }) => {
+export const scanExactDuplicates = async ({ assets, resolveReadableFilePath, onProgress, abortRef }) => {
   console.log('DuplicateScanner: Starting exact duplicate scan with pixel hashing');
   
   // Check if PixelHash native module is available
@@ -585,6 +585,12 @@ export const scanExactDuplicates = async ({ assets, resolveReadableFilePath, onP
   const sampleSkipped = [];
 
   for (let i = 0; i < assets.length; i++) {
+    // Check abort signal
+    if (abortRef && abortRef.current) {
+      console.log('DuplicateScanner: Exact duplicate scan aborted by user');
+      return { duplicateGroups: [], stats: {}, aborted: true };
+    }
+
     const asset = assets[i];
     let info;
     try {
@@ -779,7 +785,7 @@ export const buildNoResultsNote = (stats) => {
  * @param {Function} params.onProgress - Progress callback (current, total, status)
  * @returns {Promise<Array>} Array of similar photo groups (each group is array of assets)
  */
-export const scanSimilarPhotos = async ({ resolveReadableFilePath, onProgress }) => {
+export const scanSimilarPhotos = async ({ resolveReadableFilePath, onProgress, onFindingMatches, onCollecting, abortRef }) => {
   console.log('DuplicateScanner: Starting similar photos scan (simplified)...');
   
   // Check if PixelHash native module is available
@@ -787,12 +793,20 @@ export const scanSimilarPhotos = async ({ resolveReadableFilePath, onProgress })
     throw new Error('PixelHash native module not available. Please rebuild the app.');
   }
   
+  // Notify collecting phase started
+  if (onCollecting) onCollecting();
+  
   const MAX_SCAN = 2000;
   let after = null;
   let scanned = 0;
   let all = [];
 
   while (scanned < MAX_SCAN) {
+    // Check abort signal
+    if (abortRef && abortRef.current) {
+      console.log('DuplicateScanner: Similar photos scan aborted by user');
+      return [];
+    }
     const page = await MediaLibrary.getAssetsAsync({
       first: Math.min(500, MAX_SCAN - scanned),
       after: after || undefined,
@@ -807,7 +821,6 @@ export const scanSimilarPhotos = async ({ resolveReadableFilePath, onProgress })
   }
 
   console.log('DuplicateScanner: Loaded', all.length, 'photos for similar scan');
-  if (onProgress) onProgress(0, all.length, `Scanning ${all.length} photos...`);
 
   // Filter and sort by creation time (important for burst detection)
   all = all.filter(a => a && a.id && typeof a.creationTime === 'number');
@@ -819,9 +832,16 @@ export const scanSimilarPhotos = async ({ resolveReadableFilePath, onProgress })
   let hashFailed = 0;
 
   for (let i = 0; i < all.length; i++) {
+    // Check abort signal
+    if (abortRef && abortRef.current) {
+      console.log('DuplicateScanner: Similar photos scan aborted by user');
+      return { groups: [], aborted: true };
+    }
+
     const asset = all[i];
-    if (i % 20 === 0 && onProgress) {
-      onProgress(i, all.length, `Analyzing ${i + 1}/${all.length} photos...`);
+    // Skip first iteration (i=0) to let "Collecting photos..." show first
+    if (i > 0 && i % 20 === 0 && onProgress) {
+      onProgress(i, all.length, `Analyzing ${i}/${all.length} photos...`);
     }
     
     let info = null;
@@ -886,6 +906,7 @@ export const scanSimilarPhotos = async ({ resolveReadableFilePath, onProgress })
   }
 
   console.log('DuplicateScanner: Similar hash summary', { total: all.length, hashed, hashFailed });
+  if (onFindingMatches) onFindingMatches();
   if (onProgress) onProgress(all.length, all.length, 'Finding similar groups...');
 
   // Find similar pairs using hamming distance + time proximity + edge matching
@@ -894,6 +915,11 @@ export const scanSimilarPhotos = async ({ resolveReadableFilePath, onProgress })
   const seen = new Set();
 
   for (let i = 0; i < items.length; i++) {
+    // Check abort signal in comparison loop
+    if (abortRef && abortRef.current) {
+      console.log('DuplicateScanner: Similar photos comparison aborted by user');
+      return { groups: [], aborted: true };
+    }
     const a = items[i];
     for (let j = i + 1; j < items.length; j++) {
       const b = items[j];
@@ -1029,7 +1055,7 @@ export const scanSimilarPhotos = async ({ resolveReadableFilePath, onProgress })
   // Sort groups by size (largest first)
   finalGroups.sort((a, b) => b.length - a.length);
   console.log('DuplicateScanner: Final similar groups:', finalGroups.length);
-  return finalGroups;
+  return { groups: finalGroups, aborted: false };
 };
 
 // ============================================================================

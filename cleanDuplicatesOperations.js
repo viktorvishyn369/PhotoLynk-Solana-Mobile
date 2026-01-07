@@ -22,8 +22,10 @@ export const startSimilarShotsReviewCore = async ({
   resolveReadableFilePath,
   onStatus,
   onProgress,
+  abortRef,
 }) => {
-  onStatus('Analyzing photos...');
+  onStatus('Preparing...');
+  onProgress(0);
   
   try {
     // Check permission first
@@ -37,14 +39,34 @@ export const startSimilarShotsReviewCore = async ({
 
     // Use duplicateScanner module
     const DuplicateScanner = require('./duplicateScanner').default;
-    const groups = await DuplicateScanner.scanSimilarPhotos({
+    
+    const result = await DuplicateScanner.scanSimilarPhotos({
       resolveReadableFilePath,
+      abortRef,
+      onCollecting: () => {
+        onStatus('Collecting photos...');
+        onProgress(0);
+      },
       onProgress: (current, total, status) => {
-        onStatus(status || `Analyzing ${current}/${total} photos...`);
-        onProgress(total > 0 ? current / total : 0);
+        // Map progress: 5% for collecting, 5-95% for analyzing, 95-100% for finding matches
+        const analyzeProgress = total > 0 ? (current / total) * 0.9 : 0;
+        onProgress(0.05 + analyzeProgress);
+        onStatus(`Analyzing ${current}/${total} photos...`);
+      },
+      onFindingMatches: () => {
+        onStatus('Finding matches...');
+        onProgress(0.95);
       }
     });
 
+    // Check if scan was aborted
+    if (result.aborted) {
+      return { aborted: true };
+    }
+
+    onProgress(1);
+    
+    const groups = result.groups || [];
     if (!groups || groups.length === 0) {
       return { noGroups: true };
     }
@@ -131,8 +153,10 @@ export const startExactDuplicatesScanCore = async ({
   resolveReadableFilePath,
   onStatus,
   onProgress,
+  abortRef,
 }) => {
-  onStatus('Scanning for exact duplicates...');
+  onStatus('Preparing...');
+  onProgress(0);
   
   try {
     // Check permission first
@@ -146,8 +170,9 @@ export const startExactDuplicatesScanCore = async ({
 
     const DuplicateScanner = require('./duplicateScanner').default;
     
-    // Collect all assets
+    // Collecting phase
     onStatus('Collecting photos...');
+    onProgress(0);
     const assets = await DuplicateScanner.collectAllPhotoAssets();
     
     if (!assets || assets.length === 0) {
@@ -155,16 +180,29 @@ export const startExactDuplicatesScanCore = async ({
     }
 
     // Scan for exact duplicates
-    const { duplicateGroups, stats } = await DuplicateScanner.scanExactDuplicates({
+    const { duplicateGroups, stats, aborted } = await DuplicateScanner.scanExactDuplicates({
       assets,
       resolveReadableFilePath,
+      abortRef,
       onProgress: (hashedCount, totalCount, lastHash) => {
-        onStatus(`Hashing ${hashedCount}/${totalCount} photos...`);
-        onProgress(totalCount > 0 ? hashedCount / totalCount : 0);
+        // Map progress: 5% for collecting, 5-95% for analyzing, 95-100% for finding matches
+        const analyzeProgress = totalCount > 0 ? (hashedCount / totalCount) * 0.9 : 0;
+        onProgress(0.05 + analyzeProgress);
+        onStatus(`Analyzing ${hashedCount}/${totalCount} photos...`);
       }
     });
 
+    // Check if scan was aborted
+    if (aborted) {
+      return { aborted: true };
+    }
+
+    // Finding matches phase
+    onStatus('Finding matches...');
+    onProgress(0.95);
+
     if (!duplicateGroups || duplicateGroups.length === 0) {
+      onProgress(1);
       const note = DuplicateScanner.buildNoResultsNote(stats);
       return { noDuplicates: true, note, stats };
     }
@@ -173,6 +211,8 @@ export const startExactDuplicatesScanCore = async ({
     const reviewGroups = DuplicateScanner.formatDuplicateGroupsForReview(duplicateGroups);
     const totalDuplicates = DuplicateScanner.countDuplicates(duplicateGroups);
 
+    onProgress(1);
+    
     return {
       groups: reviewGroups,
       totalDuplicates,
