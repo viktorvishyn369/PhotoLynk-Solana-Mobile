@@ -157,39 +157,168 @@ const isVideoAsset = (info, asset) => {
   return /\.(mp4|mov|m4v|avi|mkv|webm|3gp)$/i.test(name);
 };
 
+/**
+ * Compute exact file hash using chunked streaming (handles large videos)
+ */
 const computeExactFileHash = async (filePath) => {
   try {
-    const b64 = await FileSystem.readAsStringAsync(filePath, { encoding: FileSystem.EncodingType.Base64 });
-    const bytes = naclUtil.decodeBase64(b64);
-    return sha256(bytes);
+    const hashCtx = sha256.create();
+    const HASH_CHUNK_BYTES = 256 * 1024; // 256KB chunks
+
+    if (Platform.OS === 'ios') {
+      const fileUri = filePath.startsWith('/') ? `file://${filePath}` : filePath;
+      let position = 0;
+      // Ensure chunk size is divisible by 3 for base64
+      const effectiveBytes = HASH_CHUNK_BYTES - (HASH_CHUNK_BYTES % 3);
+      
+      while (true) {
+        let nextB64 = '';
+        try {
+          nextB64 = await FileSystem.readAsStringAsync(fileUri, {
+            encoding: FileSystem.EncodingType.Base64,
+            position,
+            length: effectiveBytes
+          });
+        } catch (e) {
+          // Fallback: read entire file (for older expo-file-system)
+          const allB64 = await FileSystem.readAsStringAsync(fileUri, { encoding: FileSystem.EncodingType.Base64 });
+          const b64Offset = Math.floor((position / 3) * 4);
+          const chunkB64Len = (effectiveBytes / 3) * 4;
+          nextB64 = allB64.slice(b64Offset, b64Offset + chunkB64Len);
+        }
+        if (!nextB64) break;
+        const plaintext = naclUtil.decodeBase64(nextB64);
+        if (!plaintext || plaintext.length === 0) break;
+        hashCtx.update(plaintext);
+        position += plaintext.length;
+        if (plaintext.length < effectiveBytes) break;
+        
+        // Yield between chunks for large files
+        await quickYield();
+      }
+    } else {
+      // Android: use react-native-blob-util for streaming
+      let ReactNativeBlobUtil = null;
+      try {
+        const mod = require('react-native-blob-util');
+        ReactNativeBlobUtil = mod && (mod.default || mod);
+      } catch (e) {}
+      
+      if (!ReactNativeBlobUtil || !ReactNativeBlobUtil.fs || typeof ReactNativeBlobUtil.fs.readStream !== 'function') {
+        // Fallback: read entire file (may fail for large videos)
+        const fileUri = filePath.startsWith('/') ? `file://${filePath}` : filePath;
+        const b64 = await FileSystem.readAsStringAsync(fileUri, { encoding: FileSystem.EncodingType.Base64 });
+        const bytes = naclUtil.decodeBase64(b64);
+        return sha256(bytes);
+      }
+      
+      const stream = await ReactNativeBlobUtil.fs.readStream(filePath, 'base64', HASH_CHUNK_BYTES);
+      await new Promise((resolve, reject) => {
+        const queue = [];
+        let draining = false;
+        let ended = false;
+        stream.open();
+        stream.onData((chunkB64) => {
+          queue.push(chunkB64);
+          if (draining) return;
+          draining = true;
+          (async () => {
+            try {
+              while (queue.length) {
+                const nextB64 = queue.shift();
+                const plaintext = naclUtil.decodeBase64(nextB64);
+                hashCtx.update(plaintext);
+              }
+            } catch (e) {
+              reject(e);
+              return;
+            } finally {
+              draining = false;
+            }
+            if (ended && queue.length === 0) resolve();
+          })();
+        });
+        stream.onError((e) => reject(e));
+        stream.onEnd(() => {
+          ended = true;
+          if (!draining && queue.length === 0) resolve();
+        });
+      });
+    }
+    return hashCtx.hex();
   } catch (e) {
+    console.warn('[DupScanner] computeExactFileHash failed:', e?.message || e);
     return null;
   }
 };
 
+/**
+ * Resolve readable file path for an asset
+ * Handles ph://, content://, file:// URIs properly
+ */
 const getHashTarget = async ({ asset, info, resolveReadableFilePath }) => {
   let hashTarget = null;
   let tmpCopied = false;
   let tmpUri = null;
-  let rawUri = null;
+  const rawUri = (info && (info.localUri || info.uri)) || asset.uri || null;
 
   try {
-    rawUri = info?.localUri || info?.uri || asset.uri;
-    
-    if (resolveReadableFilePath && typeof resolveReadableFilePath === 'function') {
-      const resolved = await resolveReadableFilePath(asset, info);
-      if (resolved && resolved.filePath) {
-        hashTarget = resolved.filePath;
-        tmpCopied = !!resolved.tmpCopied;
-        tmpUri = resolved.tmpUri || null;
+    if (rawUri && typeof rawUri === 'string') {
+      if (rawUri.startsWith('file://') || rawUri.startsWith('/')) {
+        // Direct file path - use as-is
+        hashTarget = rawUri.startsWith('file://') ? rawUri.replace('file://', '') : rawUri;
+        // Clean up query/fragment
+        const hashIdx = hashTarget.indexOf('#');
+        if (hashIdx !== -1) hashTarget = hashTarget.slice(0, hashIdx);
+        const qIdx = hashTarget.indexOf('?');
+        if (qIdx !== -1) hashTarget = hashTarget.slice(0, qIdx);
+        try { hashTarget = decodeURI(hashTarget); } catch (e) {}
+      } else if (rawUri.startsWith('ph://') || rawUri.startsWith('content://')) {
+        // Need to stage to temp file via resolveReadableFilePath
+        if (resolveReadableFilePath && typeof resolveReadableFilePath === 'function') {
+          try {
+            const resolved = await resolveReadableFilePath({ assetId: asset.id, assetInfo: info });
+            if (resolved && resolved.filePath) {
+              hashTarget = resolved.filePath;
+              tmpCopied = !!resolved.tmpCopied;
+              tmpUri = resolved.tmpUri || null;
+            }
+          } catch (e) {
+            // iOS fallback: try with shouldDownloadFromNetwork
+            if (Platform.OS === 'ios') {
+              try {
+                const infoDownloaded = await MediaLibrary.getAssetInfoAsync(asset.id, { shouldDownloadFromNetwork: true });
+                const dlUri = infoDownloaded?.localUri || infoDownloaded?.uri;
+                if (dlUri && typeof dlUri === 'string' && (dlUri.startsWith('file://') || dlUri.startsWith('/'))) {
+                  hashTarget = dlUri.startsWith('file://') ? dlUri.replace('file://', '') : dlUri;
+                } else {
+                  const resolved2 = await resolveReadableFilePath({ assetId: asset.id, assetInfo: infoDownloaded });
+                  if (resolved2 && resolved2.filePath) {
+                    hashTarget = resolved2.filePath;
+                    tmpCopied = !!resolved2.tmpCopied;
+                    tmpUri = resolved2.tmpUri || null;
+                  }
+                }
+              } catch (e2) {
+                // Failed to get readable path
+              }
+            }
+          }
+        }
       }
     }
     
-    if (!hashTarget && rawUri) {
-      if (rawUri.startsWith('file://')) {
-        hashTarget = rawUri.replace('file://', '');
-      } else if (rawUri.startsWith('/')) {
-        hashTarget = rawUri;
+    // Fallback: try resolveReadableFilePath directly
+    if (!hashTarget && resolveReadableFilePath && typeof resolveReadableFilePath === 'function') {
+      try {
+        const resolved = await resolveReadableFilePath(asset, info);
+        if (resolved && resolved.filePath) {
+          hashTarget = resolved.filePath;
+          tmpCopied = !!resolved.tmpCopied;
+          tmpUri = resolved.tmpUri || null;
+        }
+      } catch (e) {
+        // Silent fail
       }
     }
   } catch (e) {
@@ -437,12 +566,26 @@ export const scanExactDuplicates = async ({
         if (hashHex) {
           hashHex = 'video:' + hashHex;
           videoCount++;
+          // Debug log for first few videos
+          if (videoCount <= 3) {
+            console.log('[DupScanner] Video hash computed:', {
+              filename: info?.filename || asset.filename,
+              hashStart: hashHex.substring(0, 24) + '...',
+            });
+          }
         }
       } else {
         hashHex = await PixelHash.hashImagePixels(hashTarget);
         if (hashHex) {
           hashHex = 'image:' + hashHex;
           photoCount++;
+          // Debug log for first few photos
+          if (photoCount <= 3) {
+            console.log('[DupScanner] Image hash computed:', {
+              filename: info?.filename || asset.filename,
+              hashStart: hashHex.substring(0, 24) + '...',
+            });
+          }
         }
       }
 
@@ -454,9 +597,14 @@ export const scanExactDuplicates = async ({
         hashGroups[hashHex].push({ asset, info });
       } else {
         hashFailed++;
+        // Debug log for hash failures
+        if (hashFailed <= 5) {
+          console.log('[DupScanner] Hash failed for:', info?.filename || asset.filename, isVideo ? '(video)' : '(image)');
+        }
       }
     } catch (e) {
       hashFailed++;
+      console.warn('[DupScanner] Hash error:', info?.filename || asset.filename, e?.message);
     } finally {
       if (tmpCopied && tmpUri) {
         try { await FileSystem.deleteAsync(tmpUri, { idempotent: true }); } catch (e) {}
@@ -477,9 +625,14 @@ export const scanExactDuplicates = async ({
   const duplicateGroups = [];
   const hashKeys = Object.keys(hashGroups);
   
+  // Debug: log hash group statistics
+  let singletons = 0;
+  let duplicateHashes = 0;
+  
   for (let i = 0; i < hashKeys.length; i++) {
     const group = hashGroups[hashKeys[i]];
     if (group.length > 1) {
+      duplicateHashes++;
       // Sort by creation time (oldest first)
       group.sort((a, b) => {
         const aTime = a.info?.creationTime || a.asset.creationTime || 0;
@@ -487,6 +640,17 @@ export const scanExactDuplicates = async ({
         return aTime - bTime;
       });
       duplicateGroups.push(group);
+      
+      // Debug: log first few duplicate groups found
+      if (duplicateGroups.length <= 3) {
+        console.log('[DupScanner] Duplicate group found:', {
+          hash: hashKeys[i].substring(0, 30) + '...',
+          count: group.length,
+          files: group.map(g => g.info?.filename || g.asset.filename).join(', '),
+        });
+      }
+    } else {
+      singletons++;
     }
 
     if (i % 100 === 0) await quickYield();
@@ -503,6 +667,9 @@ export const scanExactDuplicates = async ({
     videoCount,
     hashSkipped,
     hashFailed,
+    uniqueHashes: hashKeys.length,
+    singletons,
+    duplicateHashes,
     duplicateGroups: duplicateGroups.length,
   });
 
