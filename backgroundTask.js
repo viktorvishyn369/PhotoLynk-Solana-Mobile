@@ -601,13 +601,14 @@ export const chooseStealthCloudChunkBytes = ({ platform, originalSize, fastMode 
   // Fast mode: use larger chunks for maximum speed (phone may get warm)
   if (fastMode) {
     const size = typeof originalSize === 'number' ? originalSize : null;
-    if (size !== null && size >= 1024 * MB) return 4 * MB; // Large files: 4MB
-    return 2 * MB; // Normal files: 2MB
+    if (size !== null && size >= 1024 * MB) return 2 * MB; // Large files: 2MB
+    return 1 * MB; // Normal files: 1MB
   }
-  // Default: smaller chunks to reduce memory/CPU pressure and phone heating
+  // Default: SMALL chunks to keep UI responsive (encryption blocks JS thread)
+  // 64KB encrypts in ~10-20ms, allowing UI to stay responsive
   const size = typeof originalSize === 'number' ? originalSize : null;
-  if (size !== null && size >= 1024 * MB) return 1 * MB; // Large files: 1MB
-  return 512 * 1024; // Normal files: 512KB
+  if (size !== null && size >= 100 * MB) return 128 * 1024; // Large files: 128KB
+  return 64 * 1024; // Normal files: 64KB - keeps UI responsive
 };
 
 export const chooseStealthCloudMaxParallelChunkUploads = ({ platform, originalSize, fastMode = false }) => {

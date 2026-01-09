@@ -98,27 +98,31 @@ const updateStatus = (onStatus, text, force = false) => {
   }
 };
 
-// Yield to UI - use setImmediate for fastest possible yield that still allows UI updates
+// Yield to UI - use requestAnimationFrame for true frame-based yielding
 const yieldToUi = () => new Promise(resolve => {
-  // setImmediate runs after I/O but before timers - best for UI responsiveness
-  if (typeof setImmediate !== 'undefined') {
-    setImmediate(resolve);
+  // requestAnimationFrame waits for actual next frame - best for UI responsiveness
+  if (typeof requestAnimationFrame !== 'undefined') {
+    requestAnimationFrame(() => resolve());
   } else {
-    setTimeout(resolve, 0);
+    setTimeout(resolve, 16);
   }
 });
 
 // Longer yield for navigation - waits for animations
 const yieldForNavigation = () => new Promise(resolve => {
   InteractionManager.runAfterInteractions(() => {
-    setTimeout(resolve, 16); // One frame
+    if (typeof requestAnimationFrame !== 'undefined') {
+      requestAnimationFrame(() => resolve());
+    } else {
+      setTimeout(resolve, 16);
+    }
   });
 });
 
-// Quick yield for inside tight loops
+// Quick yield for inside tight loops - still use requestAnimationFrame
 const quickYield = () => new Promise(r => {
-  if (typeof setImmediate !== 'undefined') {
-    setImmediate(r);
+  if (typeof requestAnimationFrame !== 'undefined') {
+    requestAnimationFrame(() => r());
   } else {
     setTimeout(r, 0);
   }
