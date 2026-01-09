@@ -129,8 +129,7 @@ import {
 import {
   stealthCloudRestoreCore,
   localRemoteRestoreCore,
-  buildLocalDeduplicationIndex,
-} from './syncManager';
+} from './syncOperations';
 import { fetchStealthCloudPickerPage, fetchLocalRemotePickerPage } from './syncPickerOperations';
 import {
   validateAuthInputs,
@@ -2394,51 +2393,12 @@ export default function App() {
       const SERVER_URL = getServerUrl();
       const masterKey = await getStealthCloudMasterKey();
 
-      // Check if device is empty first
-      const localIndex = await buildLocalFilenameSetPaged({ mediaType: ['photo', 'video'] });
-      const localFilenames = localIndex.set;
-      const isEmptyDevice = localIndex.scanned === 0;
-
-      // Build local deduplication index (both iOS and Android need hash-based dedup)
-      let localManifestIds = new Set();
-      let localFileHashes = new Set();
-      let localPerceptualHashes = new Set();
-      let localBaseNameSizes = new Map();
-      let localBaseNameDates = new Map();
-
-      if (localIndex.scanned > 0) {
-        setStatus(`Analyzing 1/${localIndex.scanned} photos...`);
-        const dedupIndex = await buildLocalDeduplicationIndex({
-          totalToScan: localIndex.scanned,
-          resolveReadableFilePath,
-          onStatus: setStatus,
-          onProgress: setProgress,
-        });
-        localManifestIds = dedupIndex.localManifestIds;
-        localFileHashes = dedupIndex.localFileHashes;
-        localPerceptualHashes = dedupIndex.localPerceptualHashes;
-        localBaseNameSizes = dedupIndex.localBaseNameSizes;
-        localBaseNameDates = dedupIndex.localBaseNameDates;
-        setProgress(1);
-        await new Promise(r => setTimeout(r, 500));
-      } else {
-        setStatus('Preparing sync...');
-        setProgress(1);
-        await new Promise(r => setTimeout(r, 800));
-      }
-
-      // Syncing phase starts fresh at 0%
-
+      // New optimized sync handles local scanning internally
       const result = await stealthCloudRestoreCore({
         config,
         SERVER_URL,
         masterKey,
-        localFilenames,
-        localManifestIds,
-        localFileHashes,
-        localPerceptualHashes,
-        localBaseNameSizes,
-        localBaseNameDates,
+        resolveReadableFilePath,
         restoreHistory,
         saveRestoreHistory,
         makeHistoryKey,
@@ -3302,17 +3262,15 @@ export default function App() {
       const config = await getAuthHeaders();
       const SERVER_URL = getServerUrl();
 
-      setStatus('Analyzing local files...');
-      const localIndex = await buildLocalFilenameSetPaged({ mediaType: ['photo', 'video'] });
-      const localFilenames = localIndex.set;
-
+      // New optimized sync handles local scanning internally
       const result = await localRemoteRestoreCore({
         config,
         SERVER_URL,
-        localFilenames,
         onlyFilenames: opts?.onlyFilenames || null,
+        fastMode: fastModeEnabledRef.current,
         onStatus: (s) => setStatusSafe(opId, s),
         onProgress: (p) => setProgressSafe(opId, p),
+        abortRef: abortOperationsRef,
       });
 
       if (result.noFiles) {
