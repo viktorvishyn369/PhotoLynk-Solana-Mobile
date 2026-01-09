@@ -30,6 +30,35 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
  * @param {Function} params.onProgress - Progress update callback
  * @returns {Promise<Object>} Result with uploaded, skipped, failed counts
  */
+// Throttle helpers for progress updates
+let lastProgressValue = 0;
+let lastProgressTime = 0;
+let lastStatusTime = 0;
+const PROGRESS_THROTTLE_MS = 100;
+
+const resetProgressTracking = () => {
+  lastProgressValue = 0;
+  lastProgressTime = 0;
+  lastStatusTime = 0;
+};
+
+const throttledProgress = (onProgress, value) => {
+  const now = Date.now();
+  if (value > lastProgressValue && (now - lastProgressTime) >= PROGRESS_THROTTLE_MS) {
+    lastProgressValue = value;
+    lastProgressTime = now;
+    onProgress(value);
+  }
+};
+
+const throttledStatus = (onStatus, msg) => {
+  const now = Date.now();
+  if ((now - lastStatusTime) >= PROGRESS_THROTTLE_MS) {
+    lastStatusTime = now;
+    onStatus(msg);
+  }
+};
+
 export const localRemoteBackupCore = async ({
   getAuthHeaders,
   getServerUrl,
@@ -39,6 +68,7 @@ export const localRemoteBackupCore = async ({
   onStatus,
   onProgress,
 }) => {
+  resetProgressTracking();
   onStatus('Preparing backup...');
   onProgress(0);
 
@@ -58,7 +88,17 @@ export const localRemoteBackupCore = async ({
     const config = await getAuthHeaders();
     const SERVER_URL = getServerUrl();
     console.log('Using server URL for backup:', SERVER_URL);
-    const allServerFiles = await fetchAllServerFilesPaged(SERVER_URL, config);
+    onStatus('Fetching server files...');
+    onProgress(0.01);
+    
+    const allServerFiles = await fetchAllServerFilesPaged(SERVER_URL, config, (fetched, total) => {
+      // Progress fills 1-5% during fetch
+      const fetchProgress = total > 0 ? (fetched / total) * 0.04 : 0;
+      throttledProgress(onProgress, 0.01 + fetchProgress);
+      throttledStatus(onStatus, `Fetching ${fetched}${total > fetched ? ` of ${total}` : ''} server files...`);
+    });
+    
+    onProgress(0.05);
 
     console.log(`\n☁️  Server response: ${allServerFiles.length} files`);
 
@@ -111,8 +151,12 @@ export const localRemoteBackupCore = async ({
       for (const asset of pageAssets) {
         if (excludedIds.has(asset.id)) continue;
         checkedCount += 1;
-        onStatus(`Analyzing ${checkedCount} of ${totalCount || '?'}`);
-        if (totalCount) onProgress(checkedCount / totalCount);
+        // Analyzing phase: 5-20% progress
+        throttledStatus(onStatus, `Analyzing ${checkedCount} of ${totalCount || '?'}`);
+        if (totalCount) {
+          const analyzeProgress = 0.05 + (checkedCount / totalCount) * 0.15;
+          throttledProgress(onProgress, analyzeProgress);
+        }
 
         let actualFilename = normalizeFilenameForCompare(asset && asset.filename ? asset.filename : null);
         if (Platform.OS === 'ios' || !actualFilename) {
@@ -239,8 +283,10 @@ export const localRemoteBackupCore = async ({
         failedFiles.push(asset.filename);
       } finally {
         processedCount++;
-        onStatus(`Backing up ${processedCount} of ${toUpload.length}`);
-        onProgress(processedCount / toUpload.length);
+        // Upload phase: 20-100% progress
+        const uploadProgress = 0.2 + (processedCount / toUpload.length) * 0.8;
+        throttledStatus(onStatus, `Backing up ${processedCount} of ${toUpload.length}`);
+        throttledProgress(onProgress, uploadProgress);
       }
     }));
 
@@ -305,13 +351,25 @@ export const localRemoteBackupSelectedCore = async ({
     return { permissionDenied: true };
   }
 
+  resetProgressTracking();
   onStatus?.('Preparing backup...');
   onProgress?.(0);
 
   try {
     const config = await getAuthHeaders();
     const SERVER_URL = getServerUrl();
-    const allServerFiles = await fetchAllServerFilesPaged(SERVER_URL, config);
+    
+    onStatus?.('Fetching server files...');
+    onProgress?.(0.01);
+    
+    const allServerFiles = await fetchAllServerFilesPaged(SERVER_URL, config, (fetched, total) => {
+      // Progress fills 1-5% during fetch
+      const fetchProgress = total > 0 ? (fetched / total) * 0.04 : 0;
+      throttledProgress(onProgress, 0.01 + fetchProgress);
+      throttledStatus(onStatus, `Fetching ${fetched}${total > fetched ? ` of ${total}` : ''} server files...`);
+    });
+    
+    onProgress?.(0.05);
     const serverFiles = new Set(
       allServerFiles
         .map(f => normalizeFilenameForCompare(f && f.filename ? f.filename : null))
@@ -328,7 +386,10 @@ export const localRemoteBackupSelectedCore = async ({
     const toUpload = [];
     for (let i = 0; i < list.length; i++) {
       const asset = list[i];
-      onStatus?.(`Analyzing ${i + 1} of ${list.length}`);
+      // Analyzing phase: 5-20% progress
+      const analyzeProgress = 0.05 + ((i + 1) / list.length) * 0.15;
+      throttledStatus(onStatus, `Analyzing ${i + 1} of ${list.length}`);
+      throttledProgress(onProgress, analyzeProgress);
       if (excludedIds.has(asset.id)) continue;
 
       let actualFilename = normalizeFilenameForCompare(asset && asset.filename ? asset.filename : null);
@@ -362,7 +423,10 @@ export const localRemoteBackupSelectedCore = async ({
         if (!(await ensureAutoUploadPolicyAllowsWorkIfBackgrounded())) {
           break;
         }
-        onStatus?.(`Backing up ${i + 1} of ${toUpload.length}`);
+        // Upload phase: 20-100% progress
+        const uploadProgress = 0.2 + ((i + 1) / toUpload.length) * 0.8;
+        throttledStatus(onStatus, `Backing up ${i + 1} of ${toUpload.length}`);
+        throttledProgress(onProgress, uploadProgress);
 
         const assetInfo = await MediaLibrary.getAssetInfoAsync(asset.id);
         const resolved = await resolveReadableFilePath({ assetId: asset.id, assetInfo });

@@ -57,7 +57,40 @@ import {
 // HELPERS
 // ============================================================================
 
-const yieldToUi = () => new Promise(r => setTimeout(r, 0));
+// Yield to UI thread - use longer delay to actually let UI breathe
+const yieldToUi = () => new Promise(r => setTimeout(r, 16)); // ~1 frame at 60fps
+
+// Throttled status update - only update UI every N ms to prevent render thrashing
+let lastStatusUpdateMs = 0;
+const throttledStatus = (onStatus, text, forceUpdate = false) => {
+  const now = Date.now();
+  if (forceUpdate || (now - lastStatusUpdateMs) >= 100) { // Max 10 updates/sec
+    lastStatusUpdateMs = now;
+    onStatus(text);
+  }
+};
+
+// Throttled progress update with monotonic guard (never goes backwards)
+let lastProgressUpdateMs = 0;
+let lastProgressValue = 0;
+const throttledProgress = (onProgress, value, forceUpdate = false) => {
+  // Never allow progress to go backwards
+  if (value < lastProgressValue) return;
+  
+  const now = Date.now();
+  if (forceUpdate || (now - lastProgressUpdateMs) >= 100) { // Max 10 updates/sec
+    lastProgressUpdateMs = now;
+    lastProgressValue = value;
+    onProgress(value);
+  }
+};
+
+// Reset progress tracking for new operation
+const resetProgressTracking = () => {
+  lastProgressValue = 0;
+  lastProgressUpdateMs = 0;
+  lastStatusUpdateMs = 0;
+};
 
 // Throttle functions
 const getThrottleAssetCooldownMs = (fastMode) => fastMode ? 0 : (Platform.OS === 'ios' ? 2000 : 1500);
@@ -131,7 +164,7 @@ const waitForIosActive = async (appStateRef, onStatus) => {
 };
 
 // Build deduplication sets from existing manifests
-const buildDeduplicationSets = async (existingManifests, SERVER_URL, config, masterKey) => {
+const buildDeduplicationSets = async (existingManifests, SERVER_URL, config, masterKey, onProgress = null, onStatus = null) => {
   const alreadyFilenames = new Set();
   const alreadyBaseFilenames = new Set();
   const alreadyBaseNameSizes = new Map();
@@ -144,55 +177,86 @@ const buildDeduplicationSets = async (existingManifests, SERVER_URL, config, mas
   const alreadyExifTimeMake = new Set();
 
   if (existingManifests.length > 0) {
-    for (const m of existingManifests) {
-      try {
-        const manRes = await axios.get(`${SERVER_URL}/api/cloud/manifests/${m.manifestId}`, { headers: config.headers, timeout: 15000 });
-        const payload = manRes.data;
-        const parsed = typeof payload === 'string' ? JSON.parse(payload) : payload;
-        const enc = JSON.parse(parsed.encryptedManifest);
-        const manifestNonce = naclUtil.decodeBase64(enc.manifestNonce);
-        const manifestBox = naclUtil.decodeBase64(enc.manifestBox);
-        const manifestPlain = nacl.secretbox.open(manifestBox, manifestNonce, masterKey);
-        if (manifestPlain) {
-          const manifest = JSON.parse(naclUtil.encodeUTF8(manifestPlain));
-          if (manifest.filename) {
-            alreadyFilenames.add(normalizeFilenameForCompare(manifest.filename));
-            const baseName = extractBaseFilename(manifest.filename);
-            if (baseName) {
-              alreadyBaseFilenames.add(baseName);
-              if (manifest.originalSize) {
-                if (!alreadyBaseNameSizes.has(baseName)) alreadyBaseNameSizes.set(baseName, new Set());
-                alreadyBaseNameSizes.get(baseName).add(manifest.originalSize);
-              }
-              if (manifest.creationTime) {
-                const dateStr = normalizeDateForCompare(manifest.creationTime);
-                if (dateStr) {
-                  if (!alreadyBaseNameDates.has(baseName)) alreadyBaseNameDates.set(baseName, new Set());
-                  alreadyBaseNameDates.get(baseName).add(dateStr);
+    const MAX_CONCURRENT = 5;
+    let idx = 0;
+    let processed = 0;
+    const total = existingManifests.length;
+    let lastStatusUpdate = 0;
+
+    const getNext = () => {
+      if (idx < existingManifests.length) {
+        return existingManifests[idx++];
+      }
+      return null;
+    };
+
+    const worker = async () => {
+      let m;
+      while ((m = getNext()) !== null) {
+        try {
+          const manRes = await axios.get(`${SERVER_URL}/api/cloud/manifests/${m.manifestId}`, { headers: config.headers, timeout: 15000 });
+          const payload = manRes.data;
+          const parsed = typeof payload === 'string' ? JSON.parse(payload) : payload;
+          const enc = JSON.parse(parsed.encryptedManifest);
+          const manifestNonce = naclUtil.decodeBase64(enc.manifestNonce);
+          const manifestBox = naclUtil.decodeBase64(enc.manifestBox);
+          const manifestPlain = nacl.secretbox.open(manifestBox, manifestNonce, masterKey);
+          if (manifestPlain) {
+            const manifest = JSON.parse(naclUtil.encodeUTF8(manifestPlain));
+            if (manifest.filename) {
+              alreadyFilenames.add(normalizeFilenameForCompare(manifest.filename));
+              const baseName = extractBaseFilename(manifest.filename);
+              if (baseName) {
+                alreadyBaseFilenames.add(baseName);
+                if (manifest.originalSize) {
+                  if (!alreadyBaseNameSizes.has(baseName)) alreadyBaseNameSizes.set(baseName, new Set());
+                  alreadyBaseNameSizes.get(baseName).add(manifest.originalSize);
                 }
-                const fullTimestamp = normalizeFullTimestamp(manifest.creationTime);
-                if (fullTimestamp) {
-                  if (!alreadyBaseNameTimestamps.has(baseName)) alreadyBaseNameTimestamps.set(baseName, new Set());
-                  alreadyBaseNameTimestamps.get(baseName).add(fullTimestamp);
+                if (manifest.creationTime) {
+                  const dateStr = normalizeDateForCompare(manifest.creationTime);
+                  if (dateStr) {
+                    if (!alreadyBaseNameDates.has(baseName)) alreadyBaseNameDates.set(baseName, new Set());
+                    alreadyBaseNameDates.get(baseName).add(dateStr);
+                  }
+                  const fullTimestamp = normalizeFullTimestamp(manifest.creationTime);
+                  if (fullTimestamp) {
+                    if (!alreadyBaseNameTimestamps.has(baseName)) alreadyBaseNameTimestamps.set(baseName, new Set());
+                    alreadyBaseNameTimestamps.get(baseName).add(fullTimestamp);
+                  }
                 }
               }
             }
+            if (manifest.perceptualHash) alreadyPerceptualHashes.add(manifest.perceptualHash);
+            if (manifest.fileHash) alreadyFileHashes.add(manifest.fileHash);
+            if (manifest.exifCaptureTime) {
+              const ct = manifest.exifCaptureTime;
+              const mk = manifest.exifMake;
+              const md = manifest.exifModel;
+              if (ct && mk && md) alreadyExifFull.add(`${ct}|${mk}|${md}`);
+              if (ct && md) alreadyExifTimeModel.add(`${ct}|${md}`);
+              if (ct && mk) alreadyExifTimeMake.add(`${ct}|${mk}`);
+            }
           }
-          if (manifest.perceptualHash) alreadyPerceptualHashes.add(manifest.perceptualHash);
-          if (manifest.fileHash) alreadyFileHashes.add(manifest.fileHash);
-          if (manifest.exifCaptureTime) {
-            const ct = manifest.exifCaptureTime;
-            const mk = manifest.exifMake;
-            const md = manifest.exifModel;
-            if (ct && mk && md) alreadyExifFull.add(`${ct}|${mk}|${md}`);
-            if (ct && md) alreadyExifTimeModel.add(`${ct}|${md}`);
-            if (ct && mk) alreadyExifTimeMake.add(`${ct}|${mk}`);
+        } catch (e) {
+          // Skip manifests we can't decrypt
+        } finally {
+          // Update progress after each manifest (safe - runs after async work completes)
+          processed++;
+          const now = Date.now();
+          if (now - lastStatusUpdate > 100) {
+            lastStatusUpdate = now;
+            if (onStatus) onStatus(`Analyzing ${processed} of ${total} server files...`);
+            if (onProgress) onProgress(processed / total);
+            await new Promise(r => setTimeout(r, 16)); // Yield to UI
           }
         }
-      } catch (e) {
-        // Skip manifests we can't decrypt
       }
-    }
+    };
+
+    const workers = [];
+    const poolSize = Math.min(MAX_CONCURRENT, existingManifests.length);
+    for (let i = 0; i < poolSize; i++) workers.push(worker());
+    await Promise.all(workers);
     console.log(`StealthCloud: found ${alreadyFilenames.size} filenames, ${alreadyBaseFilenames.size} base names, ${alreadyBaseNameSizes.size} name+size, ${alreadyBaseNameDates.size} name+date, ${alreadyBaseNameTimestamps.size} name+timestamp, ${alreadyFileHashes.size} file hashes, ${alreadyPerceptualHashes.size} perceptual hashes, ${alreadyExifFull.size} EXIF keys for deduplication`);
   }
 
@@ -276,59 +340,61 @@ const shouldSkipAsset = async ({
 };
 
 // Compute hashes for an asset
-const computeAssetHashes = async ({ asset, assetInfo, assetFilename, filePath, isImage, shouldSkipDeduplication, dedupSets }) => {
+const computeAssetHashes = async ({ asset, assetInfo, assetFilename, filePath, isImage, shouldSkipDeduplication, dedupSets, sessionFileHashes, sessionPerceptualHashes }) => {
   let exactFileHash = null;
   let perceptualHash = null;
   const { alreadyFileHashes, alreadyPerceptualHashes } = dedupSets;
 
-  if (!shouldSkipDeduplication) {
-    if (isImage) {
-      try {
-        perceptualHash = await computePerceptualHash(filePath, asset, assetInfo);
-        if (perceptualHash) {
-          console.log(`[PerceptualHash] ${assetFilename}: ${perceptualHash} (${perceptualHash.length} chars)`);
-        }
-      } catch (e) {
-        console.warn('computePerceptualHash failed:', asset.id, e?.message);
+  // Always compute hashes - needed for both dedup and manifest storage
+  if (isImage) {
+    try {
+      perceptualHash = await computePerceptualHash(filePath, asset, assetInfo);
+      if (perceptualHash) {
+        console.log(`[PerceptualHash] ${assetFilename}: ${perceptualHash} (${perceptualHash.length} chars)`);
       }
-
-      if (perceptualHash && findPerceptualHashMatch(perceptualHash, alreadyPerceptualHashes, CROSS_PLATFORM_DHASH_THRESHOLD)) {
-        return { skip: true, reason: 'perceptualHash' };
-      }
-
-      try {
-        exactFileHash = await computeExactFileHash(filePath);
-      } catch (e) {
-        console.warn('computeExactFileHash failed:', asset.id, e?.message);
-      }
-    } else {
-      try {
-        exactFileHash = await computeExactFileHash(filePath);
-        console.log(`[FileHash] ${assetFilename}: ${exactFileHash ? exactFileHash.substring(0, 16) + '...' : 'null'}`);
-      } catch (e) {
-        console.warn('computeExactFileHash failed:', asset.id, e?.message);
-      }
-
-      if (exactFileHash && alreadyFileHashes.has(exactFileHash)) {
-        console.log(`Skipping ${assetFilename} - exact file hash already on server`);
-        return { skip: true, reason: 'fileHash' };
-      }
+    } catch (e) {
+      console.warn('computePerceptualHash failed:', asset.id, e?.message);
     }
-  }
 
-  // Always compute hashes for manifest storage
-  if (shouldSkipDeduplication) {
-    if (isImage) {
-      try {
-        perceptualHash = await computePerceptualHash(filePath, asset, assetInfo);
-      } catch (e) {}
-      try {
-        exactFileHash = await computeExactFileHash(filePath);
-      } catch (e) {}
-    } else {
-      try {
-        exactFileHash = await computeExactFileHash(filePath);
-      } catch (e) {}
+    try {
+      exactFileHash = await computeExactFileHash(filePath);
+    } catch (e) {
+      console.warn('computeExactFileHash failed:', asset.id, e?.message);
+    }
+
+    // Check against server hashes (if available)
+    if (!shouldSkipDeduplication && perceptualHash && findPerceptualHashMatch(perceptualHash, alreadyPerceptualHashes, CROSS_PLATFORM_DHASH_THRESHOLD)) {
+      return { skip: true, reason: 'perceptualHash' };
+    }
+
+    // Check against session hashes (catches duplicates within same batch)
+    if (sessionPerceptualHashes && perceptualHash && findPerceptualHashMatch(perceptualHash, sessionPerceptualHashes, CROSS_PLATFORM_DHASH_THRESHOLD)) {
+      console.log(`⊘ Skipped (duplicate): ${assetFilename} - perceptual hash matches file in current batch`);
+      return { skip: true, reason: 'sessionPerceptualHash' };
+    }
+    if (sessionFileHashes && exactFileHash && sessionFileHashes.has(exactFileHash)) {
+      console.log(`⊘ Skipped (duplicate): ${assetFilename} - exact file hash matches file in current batch`);
+      return { skip: true, reason: 'sessionFileHash' };
+    }
+  } else {
+    // Video - use file hash
+    try {
+      exactFileHash = await computeExactFileHash(filePath);
+      console.log(`[FileHash] ${assetFilename}: ${exactFileHash ? exactFileHash.substring(0, 16) + '...' : 'null'}`);
+    } catch (e) {
+      console.warn('computeExactFileHash failed:', asset.id, e?.message);
+    }
+
+    // Check against server hashes (if available)
+    if (!shouldSkipDeduplication && exactFileHash && alreadyFileHashes.has(exactFileHash)) {
+      console.log(`Skipping ${assetFilename} - exact file hash already on server`);
+      return { skip: true, reason: 'fileHash' };
+    }
+
+    // Check against session hashes (catches duplicates within same batch)
+    if (sessionFileHashes && exactFileHash && sessionFileHashes.has(exactFileHash)) {
+      console.log(`⊘ Skipped (duplicate): ${assetFilename} - exact file hash matches file in current batch`);
+      return { skip: true, reason: 'sessionFileHash' };
     }
   }
 
@@ -338,7 +404,7 @@ const computeAssetHashes = async ({ asset, assetInfo, assetFilename, filePath, i
 // Upload a single asset to StealthCloud
 const uploadSingleAssetToStealthCloud = async ({
   asset, config, SERVER_URL, masterKey, already, dedupSets, shouldSkipDeduplication, fastMode,
-  processedIndex, totalCount, onStatus, onProgress
+  processedIndex, totalCount, onStatus, onProgress, sessionFileHashes, sessionPerceptualHashes
 }) => {
   let assetInfo;
   try {
@@ -394,20 +460,32 @@ const uploadSingleAssetToStealthCloud = async ({
   const assetFilename = assetInfo.filename || asset.filename || null;
   const fileIdentity = computeFileIdentity(assetFilename, originalSize);
   const manifestId = fileIdentity ? sha256(`file:${fileIdentity}`) : sha256(`asset:${asset.id}`);
+  
+  // Debug: log manifestId computation for first few files
+  if (processedIndex < 5) {
+    console.log(`[Dedup Debug] ${Platform.OS} file=${assetFilename} size=${originalSize} identity=${fileIdentity} manifestId=${manifestId?.substring(0, 16)}...`);
+  }
 
   // Check deduplication
   const skipResult = await shouldSkipAsset({
     asset, assetInfo, assetFilename, originalSize, manifestId, already, dedupSets, shouldSkipDeduplication, filePath, tmpCopied, tmpUri
   });
   if (skipResult.skip) {
+    if (processedIndex < 10) {
+      console.log(`[Dedup Debug] ${Platform.OS}: SKIPPED ${assetFilename} reason=${skipResult.reason}`);
+    }
     return { uploaded: 0, skipped: 1, failed: 0 };
+  }
+  if (processedIndex < 5) {
+    console.log(`[Dedup Debug] ${Platform.OS}: NOT SKIPPED ${assetFilename} - will upload`);
   }
 
   const isImage = asset.mediaType === 'photo' || (assetInfo && assetInfo.mediaType === 'photo');
 
-  // Compute hashes
+  // Compute hashes and check for duplicates (including within current batch)
   const hashResult = await computeAssetHashes({
-    asset, assetInfo, assetFilename, filePath, isImage, shouldSkipDeduplication, dedupSets
+    asset, assetInfo, assetFilename, filePath, isImage, shouldSkipDeduplication, dedupSets,
+    sessionFileHashes, sessionPerceptualHashes
   });
   if (hashResult.skip) {
     if (tmpCopied && tmpUri) await FileSystem.deleteAsync(tmpUri, { idempotent: true });
@@ -470,11 +548,8 @@ const uploadSingleAssetToStealthCloud = async ({
       chunkIndex += 1;
       position += plaintext.length;
 
-      if (totalCount && onProgress) {
-        const fileProgress = (processedIndex - 1) / totalCount;
-        const chunkProgress = originalSize ? (position / originalSize) / totalCount : 0;
-        onProgress(Math.min(fileProgress + chunkProgress, 1));
-      }
+      // Note: Per-chunk progress removed to prevent bar jumping back
+      // Main backup loop handles progress updates at file level
 
       if (plaintext.length < effectiveBytes) break;
     }
@@ -526,7 +601,7 @@ const uploadSingleAssetToStealthCloud = async ({
               chunkIds.push(chunkId);
               chunkSizes.push(plaintext.length);
               chunkIndex += 1;
-              if (totalCount && onProgress) onProgress(processedIndex / totalCount);
+              // Note: Per-chunk progress removed to prevent bar jumping back
             }
           } catch (e) {
             reject(e);
@@ -585,7 +660,17 @@ const uploadSingleAssetToStealthCloud = async ({
   const manifestResponse = await withRetries(async () => {
     return await axios.post(
       `${SERVER_URL}/api/cloud/manifests`,
-      { manifestId, encryptedManifest, chunkCount: chunkIds.length },
+      { 
+        manifestId, 
+        encryptedManifest, 
+        chunkCount: chunkIds.length,
+        // Include metadata for fast dedup on future backups (server stores unencrypted)
+        filename: assetFilename,
+        originalSize,
+        fileHash: exactFileHash,
+        perceptualHash,
+        creationTime: asset.creationTime,
+      },
       { headers: config.headers, timeout: 30000 }
     );
   }, { retries: 20, baseDelayMs: 2000, maxDelayMs: 30000, shouldRetry: shouldRetryChunkUpload });
@@ -599,6 +684,10 @@ const uploadSingleAssetToStealthCloud = async ({
   already.add(manifestId);
   if (exactFileHash) dedupSets.alreadyFileHashes.add(exactFileHash);
   if (perceptualHash) dedupSets.alreadyPerceptualHashes.add(perceptualHash);
+  
+  // Also add to session sets for within-batch deduplication
+  if (sessionFileHashes && exactFileHash) sessionFileHashes.add(exactFileHash);
+  if (sessionPerceptualHashes && perceptualHash) sessionPerceptualHashes.add(perceptualHash);
 
   if (tmpCopied && tmpUri) {
     await FileSystem.deleteAsync(tmpUri, { idempotent: true });
@@ -650,28 +739,84 @@ export const stealthCloudBackupCore = async ({
     }
   }
 
+  // Reset progress tracking for this new operation
+  resetProgressTracking();
+  
   onProgress(0);
   onStatus('Preparing backup...');
 
   const config = await getAuthHeaders();
   const SERVER_URL = getServerUrl();
+  
+  // Yield to UI after auth
+  await new Promise(r => setTimeout(r, 16));
+  onStatus('Checking permissions...');
 
   const allowed = await ensureStealthCloudUploadAllowed();
   if (!allowed) {
     return { uploaded: 0, skipped: 0, failed: 0, notAllowed: true };
   }
+  
+  // Yield to UI
+  await new Promise(r => setTimeout(r, 16));
+  onStatus('Loading encryption key...');
 
   const masterKey = await getStealthCloudMasterKey();
+  
+  // Yield to UI
+  await new Promise(r => setTimeout(r, 16));
+  onStatus('Fetching server state...');
+  onProgress(0.01);
 
   let existingManifests = [];
   try {
-    existingManifests = await fetchAllManifestsPaged(SERVER_URL, config);
+    existingManifests = await fetchAllManifestsPaged(SERVER_URL, config, (fetched, total) => {
+      // Progress fills 1-4% during fetch (proportional to fetched/total)
+      const fetchProgress = total > 0 ? (fetched / total) * 0.03 : 0;
+      throttledProgress(onProgress, 0.01 + fetchProgress);
+      throttledStatus(onStatus, `Fetching ${fetched}${total > fetched ? ` of ${total}` : ''} server files...`);
+    });
   } catch (e) {
     existingManifests = [];
   }
+  onProgress(0.04);
   const already = new Set(existingManifests.map(m => m.manifestId));
+  console.log(`[Dedup Debug] ${Platform.OS}: Found ${existingManifests.length} existing manifests, ${already.size} unique manifestIds`);
+  
+  // Get local file count first to calculate proportional progress
+  // Quick count without fetching all assets
+  let estimatedLocalCount = 0;
+  try {
+    const countPage = await MediaLibrary.getAssetsAsync({ first: 1, mediaType: Platform.OS === 'ios' ? [MediaLibrary.MediaType.photo, MediaLibrary.MediaType.video] : ['photo', 'video'] });
+    estimatedLocalCount = countPage?.totalCount || 500; // Default estimate if unavailable
+  } catch (e) {
+    estimatedLocalCount = 500;
+  }
+  
+  // Calculate proportional progress split based on file counts
+  // Analyzing is ~1 unit of work per file (HTTP + decrypt)
+  // Backing up is ~10 units of work per file (hash + encrypt + upload chunks)
+  const analyzeWeight = existingManifests.length * 1;
+  const backupWeight = estimatedLocalCount * 10;
+  const totalWeight = analyzeWeight + backupWeight;
+  const analyzePhaseEnd = totalWeight > 0 ? Math.min(0.4, Math.max(0.05, analyzeWeight / totalWeight)) : 0;
+  
+  // Phase: Analyzing server files (with progress)
+  if (existingManifests.length > 0) {
+    onStatus(`Analyzing 0 of ${existingManifests.length} server files...`);
+    onProgress(0);
+  }
 
-  const dedupSets = await buildDeduplicationSets(existingManifests, SERVER_URL, config, masterKey);
+  const dedupSets = await buildDeduplicationSets(
+    existingManifests, 
+    SERVER_URL, 
+    config, 
+    masterKey,
+    // Progress callback for analyzing phase (0 to analyzePhaseEnd)
+    (p) => onProgress(p * analyzePhaseEnd),
+    (msg) => onStatus(msg)
+  );
+  console.log(`[Dedup Debug] ${Platform.OS}: Built dedup sets - filenames=${dedupSets.alreadyFilenames.size}, perceptualHashes=${dedupSets.alreadyPerceptualHashes.size}, fileHashes=${dedupSets.alreadyFileHashes.size}`);
 
   let uploaded = 0;
   let skipped = 0;
@@ -680,21 +825,38 @@ export const stealthCloudBackupCore = async ({
   const hasServerFiles = existingManifests.length > 0;
   const shouldSkipDeduplication = !hasServerFiles;
 
+  // Session-level hash tracking to catch duplicates across the ENTIRE backup operation
+  // Persists across all batches/pages - if file A uploads in batch 1, file B with same hash in batch 5 will be skipped
+  // This works even when shouldSkipDeduplication is true (no server files yet)
+  const sessionFileHashes = new Set();
+  const sessionPerceptualHashes = new Set();
+
   if (shouldSkipDeduplication) {
-    console.log('StealthCloud: No server files found - skipping deduplication checks for faster upload');
+    console.log('StealthCloud: No server files found - will still check for duplicates across entire operation');
   }
 
-  const PAGE_SIZE = 250;
-  let after = null;
-  let totalCount = null;
-  let processedIndex = 0;
+  // Phase: Scanning local photos
+  // Progress range: analyzePhaseEnd to (analyzePhaseEnd + scanPhaseRange)
+  const scanPhaseRange = 0.1; // 10% for scanning
+  const scanPhaseEnd = Math.min(analyzePhaseEnd + scanPhaseRange, 0.5); // Cap at 50%
+  
+  onStatus('Scanning local photos...');
+  onProgress(analyzePhaseEnd);
+  await new Promise(r => setTimeout(r, 16));
 
+  const PAGE_SIZE = 250;
   const mediaTypeQuery = Platform.OS === 'ios'
     ? [MediaLibrary.MediaType.photo, MediaLibrary.MediaType.video]
     : ['photo', 'video'];
   const sortByQuery = Platform.OS === 'ios'
     ? [MediaLibrary.SortBy.creationTime]
     : undefined;
+
+  // First pass: collect all assets with progress
+  const allAssets = [];
+  let after = null;
+  let totalCount = null;
+  let scannedCount = 0;
 
   while (true) {
     const page = await MediaLibrary.getAssetsAsync({
@@ -710,56 +872,85 @@ export const stealthCloudBackupCore = async ({
 
     const assets = page && Array.isArray(page.assets) ? page.assets : [];
     if (assets.length === 0) {
-      if (processedIndex === 0) {
+      if (scannedCount === 0) {
         return { uploaded: 0, skipped: 0, failed: 0, noFiles: true };
       }
       break;
     }
 
-    for (let j = 0; j < assets.length; j++) {
-      // Check abort signal
-      if (abortRef && abortRef.current) {
-        console.log('StealthCloud backup aborted by user');
-        return { uploaded, skipped, failed, aborted: true };
-      }
-
-      const asset = assets[j];
-      processedIndex += 1;
-
-      if (ensureAutoUploadPolicyAllowsWorkIfBackgrounded && !(await ensureAutoUploadPolicyAllowsWorkIfBackgrounded())) {
-        break;
-      }
-
-      try {
-        onStatus(`Backing up ${processedIndex} of ${totalCount || '?'}`);
-        if (totalCount) onProgress(processedIndex / totalCount);
-
-        const result = await uploadSingleAssetToStealthCloud({
-          asset, config, SERVER_URL, masterKey, already, dedupSets, shouldSkipDeduplication, fastMode,
-          processedIndex, totalCount, onStatus, onProgress
-        });
-
-        uploaded += result.uploaded;
-        skipped += result.skipped;
-        failed += result.failed;
-
-        if (result.uploaded > 0) {
-          const assetCooldown = getThrottleAssetCooldownMs(fastMode);
-          if (assetCooldown > 0) await sleep(assetCooldown);
-
-          const batchLimit = getThrottleBatchLimit(fastMode);
-          if (uploaded > 0 && uploaded % batchLimit === 0) {
-            await thermalCooldownPause(Math.floor(uploaded / batchLimit), fastMode, onStatus);
-          }
-        }
-      } catch (e) {
-        failed += 1;
-        console.warn('StealthCloud asset failed:', asset?.id || 'unknown', e?.message || String(e));
-      }
+    allAssets.push(...assets);
+    scannedCount += assets.length;
+    
+    // Update progress during scanning phase
+    if (totalCount) {
+      const scanProgress = analyzePhaseEnd + (scannedCount / totalCount) * (scanPhaseEnd - analyzePhaseEnd);
+      throttledProgress(onProgress, scanProgress);
+      throttledStatus(onStatus, `Scanning ${scannedCount} of ${totalCount} local photos...`);
+    } else {
+      throttledStatus(onStatus, `Scanning ${scannedCount} local photos...`);
     }
 
     after = page && page.endCursor ? page.endCursor : null;
     if (!page || page.hasNextPage !== true) break;
+    
+    // Yield to UI between pages
+    await new Promise(r => setTimeout(r, 16));
+  }
+
+  // Backup phase uses remaining progress (scanPhaseEnd to 1.0)
+  const backupPhaseStart = scanPhaseEnd;
+  const backupPhaseRange = 1.0 - scanPhaseEnd;
+  let processedIndex = 0;
+
+  onStatus(`Backing up 0 of ${allAssets.length}`);
+  onProgress(backupPhaseStart);
+  await new Promise(r => setTimeout(r, 16));
+
+  for (let j = 0; j < allAssets.length; j++) {
+    // Check abort signal
+    if (abortRef && abortRef.current) {
+      console.log('StealthCloud backup aborted by user');
+      return { uploaded, skipped, failed, aborted: true };
+    }
+
+    const asset = allAssets[j];
+    processedIndex += 1;
+
+    if (ensureAutoUploadPolicyAllowsWorkIfBackgrounded && !(await ensureAutoUploadPolicyAllowsWorkIfBackgrounded())) {
+      break;
+    }
+
+    try {
+      // Throttle UI updates to prevent render thrashing
+      // Progress: backupPhaseStart to 1.0 (proportional to file counts)
+      throttledStatus(onStatus, `Backing up ${processedIndex} of ${allAssets.length}`);
+      throttledProgress(onProgress, backupPhaseStart + (processedIndex / allAssets.length) * backupPhaseRange);
+
+      // Yield to UI thread every few assets to keep UI responsive
+      if (processedIndex % 3 === 0) await yieldToUi();
+
+      const result = await uploadSingleAssetToStealthCloud({
+        asset, config, SERVER_URL, masterKey, already, dedupSets, shouldSkipDeduplication, fastMode,
+        processedIndex, totalCount: allAssets.length, onStatus, onProgress, sessionFileHashes, sessionPerceptualHashes
+      });
+
+      uploaded += result.uploaded;
+      skipped += result.skipped;
+      failed += result.failed;
+
+      if (result.uploaded > 0) {
+        const assetCooldown = getThrottleAssetCooldownMs(fastMode);
+        if (assetCooldown > 0) await sleep(assetCooldown);
+
+        const batchLimit = getThrottleBatchLimit(fastMode);
+        if (uploaded > 0 && uploaded % batchLimit === 0) {
+          await thermalCooldownPause(Math.floor(uploaded / batchLimit), fastMode, onStatus);
+        }
+      }
+    } catch (e) {
+      failed += 1;
+      console.warn('StealthCloud asset failed:', asset?.id || 'unknown', e?.message || String(e));
+    }
   }
 
   return { uploaded, skipped, failed };
@@ -798,47 +989,94 @@ export const stealthCloudBackupSelectedCore = async ({
     return { uploaded: 0, skipped: 0, failed: 0, noAssets: true };
   }
 
+  // Reset progress tracking for this new operation
+  resetProgressTracking();
+  
   onProgress(0);
   onStatus('Preparing backup...');
 
   const config = await getAuthHeaders();
   const SERVER_URL = getServerUrl();
+  
+  // Yield to UI
+  await new Promise(r => setTimeout(r, 16));
+  onStatus('Checking permissions...');
 
   const allowed = await ensureStealthCloudUploadAllowed();
   if (!allowed) {
     return { uploaded: 0, skipped: 0, failed: 0, notAllowed: true };
   }
+  
+  // Yield to UI
+  await new Promise(r => setTimeout(r, 16));
+  onStatus('Loading encryption key...');
 
   const masterKey = await getStealthCloudMasterKey();
+  
+  // Yield to UI
+  await new Promise(r => setTimeout(r, 16));
+  onStatus('Fetching server state...');
+  onProgress(0.01);
 
   let existingManifests = [];
   try {
-    existingManifests = await fetchAllManifestsPaged(SERVER_URL, config);
+    existingManifests = await fetchAllManifestsPaged(SERVER_URL, config, (fetched, total) => {
+      // Progress fills 1-4% during fetch (proportional to fetched/total)
+      const fetchProgress = total > 0 ? (fetched / total) * 0.03 : 0;
+      throttledProgress(onProgress, 0.01 + fetchProgress);
+      throttledStatus(onStatus, `Fetching ${fetched}${total > fetched ? ` of ${total}` : ''} server files...`);
+    });
   } catch (e) {
     existingManifests = [];
   }
+  onProgress(0.04);
   const already = new Set(existingManifests.map(m => m.manifestId));
-
-  // Build deduplication sets with progress for iOS
-  if (Platform.OS === 'ios' && existingManifests.length > 0) {
-    onStatus('Analyzing existing files...');
-  }
-  const dedupSets = await buildDeduplicationSets(existingManifests, SERVER_URL, config, masterKey);
-  if (Platform.OS === 'ios') {
+  
+  const totalCount = list.length;
+  
+  // Calculate proportional progress split based on file counts
+  const analyzeWeight = existingManifests.length * 1;
+  const backupWeight = totalCount * 10;
+  const totalWeight = analyzeWeight + backupWeight;
+  const analyzePhaseEnd = totalWeight > 0 ? Math.min(0.4, Math.max(0.05, analyzeWeight / totalWeight)) : 0;
+  
+  // Phase: Analyzing server files (with progress)
+  if (existingManifests.length > 0) {
+    onStatus(`Analyzing 0 of ${existingManifests.length} server files...`);
     onProgress(0);
   }
+
+  const dedupSets = await buildDeduplicationSets(
+    existingManifests, 
+    SERVER_URL, 
+    config, 
+    masterKey,
+    // Progress callback for analyzing phase (0 to analyzePhaseEnd)
+    (p) => onProgress(p * analyzePhaseEnd),
+    (msg) => onStatus(msg)
+  );
 
   let uploaded = 0;
   let skipped = 0;
   let failed = 0;
 
-  const totalCount = list.length;
   const hasServerFiles = existingManifests.length > 0;
   const shouldSkipDeduplication = !hasServerFiles;
 
+  // Session-level hash tracking to catch duplicates across the ENTIRE backup operation
+  const sessionFileHashes = new Set();
+  const sessionPerceptualHashes = new Set();
+
   if (shouldSkipDeduplication) {
-    console.log('StealthCloud: No server files found - skipping deduplication checks for faster upload');
+    console.log('StealthCloud: No server files found - will still check for duplicates across entire operation');
   }
+
+  // Transition to backup phase
+  const backupPhaseStart = analyzePhaseEnd;
+  const backupPhaseRange = 1.0 - analyzePhaseEnd;
+  onStatus(`Backing up 0 of ${totalCount}`);
+  onProgress(analyzePhaseEnd);
+  await new Promise(r => setTimeout(r, 16));
 
   for (let j = 0; j < list.length; j++) {
     // Check abort signal
@@ -855,12 +1093,17 @@ export const stealthCloudBackupSelectedCore = async ({
     }
 
     try {
-      onStatus(`Backing up ${processedIndex} of ${totalCount}`);
-      onProgress((processedIndex - 1) / totalCount);
+      // Throttle UI updates to prevent render thrashing
+      // Progress: backupPhaseStart to 1.0 (proportional to file counts)
+      throttledStatus(onStatus, `Backing up ${processedIndex} of ${totalCount}`);
+      throttledProgress(onProgress, backupPhaseStart + (processedIndex / totalCount) * backupPhaseRange);
+
+      // Yield to UI thread every few assets to keep UI responsive
+      if (processedIndex % 3 === 0) await yieldToUi();
 
       const result = await uploadSingleAssetToStealthCloud({
         asset, config, SERVER_URL, masterKey, already, dedupSets, shouldSkipDeduplication, fastMode,
-        processedIndex, totalCount, onStatus, onProgress
+        processedIndex, totalCount, onStatus, onProgress, sessionFileHashes, sessionPerceptualHashes
       });
 
       uploaded += result.uploaded;

@@ -119,12 +119,14 @@ export const buildLocalAssetIdSetPaged = async ({ album, maxInitialEmptyWaitMs =
  * Fetch all server files with pagination (for Remote/Local backup/sync)
  * @param {string} serverUrl - Server base URL
  * @param {Object} config - Axios config with auth headers
+ * @param {Function} onFetchProgress - Optional callback (fetchedCount, estimatedTotal) for progress
  * @returns {Promise<Array>}
  */
-export const fetchAllServerFilesPaged = async (serverUrl, config) => {
+export const fetchAllServerFilesPaged = async (serverUrl, config, onFetchProgress = null) => {
   const PAGE_LIMIT = 500;
   const allFiles = [];
   let offset = 0;
+  let estimatedTotal = null;
 
   while (true) {
     const response = await axios.get(`${serverUrl}/api/files`, {
@@ -134,11 +136,20 @@ export const fetchAllServerFilesPaged = async (serverUrl, config) => {
 
     const files = (response.data && response.data.files) ? response.data.files : [];
     allFiles.push(...files);
+    
+    // Get total from response if available
+    if (estimatedTotal === null && typeof response.data?.total === 'number') {
+      estimatedTotal = response.data.total;
+    }
+    
+    // Report progress during fetch
+    if (onFetchProgress) {
+      onFetchProgress(allFiles.length, estimatedTotal || allFiles.length);
+    }
 
     if (!files || files.length < PAGE_LIMIT) break;
     offset += files.length;
-    const total = typeof response.data?.total === 'number' ? response.data.total : null;
-    if (typeof total === 'number' && offset >= total) break;
+    if (typeof estimatedTotal === 'number' && offset >= estimatedTotal) break;
   }
 
   return allFiles;
@@ -148,26 +159,38 @@ export const fetchAllServerFilesPaged = async (serverUrl, config) => {
  * Fetch all StealthCloud manifests with pagination
  * @param {string} serverUrl - Server base URL
  * @param {Object} config - Axios config with auth headers
+ * @param {Function} onFetchProgress - Optional callback (fetchedCount, estimatedTotal) for progress
+ * @param {boolean} includeMeta - Whether to include hash metadata (for fast dedup)
  * @returns {Promise<Array>}
  */
-export const fetchAllManifestsPaged = async (serverUrl, config) => {
+export const fetchAllManifestsPaged = async (serverUrl, config, onFetchProgress = null, includeMeta = false) => {
   const PAGE_LIMIT = 500;
   const allManifests = [];
   let offset = 0;
+  let estimatedTotal = null;
 
   while (true) {
     const response = await axios.get(`${serverUrl}/api/cloud/manifests`, {
       ...config,
-      params: { offset, limit: PAGE_LIMIT }
+      params: { offset, limit: PAGE_LIMIT, ...(includeMeta ? { meta: 'true' } : {}) }
     });
 
     const manifests = (response.data && response.data.manifests) ? response.data.manifests : [];
     allManifests.push(...manifests);
+    
+    // Get total from response if available
+    if (estimatedTotal === null && typeof response.data?.total === 'number') {
+      estimatedTotal = response.data.total;
+    }
+    
+    // Report progress during fetch
+    if (onFetchProgress) {
+      onFetchProgress(allManifests.length, estimatedTotal || allManifests.length);
+    }
 
     if (!manifests || manifests.length < PAGE_LIMIT) break;
     offset += manifests.length;
-    const total = typeof response.data?.total === 'number' ? response.data.total : null;
-    if (typeof total === 'number' && offset >= total) break;
+    if (typeof estimatedTotal === 'number' && offset >= estimatedTotal) break;
   }
 
   return allManifests;

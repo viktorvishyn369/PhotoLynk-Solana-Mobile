@@ -97,6 +97,7 @@ import {
   autoUploadStealthCloudUploadOneAsset
 } from './backgroundTask';
 import * as MediaLibrary from 'expo-media-library';
+import * as VideoThumbnails from 'expo-video-thumbnails';
 import * as FileSystem from 'expo-file-system';
 import * as Application from 'expo-application';
 import * as Device from 'expo-device';
@@ -113,16 +114,13 @@ import nacl from 'tweetnacl';
 import naclUtil from 'tweetnacl-util';
 import { sha256 } from 'js-sha256';
 import {
-  initializePurchases,
-  identifyUser as identifyPurchasesUser,
+  initializeSolana,
   getAvailablePlans,
-  purchaseSubscription,
-  restorePurchases,
+  purchaseWithSol,
   getSubscriptionStatus,
   checkUploadAccess,
-  addSubscriptionListener,
   GRACE_PERIOD_DAYS,
-} from './purchases';
+} from './solanaPurchases';
 import {
   stealthCloudUploadEncryptedChunk,
   PHOTO_ALBUM_NAME,
@@ -217,7 +215,7 @@ export default function App() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [termsAccepted, setTermsAccepted] = useState(false);
-  const [serverType, setServerType] = useState('local'); // 'local' | 'remote' | 'stealthcloud'
+  const [serverType, setServerType] = useState('stealthcloud'); // 'local' | 'remote' | 'stealthcloud'
   const [localHost, setLocalHost] = useState('');
   const [remoteHost, setRemoteHost] = useState('');
   const [autoUploadEnabled, setAutoUploadEnabled] = useState(false);
@@ -534,7 +532,7 @@ export default function App() {
   const getThrottleAssetCooldownMs = () => fastModeEnabledRef.current ? FAST_ASSET_COOLDOWN_MS : THERMAL_ASSET_COOLDOWN_MS;
   const getThrottleChunkCooldownMs = () => fastModeEnabledRef.current ? FAST_CHUNK_COOLDOWN_MS : THERMAL_CHUNK_COOLDOWN_MS;
 
-  // RevenueCat purchase helpers
+  // Solana purchase helpers
   const loadAvailablePlans = async () => {
     try {
       setPlansLoading(true);
@@ -591,7 +589,7 @@ export default function App() {
         return;
       }
 
-      const result = await purchaseSubscription(tierGb, authToken);
+      const result = await purchaseWithSol(tierGb, authToken);
 
       if (result.success) {
         showDarkAlert('Success!', `Your ${tierGb === 1000 ? '1 TB' : tierGb + ' GB'} plan is now active.`);
@@ -614,35 +612,19 @@ export default function App() {
   const handleRestorePurchases = async () => {
     try {
       setPurchaseLoading(true);
-      setStatus('Restoring purchases...');
+      setStatus('Checking subscription...');
 
-      // Get auth token and device UUID for server check
-      let authToken = token;
-      if (!authToken) {
-        try {
-          authToken = await SecureStore.getItemAsync('auth_token');
-        } catch (e) {}
-      }
-      let userUuid = deviceUuid;
-      if (!userUuid) {
-        try {
-          userUuid = await SecureStore.getItemAsync('device_uuid');
-        } catch (e) {}
-      }
+      // For Solana payments, just refresh from server - it tracks all payments
+      const status = await refreshSubscriptionStatus();
+      await refreshStealthUsage();
 
-      const result = await restorePurchases(authToken, userUuid);
-
-      if (result.success && result.hasActiveSubscription) {
-        showDarkAlert('Restored!', 'Your subscription has been restored.');
-        await refreshSubscriptionStatus();
-        await refreshStealthUsage();
-      } else if (result.success) {
-        showDarkAlert('No Subscription Found', 'No active subscription was found to restore.');
+      if (status && status.isActive) {
+        showDarkAlert('Subscription Active', 'Your subscription is active.');
       } else {
-        showDarkAlert('Restore Failed', result.error || 'Unable to restore purchases.');
+        showDarkAlert('No Active Subscription', 'No active subscription found. Purchase a plan with SOL to get started.');
       }
     } catch (e) {
-      showDarkAlert('Restore Error', e.message || 'An error occurred while restoring.');
+      showDarkAlert('Error', e.message || 'An error occurred while checking subscription.');
     } finally {
       setPurchaseLoading(false);
       setStatus('Idle');
@@ -1315,7 +1297,7 @@ export default function App() {
         'Access Locked',
         'Your subscription has expired. Renew to restore access to your encrypted backups.',
         [
-          { text: 'View Plans', onPress: () => setView('about') },
+          { text: 'View Plans', onPress: () => setView('info') },
           { text: 'OK' }
         ]
       );
@@ -1343,7 +1325,7 @@ export default function App() {
           `Your plan expired. You have ${GRACE_PERIOD_DAYS} days to sync your data before access is locked. Backups are disabled until you renew.`,
           [
             { text: 'Sync Now', onPress: () => openSyncModeChooser() },
-            { text: 'View Plans', onPress: () => setView('about') },
+            { text: 'View Plans', onPress: () => setView('info') },
             { text: 'Later' }
           ]
         );
@@ -1378,7 +1360,7 @@ export default function App() {
     await cancelInFlightOperations();
     const opId = currentOperationIdRef.current;
     setLoadingSafe(true);
-    setBackgroundWarnEligibleSafe(!autoUploadEnabledRef.current);
+    setBackgroundWarnEligibleSafe(true);
     setWasBackgroundedDuringWorkSafe(false);
     setProgress(0);
     setProgressAction('backup');
@@ -1472,10 +1454,13 @@ export default function App() {
     }
 
     setLoadingSafe(true);
-    setBackgroundWarnEligibleSafe(!autoUploadEnabledRef.current);
+    setBackgroundWarnEligibleSafe(false); // Don't warn during permission prompts
     setWasBackgroundedDuringWorkSafe(false);
     setProgress(0);
     setProgressAction('backup');
+
+    // Enable background warning only after we start actual work (permission already granted inside core)
+    setTimeout(() => { if (loadingRef.current) setBackgroundWarnEligibleSafe(true); }, 2000);
 
     try {
       const result = await localRemoteBackupSelectedCore({
@@ -1634,7 +1619,33 @@ export default function App() {
       const after = reset ? null : backupPickerAfter;
       const page = await MediaLibrary.getAssetsAsync({ first, after: after || undefined, mediaType: ['photo', 'video'] });
       const assets = page && Array.isArray(page.assets) ? page.assets : [];
-      setBackupPickerAssets(prev => reset ? assets : prev.concat(assets));
+      // Ensure each asset has a usable thumbnail URI
+      // On Android, content:// URIs don't work with Image - need localUri (file://)
+      // On iOS, ph:// URIs work but localUri is more reliable
+      const enrichedAssets = await Promise.all(
+        assets.map(async (a) => {
+          try {
+            // Always fetch asset info to get localUri which works on all platforms
+            const info = await MediaLibrary.getAssetInfoAsync(a.id);
+            let thumbUri = info?.localUri || info?.uri || a?.uri;
+            
+            // On iOS, videos need a generated thumbnail - localUri points to video file, not an image
+            if (Platform.OS === 'ios' && a.mediaType === 'video' && info?.localUri) {
+              try {
+                const { uri: videoThumbUri } = await VideoThumbnails.getThumbnailAsync(info.localUri, { time: 0 });
+                if (videoThumbUri) thumbUri = videoThumbUri;
+              } catch (thumbErr) {
+                // Fall back to original URI if thumbnail generation fails
+              }
+            }
+            
+            return { ...a, thumbUri: thumbUri || null };
+          } catch (e) {
+            return { ...a, thumbUri: a.uri || null };
+          }
+        })
+      );
+      setBackupPickerAssets(prev => reset ? enrichedAssets : prev.concat(enrichedAssets));
       setBackupPickerAfter(page && page.endCursor ? page.endCursor : null);
       setBackupPickerHasNext(!!(page && page.hasNextPage));
     } catch (e) {} finally { setBackupPickerLoading(false); }
@@ -1696,9 +1707,12 @@ export default function App() {
   const startSimilarShotsReview = async () => {
     await cancelInFlightOperations();
     const opId = currentOperationIdRef.current;
-    setBackgroundWarnEligibleSafe(false); setWasBackgroundedDuringWorkSafe(false); setLoadingSafe(true);
+    setBackgroundWarnEligibleSafe(false); setWasBackgroundedDuringWorkSafe(false); setLoadingSafe(true); // Don't warn during permission prompts
     setProgress(0);
     setProgressAction('cleanup');
+    
+    // Enable background warning only after we start actual work (permission already granted inside core)
+    setTimeout(() => { if (loadingRef.current) setBackgroundWarnEligibleSafe(true); }, 2000);
     
     const result = await startSimilarShotsReviewCore({
       resolveReadableFilePath,
@@ -1829,28 +1843,27 @@ export default function App() {
     resetSyncPickerState();
   }, []);
 
-  // Initialize RevenueCat when app starts
+  // Initialize Solana when app starts
   useEffect(() => {
     (async () => {
       try {
-        await initializePurchases();
+        await initializeSolana();
         await loadAvailablePlans();
         await refreshSubscriptionStatus();
       } catch (e) {
-        console.log('RevenueCat init skipped:', e.message);
+        console.log('Solana init skipped:', e.message);
       }
     })();
   }, []);
 
-  // Re-identify user and refresh subscription when email changes
+  // Refresh subscription when email changes
   useEffect(() => {
     if (!email) return;
     (async () => {
       try {
-        await identifyPurchasesUser(email);
         await refreshSubscriptionStatus();
       } catch (e) {
-        console.log('RevenueCat identify skipped:', e.message);
+        console.log('Subscription refresh skipped:', e.message);
       }
     })();
   }, [email]);
@@ -2101,7 +2114,7 @@ export default function App() {
   /** Available StealthCloud plan tiers in GB */
   const STEALTH_PLAN_TIERS = [100, 200, 400, 1000];
   /** Message shown when a tier is sold out */
-  const STEALTH_SOLD_OUT_MESSAGE = 'Temporarily unavailable — high demand. More capacity coming soon.';
+  const STEALTH_SOLD_OUT_MESSAGE = 'Sold out';
 
   /**
    * Gets the availability status for a StealthCloud plan tier.
@@ -2162,9 +2175,16 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (view !== 'about') return;
+    if (view !== 'info') return;
 
     let cancelled = false;
+
+    // Load plans when opening Info screen (in case Solana initialized late)
+    (async () => {
+      try {
+        await loadAvailablePlans();
+      } catch (e) {}
+    })();
 
     const fetchStealthCloudUsage = async () => {
       // Check serverType from state or SecureStore
@@ -2258,10 +2278,13 @@ export default function App() {
     await cancelInFlightOperations();
     const opId = currentOperationIdRef.current;
     setLoadingSafe(true);
-    setBackgroundWarnEligibleSafe(!autoUploadEnabledRef.current);
+    setBackgroundWarnEligibleSafe(false); // Don't warn during permission prompts
     setWasBackgroundedDuringWorkSafe(false);
     setProgress(0);
     setProgressAction('backup');
+
+    // Enable background warning only after we start actual work (permission already granted inside core)
+    setTimeout(() => { if (loadingRef.current) setBackgroundWarnEligibleSafe(true); }, 2000);
 
     try {
       const result = await stealthCloudBackupCore({
@@ -2342,7 +2365,7 @@ export default function App() {
     await cancelInFlightOperations();
     const opId = currentOperationIdRef.current;
     setLoadingSafe(true);
-    setBackgroundWarnEligibleSafe(true);
+    setBackgroundWarnEligibleSafe(false); // Don't warn during permission prompts
     setWasBackgroundedDuringWorkSafe(false);
     setProgress(0);
     setProgressAction('sync');
@@ -2511,7 +2534,7 @@ export default function App() {
     let uuid = await getDeviceUUID(storedEmail);
     if (!uuid && storedEmail) {
       // iOS may have a valid cached device UUID but a missing per-email key.
-      // Fall back to the cached value so About always shows the Device ID.
+      // Fall back to the cached value so Info always shows the Device ID.
       try {
         const cached = await SecureStore.getItemAsync('device_uuid');
         if (cached) {
@@ -2685,6 +2708,10 @@ export default function App() {
       const authBaseUrl = computeServerUrl(effectiveType, effectiveLocalHost, effectiveRemoteHost);
 
       // Build auth payload with hardware device ID for registration
+      let hardwareDeviceId = null;
+      if (type === 'register') {
+        hardwareDeviceId = await getHardwareDeviceId();
+      }
       const payload = await buildAuthPayload({
         type,
         normalizedEmail,
@@ -2692,6 +2719,7 @@ export default function App() {
         deviceId,
         effectiveType,
         selectedStealthPlanGb,
+        hardwareDeviceId,
       });
 
       const authUrl = authBaseUrl + endpoint;
@@ -2953,11 +2981,14 @@ export default function App() {
   const cleanDeviceDuplicates = async () => {
     await cancelInFlightOperations();
     const opId = currentOperationIdRef.current;
-    setBackgroundWarnEligibleSafe(false);
+    setBackgroundWarnEligibleSafe(false); // Don't warn during permission prompts
     setWasBackgroundedDuringWorkSafe(false);
     setLoadingSafe(true);
     setProgress(0);
     setProgressAction('cleanup');
+
+    // Enable background warning only after we start actual work (permission already granted inside core)
+    setTimeout(() => { if (loadingRef.current) setBackgroundWarnEligibleSafe(true); }, 2000);
 
     try {
       const result = await startExactDuplicatesScanCore({
@@ -3142,10 +3173,13 @@ export default function App() {
     await cancelInFlightOperations();
     const opId = currentOperationIdRef.current;
     setLoadingSafe(true);
-    setBackgroundWarnEligibleSafe(!autoUploadEnabledRef.current);
+    setBackgroundWarnEligibleSafe(false); // Don't warn during permission prompts
     setWasBackgroundedDuringWorkSafe(false);
     setProgress(0);
     setProgressAction('backup');
+
+    // Enable background warning only after we start actual work (permission already granted inside core)
+    setTimeout(() => { if (loadingRef.current) setBackgroundWarnEligibleSafe(true); }, 2000);
 
     try {
       const result = await localRemoteBackupCore({
@@ -3234,6 +3268,8 @@ export default function App() {
     setProgress(0);
     setProgressAction('sync');
     setLoadingSafe(true);
+    setBackgroundWarnEligibleSafe(false); // Don't warn during permission prompts
+    setWasBackgroundedDuringWorkSafe(false);
 
     const permission = await MediaLibrary.requestPermissionsAsync();
     if (permission.status !== 'granted') {
@@ -3367,11 +3403,14 @@ export default function App() {
                 </Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[styles.toggleBtn, serverType === 'stealthcloud' && styles.toggleBtnActive]}
+                style={[styles.toggleBtn, serverType === 'stealthcloud' && styles.toggleBtnActive, { position: 'relative' }]}
                 onPress={() => setServerType('stealthcloud')}>
                 <Text numberOfLines={1} ellipsizeMode="tail" style={[styles.toggleText, serverType === 'stealthcloud' && styles.toggleTextActive]}>
                   StealthCloud
                 </Text>
+                <View style={{ position: 'absolute', top: -8, right: -8, backgroundColor: '#22c55e', paddingHorizontal: 6, paddingVertical: 3, borderRadius: 4, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.2, shadowRadius: 2, elevation: 2 }}>
+                  <Text style={{ color: '#fff', fontSize: 9, fontWeight: '700', letterSpacing: 0.3 }}>7 DAYS FREE</Text>
+                </View>
               </TouchableOpacity>
             </View>
 
@@ -3436,7 +3475,9 @@ export default function App() {
                             <Text style={styles.stealthPlanPrice}>{priceStr || '—'}</Text>
                             <Text style={styles.stealthPlanMeta}>per month</Text>
                             {disabled && st.canCreate === false && (
-                              <Text style={styles.stealthPlanSoldOut}>{st.message || STEALTH_SOLD_OUT_MESSAGE}</Text>
+                              <View style={{ position: 'absolute', top: 6, right: 6, backgroundColor: '#D4A017', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
+                                <Text style={{ color: '#000', fontSize: scale(9), fontWeight: '700' }}>SOLD OUT</Text>
+                              </View>
                             )}
                           </TouchableOpacity>
                         );
@@ -3447,12 +3488,14 @@ export default function App() {
                       <Text style={styles.stealthPlanHint}>Plans may be temporarily unavailable when capacity is full.</Text>
                     )}
 
-                    <TouchableOpacity
-                      style={styles.restorePurchasesBtn}
-                      onPress={handleRestorePurchases}
-                      disabled={purchaseLoading}>
-                      <Text style={styles.restorePurchasesText}>Restore Purchases</Text>
-                    </TouchableOpacity>
+                    {false && (
+                      <TouchableOpacity
+                        style={styles.restorePurchasesBtn}
+                        onPress={handleRestorePurchases}
+                        disabled={purchaseLoading}>
+                        <Text style={styles.restorePurchasesText}>Restore Purchases</Text>
+                      </TouchableOpacity>
+                    )}
                   </View>
                 )}
               </>
@@ -3511,81 +3554,17 @@ export default function App() {
             )}
           </View>
 
-          <View style={styles.serverHelp}>
-            <TouchableOpacity
-              style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}
-              onPress={() => setQuickSetupCollapsed(prev => !prev)}
-              activeOpacity={0.8}
-            >
-              <Text style={styles.serverHelpTitle}>📋 Quick Setup</Text>
-              <Text style={[styles.serverHelpText, styles.boldText]}>{quickSetupCollapsed ? '▸ Show' : '▾ Hide'}</Text>
-            </TouchableOpacity>
-            {!quickSetupCollapsed && (
-              <>
-                <View style={{ height: 8 }} />
-
-                {serverType === 'local' && (
-                  <>
-                    <Text style={[styles.serverHelpText, styles.boldText]}>On your computer:</Text>
-                    <Text style={styles.serverHelpText}>1) Download the PhotoLynk Server app for your OS:</Text>
-                    <TouchableOpacity
-                      style={{ marginBottom: 8 }}
-                      onPress={() => {
-                        Clipboard.setString(GITHUB_RELEASES_LATEST_URL);
-                        showDarkAlert('Copied', 'GitHub releases link copied.');
-                      }}
-                      onLongPress={() => openLink(GITHUB_RELEASES_LATEST_URL)}>
-                      <Text style={styles.codeLine} numberOfLines={1} ellipsizeMode="middle">{GITHUB_RELEASES_LATEST_URL}</Text>
-                      <Text style={styles.codeHint}>Tap to copy • Long-press to open</Text>
-                    </TouchableOpacity>
-                    <Text style={styles.serverHelpText}>2) Install and run it</Text>
-                    <Text style={styles.serverHelpText}>3) System tray → Local Server → Pair Mobile Device (QR)</Text>
-                    <Text style={[styles.serverHelpText, styles.boldText]}>On your phone:</Text>
-                    <Text style={styles.serverHelpText}>4) Scan the QR code on your computer (or paste IP if needed)</Text>
-                    <Text style={styles.serverHelpText}>5) Create account and log in</Text>
-                    <Text style={styles.serverHelpText}>6) Start backing up to your computer</Text>
-                  </>
-                )}
-
-                {serverType === 'remote' && (
-                  <>
-                    <Text style={[styles.serverHelpSubtitle, { marginTop: 0 }]}>Remote: Headless Install</Text>
-                    <Text style={styles.serverHelpText}>1) SSH into your remote server</Text>
-                    <Text style={styles.serverHelpText}>2) Run the install script (downloads + configures server):</Text>
-                    <TouchableOpacity
-                      style={{ marginBottom: 8 }}
-                      onPress={() => {
-                        const scriptCmd = 'sudo curl -fsSL https://raw.githubusercontent.com/viktorvishyn369/PhotoLynk/main/install-server.sh | bash';
-                        Clipboard.setString(scriptCmd);
-                        showDarkAlert('Copied', 'Install script command copied.');
-                      }}
-                      onLongPress={() => openLink('https://github.com/viktorvishyn369/PhotoLynk/blob/main/install-server.sh')}>
-                      <Text style={styles.codeLine} numberOfLines={2} ellipsizeMode="middle">sudo curl -fsSL https://raw.githubusercontent.com/viktorvishyn369/PhotoLynk/main/install-server.sh | bash</Text>
-                      <Text style={styles.codeHint}>Tap to copy • Long-press to view script</Text>
-                    </TouchableOpacity>
-                    <Text style={styles.serverHelpText}>3) Follow on-screen instructions.</Text>
-                    <Text style={[styles.serverHelpText, styles.boldText]}>On your phone:</Text>
-                    <Text style={styles.serverHelpText}>4) Enter your domain (no https://, no port). Example: remote.example.com</Text>
-                    <Text style={styles.serverHelpText}>5) Create account and log in</Text>
-                    <Text style={styles.serverHelpText}>6) Start backing up to your server</Text>
-                  </>
-                )}
-
-                {serverType === 'stealthcloud' && (
-                  <>
-                    <Text style={[styles.serverHelpSubtitle, { marginTop: 0 }]}>StealthCloud</Text>
-                    <Text style={styles.serverHelpText}>Create account, log in, and start backing up.</Text>
-                    <Text style={styles.serverHelpText}>Zero-knowledge: encrypted on your device, only your device can decrypt.</Text>
-                    <Text style={styles.serverHelpText}>7-day free trial, then pick a plan in-app.</Text>
-                  </>
-                )}
-              </>
-            )}
-          </View>
+          <TouchableOpacity
+            style={{ alignSelf: 'flex-start', marginBottom: 12 }}
+            onPress={() => setQuickSetupCollapsed(false)}
+            activeOpacity={0.8}
+          >
+            <Text style={{ color: '#6495ED', fontSize: scale(14), fontWeight: '600' }}>📋 Quick Setup Guide</Text>
+          </TouchableOpacity>
 
           <TextInput
             style={styles.input}
-            placeholder="Email"
+            placeholder="Email (part of encryption key)"
             placeholderTextColor="#888888"
             value={email}
             onChangeText={setEmail}
@@ -3597,7 +3576,7 @@ export default function App() {
           {(authMode === 'login' || authMode === 'register') && (
             <TextInput
               style={styles.input}
-              placeholder="Password"
+              placeholder="Password (reset on this device only)"
               placeholderTextColor="#888888"
               value={password}
               onChangeText={setPassword}
@@ -3853,6 +3832,109 @@ export default function App() {
               style={{marginTop: scaleSpacing(24), paddingVertical: scaleSpacing(14), paddingHorizontal: scaleSpacing(40), backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: scaleSpacing(8)}}
               onPress={() => setQrScannerOpen(false)}>
               <Text style={{color: '#fff', fontSize: scale(16), fontWeight: '600'}}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
+
+      {!quickSetupCollapsed && (
+        <View style={[styles.overlay, glassModeEnabled && styles.overlayGlass]}>
+          <View style={[styles.overlayCard, glassModeEnabled && styles.overlayCardGlass, { maxWidth: 400, width: '92%' }]}>
+            <Text style={[styles.overlayTitle, { marginBottom: 16 }]}>
+              {serverType === 'local' ? '🖥️ Local Server Setup' : serverType === 'remote' ? '🌐 Remote Server Setup' : '☁️ StealthCloud Setup'}
+            </Text>
+
+            {serverType === 'local' && (
+              <>
+                <View style={{ backgroundColor: 'rgba(100,149,237,0.1)', borderRadius: 8, padding: 12, marginBottom: 12 }}>
+                  <Text style={{ color: '#6495ED', fontSize: scale(13), fontWeight: '700', marginBottom: 8 }}>ON YOUR COMPUTER</Text>
+                  <Text style={{ color: '#ccc', fontSize: scale(13), marginBottom: 6 }}>
+                    <Text style={{ color: '#fff', fontWeight: '600' }}>1.</Text>  Download PhotoLynk Server:
+                  </Text>
+                  <TouchableOpacity
+                    style={{ marginBottom: 8, marginLeft: 16 }}
+                    onPress={() => { Clipboard.setString(GITHUB_RELEASES_LATEST_URL); showDarkAlert('Copied', 'Link copied to clipboard.'); }}
+                    onLongPress={() => openLink(GITHUB_RELEASES_LATEST_URL)}>
+                    <Text style={[styles.codeLine, { fontSize: scale(11) }]} numberOfLines={1} ellipsizeMode="middle">{GITHUB_RELEASES_LATEST_URL}</Text>
+                    <Text style={[styles.codeHint, { fontSize: scale(10) }]}>Tap to copy • Long-press to open</Text>
+                  </TouchableOpacity>
+                  <Text style={{ color: '#ccc', fontSize: scale(13), marginBottom: 4 }}>
+                    <Text style={{ color: '#fff', fontWeight: '600' }}>2.</Text>  Install and run it
+                  </Text>
+                  <Text style={{ color: '#ccc', fontSize: scale(13) }}>
+                    <Text style={{ color: '#fff', fontWeight: '600' }}>3.</Text>  Tray → Local Server → Pair Mobile (QR)
+                  </Text>
+                </View>
+                <View style={{ backgroundColor: 'rgba(50,205,50,0.1)', borderRadius: 8, padding: 12 }}>
+                  <Text style={{ color: '#32CD32', fontSize: scale(13), fontWeight: '700', marginBottom: 8 }}>ON YOUR PHONE</Text>
+                  <Text style={{ color: '#ccc', fontSize: scale(13), marginBottom: 4 }}>
+                    <Text style={{ color: '#fff', fontWeight: '600' }}>4.</Text>  Scan QR code (or paste IP)
+                  </Text>
+                  <Text style={{ color: '#ccc', fontSize: scale(13), marginBottom: 4 }}>
+                    <Text style={{ color: '#fff', fontWeight: '600' }}>5.</Text>  Create account & log in
+                  </Text>
+                  <Text style={{ color: '#ccc', fontSize: scale(13) }}>
+                    <Text style={{ color: '#fff', fontWeight: '600' }}>6.</Text>  Start backing up!
+                  </Text>
+                </View>
+              </>
+            )}
+
+            {serverType === 'remote' && (
+              <>
+                <View style={{ backgroundColor: 'rgba(100,149,237,0.1)', borderRadius: 8, padding: 12, marginBottom: 12 }}>
+                  <Text style={{ color: '#6495ED', fontSize: scale(13), fontWeight: '700', marginBottom: 8 }}>ON YOUR SERVER (SSH)</Text>
+                  <Text style={{ color: '#ccc', fontSize: scale(13), marginBottom: 6 }}>
+                    <Text style={{ color: '#fff', fontWeight: '600' }}>1.</Text>  Run the install script:
+                  </Text>
+                  <TouchableOpacity
+                    style={{ marginBottom: 8, marginLeft: 16 }}
+                    onPress={() => { Clipboard.setString('sudo curl -fsSL https://raw.githubusercontent.com/viktorvishyn369/PhotoLynk/main/install-server.sh | bash'); showDarkAlert('Copied', 'Command copied to clipboard.'); }}
+                    onLongPress={() => openLink('https://github.com/viktorvishyn369/PhotoLynk/blob/main/install-server.sh')}>
+                    <Text style={[styles.codeLine, { fontSize: scale(10) }]} numberOfLines={2}>sudo curl -fsSL https://...install-server.sh | bash</Text>
+                    <Text style={[styles.codeHint, { fontSize: scale(10) }]}>Tap to copy • Long-press to view</Text>
+                  </TouchableOpacity>
+                  <Text style={{ color: '#ccc', fontSize: scale(13) }}>
+                    <Text style={{ color: '#fff', fontWeight: '600' }}>2.</Text>  Follow on-screen instructions
+                  </Text>
+                </View>
+                <View style={{ backgroundColor: 'rgba(50,205,50,0.1)', borderRadius: 8, padding: 12 }}>
+                  <Text style={{ color: '#32CD32', fontSize: scale(13), fontWeight: '700', marginBottom: 8 }}>ON YOUR PHONE</Text>
+                  <Text style={{ color: '#ccc', fontSize: scale(13), marginBottom: 4 }}>
+                    <Text style={{ color: '#fff', fontWeight: '600' }}>3.</Text>  Enter domain (e.g. backup.example.com)
+                  </Text>
+                  <Text style={{ color: '#ccc', fontSize: scale(13), marginBottom: 4 }}>
+                    <Text style={{ color: '#fff', fontWeight: '600' }}>4.</Text>  Create account & log in
+                  </Text>
+                  <Text style={{ color: '#ccc', fontSize: scale(13) }}>
+                    <Text style={{ color: '#fff', fontWeight: '600' }}>5.</Text>  Start backing up!
+                  </Text>
+                </View>
+              </>
+            )}
+
+            {serverType === 'stealthcloud' && (
+              <View style={{ backgroundColor: 'rgba(138,43,226,0.1)', borderRadius: 8, padding: 12 }}>
+                <Text style={{ color: '#9370DB', fontSize: scale(13), fontWeight: '700', marginBottom: 8 }}>GETTING STARTED</Text>
+                <Text style={{ color: '#ccc', fontSize: scale(13), marginBottom: 4 }}>
+                  <Text style={{ color: '#fff', fontWeight: '600' }}>1.</Text>  Create account & log in
+                </Text>
+                <Text style={{ color: '#ccc', fontSize: scale(13), marginBottom: 4 }}>
+                  <Text style={{ color: '#fff', fontWeight: '600' }}>2.</Text>  Start backing up (7-day free trial)
+                </Text>
+                <Text style={{ color: '#ccc', fontSize: scale(13), marginBottom: 8 }}>
+                  <Text style={{ color: '#fff', fontWeight: '600' }}>3.</Text>  Pick a plan when ready
+                </Text>
+                <Text style={{ color: '#888', fontSize: scale(11), fontStyle: 'italic' }}>
+                  Zero-knowledge encryption: only your device can decrypt your data.
+                </Text>
+              </View>
+            )}
+
+            <TouchableOpacity 
+              style={[styles.overlayBtnSecondary, glassModeEnabled && styles.overlayBtnSecondaryGlass, { marginTop: 16 }]} 
+              onPress={() => setQuickSetupCollapsed(true)}>
+              <Text style={styles.overlayBtnSecondaryText}>Close</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -4141,49 +4223,6 @@ export default function App() {
 
         </ScrollView>
 
-        {quickSetupOpen && (
-          <View style={[styles.overlay, glassModeEnabled && styles.overlayGlass]}>
-            <View style={[styles.overlayCard, glassModeEnabled && styles.overlayCardGlass]}>
-              <Text style={styles.overlayTitle}>Quick Setup</Text>
-              <Text style={[styles.overlaySubtitle, { textAlign: 'left' }]}>
-                <Text style={styles.boldText}>1)</Text> Download the server app on your computer:
-              </Text>
-              <TouchableOpacity
-                style={{ marginBottom: 8 }}
-                onPress={() => {
-                  Clipboard.setString(GITHUB_RELEASES_LATEST_URL);
-                  showDarkAlert('Copied', 'GitHub Releases link copied.');
-                }}
-                onLongPress={() => openLink(GITHUB_RELEASES_LATEST_URL)}>
-                <Text style={styles.codeLine} numberOfLines={1} ellipsizeMode="middle">{GITHUB_RELEASES_LATEST_URL}</Text>
-                <Text style={styles.codeHint}>Tap to copy • Long-press to open</Text>
-              </TouchableOpacity>
-
-              {serverType === 'local' && (
-                <Text style={[styles.overlaySubtitle, { textAlign: 'left' }]}>
-                  <Text style={styles.boldText}>2)</Text> Install + run it (tray/menu bar){'\n'}
-                  <Text style={styles.boldText}>3)</Text> Copy IP from tray → <Text style={styles.boldText}>Local IP Addresses</Text>{'\n'}
-                  <Text style={styles.boldText}>4)</Text> In this app: <Text style={styles.boldText}>Local</Text> → paste IP → <Text style={styles.boldText}>Save Changes</Text>{'\n'}
-                  <Text style={styles.boldText}>5)</Text> <Text style={styles.boldText}>Create Account</Text> / <Text style={styles.boldText}>Login</Text> → <Text style={styles.boldText}>Backup to Cloud</Text>
-                </Text>
-              )}
-
-              {serverType === 'remote' && (
-                <Text style={[styles.overlaySubtitle, { textAlign: 'left' }]}>
-                  <Text style={styles.boldText}>2)</Text> Run the server on your VPS/home server{'\n'}
-                  <Text style={styles.boldText}>3)</Text> Enable HTTPS (TLS) on port 3000{'\n'}
-                  <Text style={styles.boldText}>4)</Text> In this app: <Text style={styles.boldText}>Remote</Text> → enter host (IP/domain) → <Text style={styles.boldText}>Save Changes</Text>{'\n'}
-                  <Text style={styles.boldText}>5)</Text> <Text style={styles.boldText}>Login</Text> → <Text style={styles.boldText}>Backup to Cloud</Text> / <Text style={styles.boldText}>Sync from Cloud</Text>
-                </Text>
-              )}
-
-              <TouchableOpacity style={[styles.overlayBtnSecondary, glassModeEnabled && styles.overlayBtnSecondaryGlass]} onPress={() => setQuickSetupOpen(false)}>
-                <Text style={styles.overlayBtnSecondaryText}>Close</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        )}
-
         {qrScannerOpen && (
           <View style={[styles.overlay, {backgroundColor: 'rgba(0,0,0,0.95)'}]}>
             <View style={{flex: 1, width: '100%', justifyContent: 'center', alignItems: 'center'}}>
@@ -4256,14 +4295,14 @@ export default function App() {
     );
   }
 
-  if (view === 'about') {
+  if (view === 'info') {
     return (
       <View style={styles.container}>
         <View style={styles.header}>
           <TouchableOpacity onPress={() => setView('home')} style={styles.backBtn}>
             <Text style={styles.backText}>Back</Text>
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>About</Text>
+          <Text style={styles.headerTitle}>Info</Text>
           <View style={{width: 60}} />
         </View>
 
@@ -4275,9 +4314,9 @@ export default function App() {
                 style={styles.uuidBox}
                 onPress={() => {
                   Clipboard.setString(deviceUuid);
-                  showDarkAlert('Copied!', 'User ID copied to clipboard');
+                  showDarkAlert('Copied!', 'Device ID copied to clipboard');
                 }}>
-                <Text style={styles.uuidLabel}>User ID (tap to copy):</Text>
+                <Text style={styles.uuidLabel}>Device ID (tap to copy):</Text>
                 <Text style={styles.uuidText}>{deviceUuid}</Text>
               </TouchableOpacity>
             )}
@@ -4326,7 +4365,7 @@ export default function App() {
                             <Text style={styles.serverInfoLabel}>Status</Text>
                             <Text style={[styles.serverInfoText, isExpired && { color: '#FF6B6B' }, isGrace && !isExpired && { color: '#FFB347' }]}>
                               {subStatus === 'active' ? (sub.expiresAt ? `✓ Exp ${new Date(sub.expiresAt).toLocaleDateString()}` : '✓ Active') :
-                               subStatus === 'trial' ? '🎁 Free Trial' :
+                               subStatus === 'trial' ? '🎁 Free 7 Days Trial' :
                                subStatus === 'grace' ? `⚠️ Expired (${GRACE_PERIOD_DAYS} days to sync)` :
                                subStatus === 'grace_expired' ? '❌ Grace Period Ended' :
                                subStatus === 'trial_expired' ? '❌ Trial Expired' : '—'}
@@ -4357,6 +4396,27 @@ export default function App() {
                             </Text>
                           </View>
                         )}
+
+                        {/* Cross-platform payment notice */}
+                        {(() => {
+                          const serverPaymentType = stealthUsage?.subscription?.paymentType;
+                          const currentAppPaymentType = 'solana';
+                          const hasPlan = stealthUsage?.planGb || stealthUsage?.plan_gb;
+                          const isActive = subStatus === 'active' || subStatus === 'trial';
+                          
+                          if (serverPaymentType && serverPaymentType !== currentAppPaymentType && hasPlan && isActive) {
+                            const paymentLabel = serverPaymentType === 'apple' ? 'Apple App Store' : 
+                                                 serverPaymentType === 'google' ? 'Google Play Store' : serverPaymentType;
+                            return (
+                              <View style={{ marginTop: 12, backgroundColor: 'rgba(100, 149, 237, 0.15)', padding: 12, borderRadius: 8 }}>
+                                <Text style={[styles.inputHint, { color: '#6495ED', marginBottom: 0 }]}>
+                                  ℹ️ Subscription via {paymentLabel}. To switch to SOL, let it expire first.
+                                </Text>
+                              </View>
+                            );
+                          }
+                          return null;
+                        })()}
                       </>
                     );
                   })()}
@@ -4366,8 +4426,6 @@ export default function App() {
               {/* Subscription Management */}
               <View style={{ marginTop: 16, borderTopWidth: 1, borderTopColor: '#333', paddingTop: 16 }}>
                 <Text style={styles.serverInfoLabel}>Manage Subscription</Text>
-                <Text style={[styles.inputHint, { marginTop: 6 }]}>Prices are shown in your local currency from Apple/Google.</Text>
-
                 <View style={styles.stealthPlanGrid}>
                   {STEALTH_PLAN_TIERS.map((gb) => {
                     const plan = availablePlans.find(p => p.tierGb === gb);
@@ -4400,12 +4458,14 @@ export default function App() {
                   })}
                 </View>
 
-                <TouchableOpacity
-                  style={styles.restorePurchasesBtn}
-                  onPress={handleRestorePurchases}
-                  disabled={purchaseLoading}>
-                  <Text style={styles.restorePurchasesText}>Restore Purchases</Text>
-                </TouchableOpacity>
+                {false && (
+                  <TouchableOpacity
+                    style={styles.restorePurchasesBtn}
+                    onPress={handleRestorePurchases}
+                    disabled={purchaseLoading}>
+                    <Text style={styles.restorePurchasesText}>Restore Purchases</Text>
+                  </TouchableOpacity>
+                )}
               </View>
             </View>
           )}
@@ -4448,7 +4508,7 @@ export default function App() {
           </View>
 
           <View style={styles.settingsFooter}>
-            <Text style={styles.footerVersion}>{APP_DISPLAY_NAME} v1.1.1</Text>
+            <Text style={styles.footerVersion}>{APP_DISPLAY_NAME} v1.2.1</Text>
           </View>
         </ScrollView>
 
@@ -4492,7 +4552,6 @@ export default function App() {
                     <Text style={{ color: '#CCC', fontSize: scale(14), textAlign: 'center', marginBottom: scaleSpacing(14), lineHeight: scale(20) }}>
                       {priceStr !== '—' ? `${priceStr} / month` : 'Pricing unavailable. Please try again later.'}
                     </Text>
-                    <Text style={[styles.inputHint, { textAlign: 'center', marginBottom: scaleSpacing(14) }]}>Price shown in your local currency from Apple/Google. Taxes may apply. Cancel anytime.</Text>
                     <View style={{ flexDirection: 'row', justifyContent: 'center', gap: scaleSpacing(12), flexWrap: 'wrap' }}>
                       <TouchableOpacity
                         style={[styles.overlayBtnPrimary, glassModeEnabled && styles.overlayBtnPrimaryGlass, { paddingVertical: scaleSpacing(10), paddingHorizontal: scaleSpacing(24), minWidth: isTablet ? 110 : 90, opacity: purchaseLoading ? 0.6 : 1 }]}
@@ -4515,16 +4574,18 @@ export default function App() {
                       </TouchableOpacity>
                     </View>
 
-                    <TouchableOpacity
-                      style={[styles.restorePurchasesBtn, { marginTop: scaleSpacing(14) }]}
-                      onPress={() => {
-                        closePaywall();
-                        handleRestorePurchases();
-                      }}
-                      disabled={purchaseLoading}
-                    >
-                      <Text style={styles.restorePurchasesText}>Restore Purchases</Text>
-                    </TouchableOpacity>
+                    {false && (
+                      <TouchableOpacity
+                        style={[styles.restorePurchasesBtn, { marginTop: scaleSpacing(14) }]}
+                        onPress={() => {
+                          closePaywall();
+                          handleRestorePurchases();
+                        }}
+                        disabled={purchaseLoading}
+                      >
+                        <Text style={styles.restorePurchasesText}>Restore Purchases</Text>
+                      </TouchableOpacity>
+                    )}
                   </>
                 );
               })()}
@@ -4543,7 +4604,7 @@ export default function App() {
           <Text style={styles.headerSubtitle}>Your Secure Backup</Text>
         </View>
         <View style={styles.headerButtons}>
-          <TouchableOpacity onPress={() => setView('about')} style={styles.infoBtn}>
+          <TouchableOpacity onPress={() => setView('info')} style={styles.infoBtn}>
             <FontAwesome5 name="info-circle" size={18} color="#FFFFFF" />
           </TouchableOpacity>
           <TouchableOpacity onPress={() => setView('settings')} style={styles.settingsBtn}>
@@ -4587,7 +4648,7 @@ export default function App() {
                 { width: `${Math.min(Math.max(progress, 0), 1) * 100}%` },
                 progressAction === 'cleanup' && { backgroundColor: '#6366F1' },
                 progressAction === 'backup' && { backgroundColor: '#2196F3' },
-                progressAction === 'sync' && { backgroundColor: '#4CAF50' },
+                progressAction === 'sync' && { backgroundColor: THEME.secondary },
               ]} 
             />
           </View>
@@ -4602,7 +4663,7 @@ export default function App() {
               <FontAwesome5 name="broom" size={22} color="#FFFFFF" />
             </View>
             <Text style={styles.cardTitle}>Clean Duplicates</Text>
-            <Text style={styles.cardDescription}>Remove Duplicate Photos on this device</Text>
+            <Text style={styles.cardDescription}>Remove Duplicate Photos & Videos</Text>
           </TouchableOpacity>
 
           <TouchableOpacity
@@ -4842,7 +4903,15 @@ export default function App() {
                     key={a.id}
                     style={[styles.pickerItem, selected && styles.pickerItemSelected]}
                     onPress={() => toggleBackupPickerSelected(a.id)}>
-                    <Image source={{ uri: a.uri }} style={styles.pickerThumb} />
+                    <View style={[styles.pickerThumb, { backgroundColor: '#1a1a1a', justifyContent: 'center', alignItems: 'center' }]}>
+                      {(a.thumbUri || a.uri) && (
+                        <Image 
+                          source={{ uri: a.thumbUri || a.uri }} 
+                          style={[styles.pickerThumb, { position: 'absolute', top: 0, left: 0 }]} 
+                        />
+                      )}
+                      <Text style={{ color: '#444', fontSize: 10, textAlign: 'center' }}>{a.mediaType === 'video' ? '🎬' : '📷'}</Text>
+                    </View>
                     {a.mediaType === 'video' && (
                       <View style={styles.pickerBadge}>
                         <Text style={styles.pickerBadgeText}>VIDEO</Text>
@@ -5013,13 +5082,15 @@ export default function App() {
                         key={key}
                         style={[styles.pickerItem, selected && styles.pickerItemSelected]}
                         onPress={() => toggleSyncPickerSelected(key)}>
-                        {thumbUri ? (
-                          <Image source={{ uri: thumbUri }} style={styles.pickerThumb} />
-                        ) : (
-                          <View style={[styles.pickerThumb, { backgroundColor: isVideo ? '#1a1a2e' : '#1e3a2e', alignItems: 'center', justifyContent: 'center' }]}>
-                            <Text style={{ fontSize: 32 }}>{isVideo ? '🎬' : '📄'}</Text>
-                          </View>
-                        )}
+                        <View style={[styles.pickerThumb, { backgroundColor: isVideo ? '#1a1a2e' : '#1e3a2e', alignItems: 'center', justifyContent: 'center' }]}>
+                          {thumbUri && (
+                            <Image 
+                              source={{ uri: thumbUri }} 
+                              style={[styles.pickerThumb, { position: 'absolute', top: 0, left: 0 }]} 
+                            />
+                          )}
+                          <Text style={{ fontSize: 24, color: '#555' }}>{isVideo ? '🎬' : '📷'}</Text>
+                        </View>
                         {isVideo && (
                           <View style={styles.pickerBadge}>
                             <Text style={styles.pickerBadgeText}>VIDEO</Text>

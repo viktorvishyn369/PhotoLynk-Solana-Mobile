@@ -175,13 +175,14 @@ export const fetchLocalRemotePickerPage = async ({
   const serverFiles = res?.data?.files || [];
   const total = typeof res?.data?.total === 'number' ? res.data.total : serverFiles.length;
 
-  // Fetch thumbnails for images in parallel
+  // Fetch thumbnails for images and videos in parallel
   let items = serverFiles;
   if (fetchThumbnails && serverFiles.length > 0) {
     items = await Promise.all(serverFiles.map(async (file) => {
       const ext = (file.filename || '').split('.').pop()?.toLowerCase() || '';
       const isImage = ['jpg', 'jpeg', 'png', 'heic', 'heif', 'webp', 'gif', 'bmp', 'tiff'].includes(ext);
-      if (isImage) {
+      const isVideo = ['mp4', 'mov', 'avi', 'mkv', 'm4v', '3gp', 'webm'].includes(ext);
+      if (isImage || isVideo) {
         const thumbUri = await fetchThumbnailBase64(file.filename, config, SERVER_URL);
         return { ...file, thumbUri };
       }

@@ -94,6 +94,20 @@ stop_existing_service() {
   if command -v pkill >/dev/null 2>&1; then
     $SUDO pkill -f "${INSTALL_DIR}/server/server\.js" 2>/dev/null || true
   fi
+
+  # Free port 3000 if another process is holding it (force kill)
+  if command -v lsof >/dev/null 2>/dev/null; then
+    PIDS=$($SUDO lsof -ti :3000 2>/dev/null || true)
+    if [ -n "$PIDS" ]; then
+      warn "⚠ Port 3000 in use; killing processes: $PIDS"
+      $SUDO kill -9 $PIDS 2>/dev/null || true
+    fi
+  elif command -v fuser >/dev/null 2>/dev/null; then
+    if $SUDO fuser -n tcp 3000 >/dev/null 2>&1; then
+      warn "⚠ Port 3000 in use; killing holders (fuser)"
+      $SUDO fuser -k -n tcp 3000 2>/dev/null || true
+    fi
+  fi
 }
 
 ensure_cmd() {
@@ -160,6 +174,31 @@ install_node_if_missing() {
   echo -e "${GREEN}✓${NC} Node.js installed: $(node -v)"
 }
 
+install_ffmpeg_if_missing() {
+  log "[2.5/7] Checking ffmpeg (for video thumbnails)..."
+  if command -v ffmpeg >/dev/null 2>&1; then
+    echo -e "${GREEN}✓${NC} ffmpeg found: $(ffmpeg -version 2>&1 | head -n1)"
+    return
+  fi
+
+  warn "⚠ ffmpeg not found. Installing..."
+  if command -v apt-get >/dev/null 2>&1; then
+    $SUDO apt-get install -y ffmpeg
+  elif command -v dnf >/dev/null 2>&1; then
+    $SUDO dnf install -y ffmpeg
+  elif command -v yum >/dev/null 2>&1; then
+    $SUDO yum install -y ffmpeg
+  elif command -v pacman >/dev/null 2>&1; then
+    $SUDO pacman -S --noconfirm ffmpeg
+  else
+    warn "⚠ Could not install ffmpeg automatically. Video thumbnails will not work."
+    warn "Install ffmpeg manually if you need video thumbnail support."
+    return
+  fi
+
+  echo -e "${GREEN}✓${NC} ffmpeg installed"
+}
+
 clone_or_update_repo() {
   log "[3/7] Downloading / updating PhotoLynk..."
 
@@ -214,12 +253,22 @@ const { execFileSync } = require('child_process');
 const sqlite3 = require('sqlite3').verbose();
 
 const CLOUD_DIR = process.env.CLOUD_DIR;
+let CHUNKS_DIR = process.env.CHUNKS_DIR; // HDD RAID10 for actual chunk storage
 const CAPACITY_JSON_PATH = process.env.CAPACITY_JSON_PATH;
 const DB_PATH = process.env.DB_PATH;
 
 if (!CLOUD_DIR || !CAPACITY_JSON_PATH) {
   process.exit(2);
 }
+
+// Auto-detect CHUNKS_DIR if not provided but common mount exists
+if (!CHUNKS_DIR && fs.existsSync('/data/chunks')) {
+  CHUNKS_DIR = '/data/chunks';
+}
+
+// Use CHUNKS_DIR for capacity check if available (split storage mode)
+// Otherwise fall back to CLOUD_DIR
+const CAPACITY_CHECK_DIR = CHUNKS_DIR || CLOUD_DIR;
 
 const getDfValueBytes = (p, col) => {
   try {
@@ -313,8 +362,8 @@ const main = async () => {
   const RESERVE_MIN_BYTES = Math.ceil(Number(process.env.CAPACITY_RESERVE_MIN_GB || '5') * GB);
   const RESERVE_MAX_BYTES = Math.ceil(Number(process.env.CAPACITY_RESERVE_MAX_GB || '50') * GB);
 
-  const freeBytes = getDfAvailBytes(CLOUD_DIR);
-  const totalBytes = getDfTotalBytes(CLOUD_DIR);
+  const freeBytes = getDfAvailBytes(CAPACITY_CHECK_DIR);
+  const totalBytes = getDfTotalBytes(CAPACITY_CHECK_DIR);
 
   const planRows = await getAllocatedBytesFromDb(DB_PATH);
   const allocatedBytes = (Array.isArray(planRows) ? planRows : []).reduce((sum, r) => {
@@ -1205,6 +1254,7 @@ open_firewall_if_present() {
 # --- Run ---
 install_git_if_missing
 install_node_if_missing
+install_ffmpeg_if_missing
 ensure_cmd curl "Install curl and rerun."
 
 clone_or_update_repo

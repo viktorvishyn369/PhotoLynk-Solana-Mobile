@@ -30,10 +30,12 @@ import {
 // ============================================================================
 
 // Fetch all StealthCloud manifests with pagination
-const fetchAllManifestsPaged = async (serverUrl, config) => {
+// onFetchProgress callback receives (fetchedCount, estimatedTotal) for progress updates
+const fetchAllManifestsPaged = async (serverUrl, config, onFetchProgress = null) => {
   const PAGE_LIMIT = 500;
   const allManifests = [];
   let offset = 0;
+  let estimatedTotal = null;
 
   while (true) {
     const response = await axios.get(`${serverUrl}/api/cloud/manifests`, {
@@ -43,11 +45,20 @@ const fetchAllManifestsPaged = async (serverUrl, config) => {
 
     const manifests = (response.data && response.data.manifests) ? response.data.manifests : [];
     allManifests.push(...manifests);
+    
+    // Get total from response if available
+    if (estimatedTotal === null && typeof response.data?.total === 'number') {
+      estimatedTotal = response.data.total;
+    }
+    
+    // Report progress during fetch
+    if (onFetchProgress) {
+      onFetchProgress(allManifests.length, estimatedTotal || allManifests.length);
+    }
 
     if (!manifests || manifests.length < PAGE_LIMIT) break;
     offset += manifests.length;
-    const total = typeof response.data?.total === 'number' ? response.data.total : null;
-    if (typeof total === 'number' && offset >= total) break;
+    if (typeof estimatedTotal === 'number' && offset >= estimatedTotal) break;
   }
 
   return allManifests;
@@ -62,6 +73,41 @@ const getThrottleAssetCooldownMs = (fastMode) => fastMode ? 0 : (Platform.OS ===
 const getThrottleBatchLimit = (fastMode) => fastMode ? 100 : (Platform.OS === 'ios' ? 25 : 30);
 const getThrottleBatchCooldownMs = (fastMode) => fastMode ? 0 : (Platform.OS === 'ios' ? 3000 : 2000);
 const getThrottleChunkCooldownMs = (fastMode) => fastMode ? 0 : (Platform.OS === 'ios' ? 100 : 50);
+
+// Yield to UI thread - use longer delay to actually let UI breathe
+const yieldToUi = () => new Promise(r => setTimeout(r, 16)); // ~1 frame at 60fps
+
+// Throttled status update - only update UI every N ms to prevent render thrashing
+let lastStatusUpdateMs = 0;
+const throttledStatus = (onStatus, text, forceUpdate = false) => {
+  const now = Date.now();
+  if (forceUpdate || (now - lastStatusUpdateMs) >= 100) { // Max 10 updates/sec
+    lastStatusUpdateMs = now;
+    onStatus(text);
+  }
+};
+
+// Throttled progress update with monotonic guard (never goes backwards)
+let lastProgressUpdateMs = 0;
+let lastProgressValue = 0;
+const throttledProgress = (onProgress, value, forceUpdate = false) => {
+  // Never allow progress to go backwards
+  if (value < lastProgressValue) return;
+  
+  const now = Date.now();
+  if (forceUpdate || (now - lastProgressUpdateMs) >= 100) { // Max 10 updates/sec
+    lastProgressUpdateMs = now;
+    lastProgressValue = value;
+    onProgress(value);
+  }
+};
+
+// Reset progress tracking for new operation
+const resetProgressTracking = () => {
+  lastProgressValue = 0;
+  lastProgressUpdateMs = 0;
+  lastStatusUpdateMs = 0;
+};
 
 const throttleEncryption = async (chunkIndex, fastMode) => {
   const chunkCooldown = getThrottleChunkCooldownMs(fastMode);
@@ -118,6 +164,9 @@ export const stealthCloudRestoreCore = async ({
   onProgress = () => {},
   abortRef,
 }) => {
+  // Reset progress tracking for this new operation
+  resetProgressTracking();
+  
   let historyWrites = 0;
   const shouldRetryRestoreDownload = (e) => {
     const msg = (e && e.message ? e.message : '').toLowerCase();
@@ -125,14 +174,31 @@ export const stealthCloudRestoreCore = async ({
     return shouldRetryChunkUpload(e);
   };
 
-  // Don't override status/progress - App.js manages unified progress bar
+  // Phase 1: Fetching server files (0-10%)
+  onStatus('Preparing sync...');
+  onProgress(0);
+  await new Promise(r => setTimeout(r, 16));
+  
+  onStatus('Fetching server files...');
+  onProgress(0.01);
+  
   let manifests = [];
   try {
-    manifests = await fetchAllManifestsPaged(SERVER_URL, config);
+    manifests = await fetchAllManifestsPaged(SERVER_URL, config, (fetched, total) => {
+      // Progress fills 1-8% during fetch (proportional to fetched/total)
+      const fetchProgress = total > 0 ? (fetched / total) * 0.07 : 0;
+      throttledProgress(onProgress, 0.01 + fetchProgress);
+      throttledStatus(onStatus, `Fetching ${fetched}${total > fetched ? ` of ${total}` : ''} server files...`);
+    });
   } catch (e) {
     console.error('SyncManager: failed to fetch manifests:', e.message);
     manifests = [];
   }
+  
+  onProgress(0.08);
+  await new Promise(r => setTimeout(r, 16));
+  onStatus(`Found ${manifests.length} server files...`);
+  
   console.log(`SyncManager: fetched ${manifests.length} manifests from server (paginated)`);
 
   // Filter to specific manifests if provided (Choose Files mode)
@@ -142,13 +208,19 @@ export const stealthCloudRestoreCore = async ({
   }
 
   if (manifests.length === 0) {
+    onProgress(1);
     return { restored: 0, skipped: 0, failed: 0, noBackups: true };
   }
+  
+  // Phase 2: Analyzing/comparing (8-20%)
+  onStatus(`Analyzing 0 of ${manifests.length} files...`);
+  onProgress(0.08);
+  await new Promise(r => setTimeout(r, 16));
 
   let restored = 0;
   let skipped = 0;
   let failed = 0;
-  let downloadNum = 0;  // Counts actual downloads for status
+  let downloadNum = 0;
 
   for (let i = 0; i < manifests.length; i++) {
     // Check abort signal
@@ -156,6 +228,14 @@ export const stealthCloudRestoreCore = async ({
       console.log('StealthCloud restore aborted by user');
       return { restored, skipped, failed, aborted: true };
     }
+
+    // Update progress during analyzing phase (8-20%)
+    const analyzeProgress = 0.08 + ((i + 1) / manifests.length) * 0.12;
+    throttledProgress(onProgress, analyzeProgress);
+    throttledStatus(onStatus, `Analyzing ${i + 1} of ${manifests.length} files...`);
+
+    // Yield to UI thread every few items to keep UI responsive
+    if (i % 3 === 0) await yieldToUi();
 
     const mid = manifests[i].manifestId;
     
@@ -266,23 +346,13 @@ export const stealthCloudRestoreCore = async ({
       const shouldSkip = fileExistsByManifestId || fileExistsByFilename || fileExistsByPerceptualHash || fileExistsByFileHash || fileExistsByBaseNameSize || fileExistsByBaseNameDate;
       
       if (shouldSkip) {
-        console.log(`[Restore Skip] ${filename}:`, {
-          skipByManifestId: fileExistsByManifestId,
-          skipByFilename: fileExistsByFilename,
-          skipByPerceptualHash: fileExistsByPerceptualHash,
-          skipByFileHash: fileExistsByFileHash,
-          skipByBaseNameSize: fileExistsByBaseNameSize,
-          skipByBaseNameDate: fileExistsByBaseNameDate,
-          skipByHistory: alreadyRestored,
-          localFilenamesSize: localFilenames.size,
-          localManifestIdsSize: localManifestIds.size,
-          localFileHashesSize: localFileHashes.size,
-          localPerceptualHashesSize: localPerceptualHashes.size,
-          localBaseNameSizesSize: localBaseNameSizes.size,
-          localBaseNameDatesSize: localBaseNameDates.size,
-          restoreHistorySize: restoreHistory.size
-        });
+        // Throttle skip logging to prevent console spam and UI freeze
+        if (skipped % 50 === 0) {
+          console.log(`[Restore] Skipped ${skipped} files (already on device)`);
+        }
         skipped++;
+        // Yield to UI thread periodically during skip loop
+        if (skipped % 10 === 0) await yieldToUi();
         continue;
       }
 
@@ -337,7 +407,12 @@ export const stealthCloudRestoreCore = async ({
       };
 
       downloadNum++;
-      onStatus(`Syncing ${downloadNum} of ${manifests.length}`);
+      // Phase 3: Syncing files (20-100%)
+      // Progress: 20% + (downloadNum / totalToDownload) * 80%
+      const totalToDownload = manifests.length - skipped;
+      const syncProgress = totalToDownload > 0 ? 0.2 + (downloadNum / totalToDownload) * 0.8 : 0.2;
+      throttledStatus(onStatus, `Syncing ${downloadNum} of ${totalToDownload}`);
+      throttledProgress(onProgress, syncProgress);
 
       for (let batchStart = 0; batchStart < manifest.chunkIds.length; batchStart += maxParallel) {
         const batchEnd = Math.min(batchStart + maxParallel, manifest.chunkIds.length);
@@ -383,9 +458,7 @@ export const stealthCloudRestoreCore = async ({
       if (historyWrites % 10 === 0) {
         await saveRestoreHistory(restoreHistory);
       }
-      // Progress based on actual downloads, not manifest index
-      const totalToDownload = manifests.length - skipped;
-      onProgress(totalToDownload > 0 ? downloadNum / totalToDownload : 1);
+      // Progress already updated above with throttledProgress
 
       // CPU cooldown between files
       const assetCooldown = getThrottleAssetCooldownMs(fastMode);
@@ -431,10 +504,12 @@ export const stealthCloudRestoreCore = async ({
  * @returns {Promise<{restored: number, skipped: number, failed: number, serverTotal: number}>}
  */
 // Fetch all server files with pagination
-const fetchAllServerFilesPaged = async (serverUrl, config) => {
+// onFetchProgress callback receives (fetchedCount, estimatedTotal) for progress updates
+const fetchAllServerFilesPaged = async (serverUrl, config, onFetchProgress = null) => {
   const PAGE_LIMIT = 500;
   const allFiles = [];
   let offset = 0;
+  let estimatedTotal = null;
 
   while (true) {
     const response = await axios.get(`${serverUrl}/api/files`, {
@@ -444,11 +519,20 @@ const fetchAllServerFilesPaged = async (serverUrl, config) => {
 
     const files = (response.data && response.data.files) ? response.data.files : [];
     allFiles.push(...files);
+    
+    // Get total from response if available
+    if (estimatedTotal === null && typeof response.data?.total === 'number') {
+      estimatedTotal = response.data.total;
+    }
+    
+    // Report progress during fetch
+    if (onFetchProgress) {
+      onFetchProgress(allFiles.length, estimatedTotal || allFiles.length);
+    }
 
     if (!files || files.length < PAGE_LIMIT) break;
     offset += files.length;
-    const total = typeof response.data?.total === 'number' ? response.data.total : null;
-    if (typeof total === 'number' && offset >= total) break;
+    if (typeof estimatedTotal === 'number' && offset >= estimatedTotal) break;
   }
 
   return allFiles;
@@ -462,9 +546,27 @@ export const localRemoteRestoreCore = async ({
   onStatus = () => {},
   onProgress = () => {},
 }) => {
-  onStatus('Preparing sync...');
+  // Reset progress tracking for this new operation
+  resetProgressTracking();
   
-  let serverFiles = await fetchAllServerFilesPaged(SERVER_URL, config);
+  // Phase 1: Fetching server files (0-10%)
+  onStatus('Preparing sync...');
+  onProgress(0);
+  
+  await new Promise(r => setTimeout(r, 16));
+  onStatus('Fetching server files...');
+  onProgress(0.01);
+  
+  let serverFiles = await fetchAllServerFilesPaged(SERVER_URL, config, (fetched, total) => {
+    // Progress fills 1-8% during fetch (proportional to fetched/total)
+    const fetchProgress = total > 0 ? (fetched / total) * 0.07 : 0;
+    throttledProgress(onProgress, 0.01 + fetchProgress);
+    throttledStatus(onStatus, `Fetching ${fetched}${total > fetched ? ` of ${total}` : ''} server files...`);
+  });
+  
+  onProgress(0.08);
+  await new Promise(r => setTimeout(r, 16));
+  onStatus(`Found ${serverFiles.length} server files...`);
 
   // Filter to specific filenames if provided (Choose Files mode)
   if (onlyFilenames && Array.isArray(onlyFilenames) && onlyFilenames.length > 0) {
@@ -478,9 +580,15 @@ export const localRemoteRestoreCore = async ({
   console.log(`☁️  Server has ${serverFiles.length} files`);
 
   if (serverFiles.length === 0) {
+    onProgress(1);
     return { restored: 0, skipped: 0, failed: 0, serverTotal: 0, noFiles: true };
   }
 
+  // Phase 2: Comparing files (5-10%)
+  onStatus(`Comparing ${serverFiles.length} files...`);
+  onProgress(0.08);
+  await new Promise(r => setTimeout(r, 16));
+  
   // Filter out files that already exist locally
   const toDownload = serverFiles.filter(f => {
     const normalizedFilename = normalizeFilenameForCompare(f && f.filename ? f.filename : null);
@@ -495,11 +603,13 @@ export const localRemoteRestoreCore = async ({
   console.log(`📊 To download: ${toDownload.length}, Skipped: ${skippedCount}`);
 
   if (toDownload.length === 0) {
+    onProgress(1);
     return { restored: 0, skipped: skippedCount, failed: 0, serverTotal: serverFiles.length, allSynced: true };
   }
 
+  // Phase 3: Syncing files (10-100%)
   onStatus(`Syncing 0 of ${toDownload.length}`);
-  onProgress(0);
+  onProgress(0.1);
 
   let successCount = 0;
   let failedCount = 0;
@@ -539,8 +649,10 @@ export const localRemoteRestoreCore = async ({
       failedCount++;
     } finally {
       processedCount++;
-      onStatus(`Syncing ${processedCount} of ${toDownload.length}`);
-      onProgress(processedCount / toDownload.length);
+      // Progress: 10% + (processedCount / total) * 90%
+      const syncProgress = 0.1 + (processedCount / toDownload.length) * 0.9;
+      throttledStatus(onStatus, `Syncing ${processedCount} of ${toDownload.length}`);
+      throttledProgress(onProgress, syncProgress);
     }
   }));
 
@@ -590,6 +702,73 @@ export const buildLocalDeduplicationIndex = async ({
   let hashScanned = 0;
   let after = null;
   const PAGE_SIZE = 100;
+  // Parallel processing: process multiple assets concurrently
+  const PARALLEL_LIMIT = Platform.OS === 'ios' ? 8 : 6;
+
+  // Helper to process a single asset
+  const processAsset = async (asset) => {
+    try {
+      const assetInfo = await MediaLibrary.getAssetInfoAsync(asset.id);
+      const resolved = await resolveReadableFilePath({ assetId: asset.id, assetInfo });
+      const filePath = resolved?.filePath;
+      if (!filePath) {
+        console.warn('[LocalDedup] Missing filePath for asset', asset?.id, assetInfo?.filename || asset?.filename);
+        return null;
+      }
+
+      // Step 1: Compute manifestId (filename + size)
+      const assetFilename = assetInfo.filename || asset.filename || null;
+      let originalSize = null;
+
+      if (Platform.OS === 'ios') {
+        try {
+          const fileUri = filePath.startsWith('/') ? `file://${filePath}` : filePath;
+          const info = await FileSystem.getInfoAsync(fileUri);
+          originalSize = info && typeof info.size === 'number' ? Number(info.size) : null;
+        } catch (e) {}
+      } else {
+        // Android: use react-native-blob-util for accurate size
+        let ReactNativeBlobUtil = null;
+        try {
+          const mod = require('react-native-blob-util');
+          ReactNativeBlobUtil = mod && (mod.default || mod);
+        } catch (e) {}
+        if (ReactNativeBlobUtil?.fs?.stat) {
+          try {
+            const stat = await ReactNativeBlobUtil.fs.stat(filePath);
+            originalSize = stat && stat.size ? Number(stat.size) : null;
+          } catch (e) {}
+        }
+      }
+
+      let manifestId = null;
+      const fileIdentity = computeFileIdentity(assetFilename, originalSize);
+      if (fileIdentity) {
+        const { sha256 } = require('js-sha256');
+        manifestId = sha256(`file:${fileIdentity}`);
+      }
+
+      // Build base filename + size/date for fallback matching
+      const baseName = assetFilename ? extractBaseFilename(assetFilename) : null;
+      const dateStr = asset.creationTime ? normalizeDateForCompare(asset.creationTime) : null;
+
+      const isImage = asset.mediaType === 'photo';
+      let pHash = null;
+      let fHash = null;
+
+      if (isImage) {
+        // Images - compute perceptual hash
+        pHash = await computePerceptualHash(filePath, asset, assetInfo);
+      } else {
+        // Videos - compute exact file hash
+        fHash = await computeExactFileHash(filePath);
+      }
+
+      return { manifestId, pHash, fHash, baseName, originalSize, dateStr };
+    } catch (e) {
+      return null;
+    }
+  };
 
   while (true) {
     const page = await MediaLibrary.getAssetsAsync({
@@ -601,90 +780,39 @@ export const buildLocalDeduplicationIndex = async ({
     const assets = page && Array.isArray(page.assets) ? page.assets : [];
     if (assets.length === 0) break;
 
-    for (const asset of assets) {
-      try {
-        const assetInfo = await MediaLibrary.getAssetInfoAsync(asset.id);
-        const resolved = await resolveReadableFilePath({ assetId: asset.id, assetInfo });
-        const filePath = resolved?.filePath;
-        if (!filePath) {
-          console.warn('[LocalDedup] Missing filePath for asset', asset?.id, assetInfo?.filename || asset?.filename);
-          hashScanned++;
-          continue;
-        }
+    // Process assets in parallel batches
+    for (let i = 0; i < assets.length; i += PARALLEL_LIMIT) {
+      // Yield to UI thread between batches
+      if (i > 0) await yieldToUi();
+      
+      const batch = assets.slice(i, i + PARALLEL_LIMIT);
+      const results = await Promise.all(batch.map(processAsset));
 
-        // Step 1: Compute manifestId (filename + size)
-        const assetFilename = assetInfo.filename || asset.filename || null;
-        let originalSize = null;
-
-        if (Platform.OS === 'ios') {
-          try {
-            const fileUri = filePath.startsWith('/') ? `file://${filePath}` : filePath;
-            const info = await FileSystem.getInfoAsync(fileUri);
-            originalSize = info && typeof info.size === 'number' ? Number(info.size) : null;
-          } catch (e) {}
-        } else {
-          // Android: use react-native-blob-util for accurate size
-          let ReactNativeBlobUtil = null;
-          try {
-            const mod = require('react-native-blob-util');
-            ReactNativeBlobUtil = mod && (mod.default || mod);
-          } catch (e) {}
-          if (ReactNativeBlobUtil?.fs?.stat) {
-            try {
-              const stat = await ReactNativeBlobUtil.fs.stat(filePath);
-              originalSize = stat && stat.size ? Number(stat.size) : null;
-            } catch (e) {}
-          }
-        }
-
-        const fileIdentity = computeFileIdentity(assetFilename, originalSize);
-        if (fileIdentity) {
-          const { sha256 } = require('js-sha256');
-          const manifestId = sha256(`file:${fileIdentity}`);
-          localManifestIds.add(manifestId);
-        }
-
-        // Build base filename + size/date maps for fallback matching
-        const baseName = assetFilename ? extractBaseFilename(assetFilename) : null;
-        if (baseName) {
-          if (originalSize) {
-            if (!localBaseNameSizes.has(baseName)) localBaseNameSizes.set(baseName, new Set());
-            localBaseNameSizes.get(baseName).add(originalSize);
-          }
-          if (asset.creationTime) {
-            const dateStr = normalizeDateForCompare(asset.creationTime);
-            if (dateStr) {
-              if (!localBaseNameDates.has(baseName)) localBaseNameDates.set(baseName, new Set());
-              localBaseNameDates.get(baseName).add(dateStr);
+      // Collect results
+      for (const result of results) {
+        if (result) {
+          if (result.manifestId) localManifestIds.add(result.manifestId);
+          if (result.pHash) localPerceptualHashes.add(result.pHash);
+          if (result.fHash) localFileHashes.add(result.fHash);
+          if (result.baseName) {
+            if (result.originalSize) {
+              if (!localBaseNameSizes.has(result.baseName)) localBaseNameSizes.set(result.baseName, new Set());
+              localBaseNameSizes.get(result.baseName).add(result.originalSize);
+            }
+            if (result.dateStr) {
+              if (!localBaseNameDates.has(result.baseName)) localBaseNameDates.set(result.baseName, new Set());
+              localBaseNameDates.get(result.baseName).add(result.dateStr);
             }
           }
         }
-
-        const isImage = asset.mediaType === 'photo';
-
-        if (isImage) {
-          // Step 3: Images - compute perceptual hash
-          const pHash = await computePerceptualHash(filePath, asset, assetInfo);
-          if (pHash) {
-            localPerceptualHashes.add(pHash);
-          }
-        } else {
-          // Step 4: Videos - compute exact file hash
-          const fHash = await computeExactFileHash(filePath);
-          if (fHash) {
-            localFileHashes.add(fHash);
-          }
-        }
-
         hashScanned++;
-        onProgress(hashScanned / totalToScan);
-        // Show count: first 10 by 1, then every 5 (15, 20, 25...)
-        if (hashScanned <= 10 || hashScanned % 5 === 0 || hashScanned === totalToScan) {
-          onStatus(`Analyzing ${hashScanned}/${totalToScan} photos...`);
-        }
-      } catch (e) {
-        // Skip files we can't hash
-        hashScanned++;
+      }
+
+      // Throttle UI updates to prevent render thrashing
+      throttledProgress(onProgress, hashScanned / totalToScan);
+      // Show count: first 10 by 1, then every 10
+      if (hashScanned <= 10 || hashScanned % 10 === 0 || hashScanned >= totalToScan) {
+        throttledStatus(onStatus, `Analyzing ${hashScanned}/${totalToScan} photos...`);
       }
     }
 

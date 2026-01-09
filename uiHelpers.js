@@ -26,12 +26,12 @@ export const buildResultMessage = (type, stats) => {
     const lines = [];
     if (type === 'backup') {
       if (typeof stats.uploaded === 'number') lines.push(`✓ Uploaded: ${stats.uploaded}`);
-      if (typeof stats.skipped === 'number') lines.push(`○ Skipped: ${stats.skipped}`);
-      if (typeof stats.failed === 'number' && stats.failed > 0) lines.push(`✗ Failed: ${stats.failed}`);
+      if (typeof stats.skipped === 'number') lines.push(`○ Skipped (already on server): ${stats.skipped}`);
+      if (typeof stats.failed === 'number' && stats.failed > 0) lines.push(`✗ Failed (corrupted/error): ${stats.failed}`);
     } else if (type === 'sync') {
       if (typeof stats.downloaded === 'number') lines.push(`✓ Downloaded: ${stats.downloaded}`);
-      if (typeof stats.skipped === 'number') lines.push(`○ Skipped: ${stats.skipped}`);
-      if (typeof stats.failed === 'number' && stats.failed > 0) lines.push(`✗ Failed: ${stats.failed}`);
+      if (typeof stats.skipped === 'number') lines.push(`○ Skipped (exist on device): ${stats.skipped}`);
+      if (typeof stats.failed === 'number' && stats.failed > 0) lines.push(`✗ Failed (corrupted/error): ${stats.failed}`);
     } else if (type === 'clean') {
       if (typeof stats.deleted === 'number') lines.push(`✓ Deleted: ${stats.deleted}`);
       if (typeof stats.kept === 'number') lines.push(`○ Kept: ${stats.kept}`);

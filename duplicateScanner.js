@@ -504,19 +504,49 @@ const isImageAsset = (info, asset) => {
 };
 
 /**
+ * Checks if an asset is a video based on mediaType or filename.
+ * @param {Object} info - Asset info
+ * @param {Object} asset - Asset object
+ * @returns {boolean}
+ */
+const isVideoAsset = (info, asset) => {
+  const mt = (info && info.mediaType) || asset.mediaType;
+  if (mt === 'video') return true;
+  const name = (info && info.filename) || asset.filename || '';
+  return /\.(mp4|mov|m4v|avi|mkv|webm|3gp)$/i.test(name);
+};
+
+/**
  * Collects all photo assets from device, including all albums.
+ * @param {Object} options - Options
+ * @param {boolean} options.includeVideos - Whether to include videos (default: false for backward compat)
  * @returns {Promise<Array>} Array of assets
  */
-export const collectAllPhotoAssets = async () => {
+export const collectAllPhotoAssets = async (options = {}) => {
+  const { includeVideos = false, onProgress } = options;
   const allAssetsArray = [];
   const seenIds = new Set();
+  
+  const mediaTypes = includeVideos ? ['photo', 'video'] : ['photo'];
+  
+  // Get estimated total count first for progress calculation
+  let estimatedTotal = 0;
+  try {
+    const countPage = await MediaLibrary.getAssetsAsync({ first: 1, mediaType: mediaTypes });
+    estimatedTotal = countPage?.totalCount || 1000;
+  } catch (e) {
+    estimatedTotal = 1000;
+  }
+  
+  // Show initial progress
+  if (onProgress) onProgress({ collected: 0, estimated: estimatedTotal, message: `Collecting 0/${estimatedTotal} items...` });
   
   // First get assets without album filter (main camera roll)
   let mainAssets = null;
   for (let attempt = 0; attempt < 6; attempt++) {
     mainAssets = await MediaLibrary.getAssetsAsync({
       first: 10000,
-      mediaType: ['photo'],
+      mediaType: mediaTypes,
     });
     if (mainAssets && mainAssets.assets && mainAssets.assets.length > 0) break;
     await new Promise((resolve) => setTimeout(resolve, 500));
@@ -530,15 +560,20 @@ export const collectAllPhotoAssets = async () => {
     }
   }
   
+  // Yield to UI after main collection
+  await new Promise(r => setTimeout(r, 16));
+  if (onProgress) onProgress({ collected: allAssetsArray.length, estimated: estimatedTotal, message: `Collecting ${allAssetsArray.length}/${estimatedTotal} items...` });
+  
   // Scan all albums to catch Screenshots, Downloads, WhatsApp, etc.
   try {
     const albums = await MediaLibrary.getAlbumsAsync({ includeSmartAlbums: true });
-    for (const album of albums) {
+    for (let i = 0; i < albums.length; i++) {
+      const album = albums[i];
       try {
         const albumAssets = await MediaLibrary.getAssetsAsync({
           first: 5000,
           album: album.id,
-          mediaType: ['photo'],
+          mediaType: mediaTypes,
         });
         if (albumAssets && albumAssets.assets) {
           for (const asset of albumAssets.assets) {
@@ -547,6 +582,11 @@ export const collectAllPhotoAssets = async () => {
               allAssetsArray.push(asset);
             }
           }
+        }
+        // Yield to UI every few albums
+        if (i % 3 === 0) {
+          await new Promise(r => setTimeout(r, 16));
+          if (onProgress) onProgress({ collected: allAssetsArray.length, estimated: Math.max(estimatedTotal, allAssetsArray.length), message: `Collecting ${allAssetsArray.length} items...` });
         }
       } catch (e) {
         // Skip albums that fail
@@ -560,20 +600,22 @@ export const collectAllPhotoAssets = async () => {
 };
 
 /**
- * Scans for exact duplicate photos using pixel-based SHA256 hashing.
+ * Scans for exact duplicate photos/videos using pixel-based hashing (images) or file hash (videos).
  * 
  * @param {Object} params
  * @param {Array} params.assets - Array of assets to scan
  * @param {Function} params.resolveReadableFilePath - Function to resolve readable file path
  * @param {Function} params.onProgress - Progress callback (hashedCount, totalCount, lastHash)
+ * @param {boolean} params.includeVideos - Whether to include videos in scan (default: true)
  * @returns {Promise<{duplicateGroups: Array, stats: Object}>}
  */
-export const scanExactDuplicates = async ({ assets, resolveReadableFilePath, onProgress, abortRef }) => {
-  console.log('DuplicateScanner: Starting exact duplicate scan with pixel hashing');
+export const scanExactDuplicates = async ({ assets, resolveReadableFilePath, onProgress, abortRef, includeVideos = true }) => {
+  console.log('DuplicateScanner: Starting exact duplicate scan with pixel hashing (images) and file hash (videos)');
   
-  // Check if PixelHash native module is available
-  if (!PixelHash || typeof PixelHash.hashImagePixels !== 'function') {
-    throw new Error('PixelHash native module not available. Please rebuild the app.');
+  // Check if PixelHash native module is available (required for images)
+  const hasPixelHash = PixelHash && typeof PixelHash.hashImagePixels === 'function';
+  if (!hasPixelHash) {
+    console.warn('PixelHash native module not available - will only scan videos with file hash');
   }
   
   const hashGroups = {};
@@ -582,8 +624,13 @@ export const scanExactDuplicates = async ({ assets, resolveReadableFilePath, onP
   let hashSkipped = 0;
   let skippedNoUri = 0;
   let hashFailed = 0;
+  let videoCount = 0;
+  let photoCount = 0;
   const sampleSkipped = [];
 
+  // Show initial progress immediately
+  if (onProgress) onProgress(0, assets.length, '');
+  
   for (let i = 0; i < assets.length; i++) {
     // Check abort signal
     if (abortRef && abortRef.current) {
@@ -603,11 +650,29 @@ export const scanExactDuplicates = async ({ assets, resolveReadableFilePath, onP
       continue;
     }
 
-    // Photos-only: skip anything that isn't an image
-    if (!isImageAsset(info, asset)) {
+    const isVideo = isVideoAsset(info, asset);
+    const isImage = isImageAsset(info, asset);
+
+    // Skip if not image or video
+    if (!isImage && !isVideo) {
       hashSkipped++;
       if (sampleSkipped.length < 5) {
-        sampleSkipped.push({ filename: info?.filename || asset.filename, reason: 'not an image' });
+        sampleSkipped.push({ filename: info?.filename || asset.filename, reason: 'not an image or video' });
+      }
+      continue;
+    }
+
+    // Skip videos if not requested
+    if (isVideo && !includeVideos) {
+      hashSkipped++;
+      continue;
+    }
+
+    // Skip images if PixelHash not available
+    if (isImage && !hasPixelHash) {
+      hashSkipped++;
+      if (sampleSkipped.length < 5) {
+        sampleSkipped.push({ filename: info?.filename || asset.filename, reason: 'PixelHash not available for images' });
       }
       continue;
     }
@@ -629,15 +694,34 @@ export const scanExactDuplicates = async ({ assets, resolveReadableFilePath, onP
     }
 
     try {
-      // Compute 16-char dHash (perceptual hash) - fast and consistent for identical images
-      // Groups by exact hash match (no fuzzy threshold)
-      const hashHex = await PixelHash.hashImagePixels(hashTarget);
+      let hashHex = null;
       
-      if (hashedCount < 3) {
-        console.log('DuplicateScanner: dHash computed', {
-          filename: info?.filename || asset.filename,
-          hashStart: hashHex ? hashHex.substring(0, 8) + '...' : 'none',
-        });
+      if (isVideo) {
+        // Videos: use exact file hash (SHA-256)
+        hashHex = await computeExactFileHash(hashTarget);
+        if (hashHex) {
+          hashHex = 'video:' + hashHex; // Prefix to separate from image hashes
+          videoCount++;
+        }
+        if (hashedCount < 3 || videoCount <= 2) {
+          console.log('DuplicateScanner: Video file hash computed', {
+            filename: info?.filename || asset.filename,
+            hashStart: hashHex ? hashHex.substring(0, 20) + '...' : 'none',
+          });
+        }
+      } else {
+        // Images: use perceptual hash (dHash)
+        hashHex = await PixelHash.hashImagePixels(hashTarget);
+        if (hashHex) {
+          hashHex = 'image:' + hashHex; // Prefix to separate from video hashes
+          photoCount++;
+        }
+        if (hashedCount < 3) {
+          console.log('DuplicateScanner: Image dHash computed', {
+            filename: info?.filename || asset.filename,
+            hashStart: hashHex ? hashHex.substring(0, 20) + '...' : 'none',
+          });
+        }
       }
 
       hashedCount++;
@@ -680,6 +764,8 @@ export const scanExactDuplicates = async ({ assets, resolveReadableFilePath, onP
   console.log('DuplicateScanner: Scan complete', {
     totalAssets: assets.length,
     hashedCount,
+    photoCount,
+    videoCount,
     hashSkipped,
     inspectFailed,
     hashGroupsCount: Object.keys(hashGroups).length
@@ -777,20 +863,23 @@ export const buildNoResultsNote = (stats) => {
 // ============================================================================
 
 /**
- * Scans for similar photos using 16x16 perceptual hash + time proximity.
+ * Scans for similar photos/videos using perceptual hash (images) + file hash (videos) + time proximity.
  * Detects burst shots: same scene, slight differences (hand moved, posture, emotion, wind, etc.)
+ * For videos: detects exact duplicates (same file hash)
  * 
  * @param {Object} params
  * @param {Function} params.resolveReadableFilePath - Function to resolve readable file path
  * @param {Function} params.onProgress - Progress callback (current, total, status)
- * @returns {Promise<Array>} Array of similar photo groups (each group is array of assets)
+ * @param {boolean} params.includeVideos - Whether to include videos (default: true)
+ * @returns {Promise<Array>} Array of similar photo/video groups (each group is array of assets)
  */
-export const scanSimilarPhotos = async ({ resolveReadableFilePath, onProgress, onFindingMatches, onCollecting, abortRef }) => {
-  console.log('DuplicateScanner: Starting similar photos scan (simplified)...');
+export const scanSimilarPhotos = async ({ resolveReadableFilePath, onProgress, onFindingMatches, onCollecting, abortRef, includeVideos = true }) => {
+  console.log('DuplicateScanner: Starting similar photos/videos scan...');
   
-  // Check if PixelHash native module is available
-  if (!PixelHash || typeof PixelHash.hashImagePixels !== 'function') {
-    throw new Error('PixelHash native module not available. Please rebuild the app.');
+  // Check if PixelHash native module is available (required for images)
+  const hasPixelHash = PixelHash && typeof PixelHash.hashImagePixels === 'function';
+  if (!hasPixelHash) {
+    console.warn('PixelHash native module not available - will only scan videos with file hash');
   }
   
   // Notify collecting phase started
@@ -800,6 +889,20 @@ export const scanSimilarPhotos = async ({ resolveReadableFilePath, onProgress, o
   let after = null;
   let scanned = 0;
   let all = [];
+  
+  const mediaTypes = includeVideos ? ['photo', 'video'] : ['photo'];
+  
+  // Get estimated total for progress calculation
+  let estimatedTotal = MAX_SCAN;
+  try {
+    const countPage = await MediaLibrary.getAssetsAsync({ first: 1, mediaType: mediaTypes });
+    estimatedTotal = Math.min(countPage?.totalCount || MAX_SCAN, MAX_SCAN);
+  } catch (e) {
+    // Use MAX_SCAN as fallback
+  }
+  
+  // Show initial collecting progress
+  if (onProgress) onProgress(0, estimatedTotal, `Collecting 0/${estimatedTotal} items...`);
 
   while (scanned < MAX_SCAN) {
     // Check abort signal
@@ -810,27 +913,39 @@ export const scanSimilarPhotos = async ({ resolveReadableFilePath, onProgress, o
     const page = await MediaLibrary.getAssetsAsync({
       first: Math.min(500, MAX_SCAN - scanned),
       after: after || undefined,
-      mediaType: ['photo'],
+      mediaType: mediaTypes,
     });
     const assets = page && Array.isArray(page.assets) ? page.assets : [];
     all = all.concat(assets);
     scanned += assets.length;
     after = page && page.endCursor ? page.endCursor : null;
+    
+    // Yield to UI thread and update progress during collection (collecting is ~10% of total)
+    await new Promise(r => setTimeout(r, 16));
+    const collectProgress = estimatedTotal > 0 ? Math.min(scanned / estimatedTotal, 1) : 0;
+    if (onProgress) onProgress(collectProgress * 0.1, 1, `Collecting ${scanned}/${Math.min(estimatedTotal, page?.totalCount || estimatedTotal)} items...`);
+    
     if (!page || page.hasNextPage !== true) break;
     if (assets.length === 0) break;
   }
 
-  console.log('DuplicateScanner: Loaded', all.length, 'photos for similar scan');
+  console.log('DuplicateScanner: Loaded', all.length, 'photos/videos for similar scan');
 
   // Filter and sort by creation time (important for burst detection)
   all = all.filter(a => a && a.id && typeof a.creationTime === 'number');
   all.sort((a, b) => (a.creationTime || 0) - (b.creationTime || 0));
 
-  // Compute 16x16 perceptual hash for each photo (same as exact duplicates)
+  // Compute perceptual hash for photos, file hash for videos
   const items = [];
   let hashed = 0;
   let hashFailed = 0;
+  let videoCount = 0;
+  let photoCount = 0;
 
+  // Show initial progress immediately (10% already filled from collecting phase)
+  // Analyzing phase is 10-95% of total progress
+  if (onProgress) onProgress(0.1, 1, `Analyzing 1/${all.length} items...`);
+  
   for (let i = 0; i < all.length; i++) {
     // Check abort signal
     if (abortRef && abortRef.current) {
@@ -839,18 +954,29 @@ export const scanSimilarPhotos = async ({ resolveReadableFilePath, onProgress, o
     }
 
     const asset = all[i];
-    // Skip first iteration (i=0) to let "Collecting photos..." show first
-    if (i > 0 && i % 20 === 0 && onProgress) {
-      onProgress(i, all.length, `Analyzing ${i}/${all.length} photos...`);
+    // Update progress every 20 items (analyzing is 10-95% of total)
+    if (i % 20 === 0 && onProgress) {
+      const analyzeProgress = all.length > 0 ? (i / all.length) * 0.85 : 0;
+      onProgress(0.1 + analyzeProgress, 1, `Analyzing ${i + 1}/${all.length} items...`);
     }
     
     let info = null;
     let hash = null;
     let edgeHash = null;
     let cornerHash = null;
+    let isVideo = false;
     
     try {
       info = await MediaLibrary.getAssetInfoAsync(asset.id, Platform.OS === 'ios' ? { shouldDownloadFromNetwork: true } : undefined);
+      
+      isVideo = isVideoAsset(info, asset);
+      const isImage = isImageAsset(info, asset);
+      
+      // Skip if neither image nor video
+      if (!isImage && !isVideo) continue;
+      
+      // Skip images if PixelHash not available
+      if (isImage && !hasPixelHash) continue;
 
       // Get readable file path
       const { hashTarget, tmpCopied, tmpUri } = await getHashTarget({ 
@@ -861,25 +987,39 @@ export const scanSimilarPhotos = async ({ resolveReadableFilePath, onProgress, o
 
       if (hashTarget) {
         try {
-          // Use same 16x16 hash as exact duplicates
-          hash = await PixelHash.hashImagePixels(hashTarget);
-          // Also compute edge hash (5% border from all 4 sides)
-          if (PixelHash.hashImageEdges) {
-            try {
-              edgeHash = await PixelHash.hashImageEdges(hashTarget);
-            } catch (e) {
-              // Edge hash is optional, continue without it
+          if (isVideo) {
+            // Videos: use exact file hash (SHA-256)
+            hash = await computeExactFileHash(hashTarget);
+            if (hash) {
+              hash = 'video:' + hash; // Prefix to identify as video hash
+              videoCount++;
+              hashed++;
+            }
+          } else if (hasPixelHash) {
+            // Images: use perceptual hash
+            hash = await PixelHash.hashImagePixels(hashTarget);
+            if (hash) {
+              hash = 'image:' + hash; // Prefix to identify as image hash
+              photoCount++;
+              hashed++;
+            }
+            // Also compute edge hash (5% border from all 4 sides)
+            if (PixelHash.hashImageEdges) {
+              try {
+                edgeHash = await PixelHash.hashImageEdges(hashTarget);
+              } catch (e) {
+                // Edge hash is optional, continue without it
+              }
+            }
+            // Also compute corner hash (4 corners, grayscale)
+            if (PixelHash.hashImageCorners) {
+              try {
+                cornerHash = await PixelHash.hashImageCorners(hashTarget);
+              } catch (e) {
+                // Corner hash is optional, continue without it
+              }
             }
           }
-          // Also compute corner hash (4 corners, grayscale)
-          if (PixelHash.hashImageCorners) {
-            try {
-              cornerHash = await PixelHash.hashImageCorners(hashTarget);
-            } catch (e) {
-              // Corner hash is optional, continue without it
-            }
-          }
-          if (hash) hashed++;
         } catch (e) {
           hashFailed++;
         } finally {
@@ -897,6 +1037,7 @@ export const scanSimilarPhotos = async ({ resolveReadableFilePath, onProgress, o
         asset,
         info,
         hash,
+        isVideo,
         edgeHash: edgeHash || null,
         cornerHash: cornerHash || null,
         createdTs: asset.creationTime || 0,
@@ -905,12 +1046,13 @@ export const scanSimilarPhotos = async ({ resolveReadableFilePath, onProgress, o
     }
   }
 
-  console.log('DuplicateScanner: Similar hash summary', { total: all.length, hashed, hashFailed });
+  console.log('DuplicateScanner: Similar hash summary', { total: all.length, hashed, photoCount, videoCount, hashFailed });
   if (onFindingMatches) onFindingMatches();
   if (onProgress) onProgress(all.length, all.length, 'Finding similar groups...');
 
   // Find similar pairs using hamming distance + time proximity + edge matching
   // Similar shots: same lighting/colors but slight differences (hand moved, posture, emotion, wind, leaves, water)
+  // Videos: exact hash match only (no fuzzy matching)
   const similarPairs = [];
   const seen = new Set();
 
@@ -924,11 +1066,35 @@ export const scanSimilarPhotos = async ({ resolveReadableFilePath, onProgress, o
     for (let j = i + 1; j < items.length; j++) {
       const b = items[j];
       
+      // Videos: only match if exact same hash (both must be videos with same file hash)
+      if (a.isVideo || b.isVideo) {
+        // Both must be videos with exact same hash
+        if (a.isVideo && b.isVideo && a.hash === b.hash) {
+          const key = [a.asset.id, b.asset.id].sort().join('|');
+          if (!seen.has(key)) {
+            seen.add(key);
+            similarPairs.push({ a, b, dist: 0, dt: 0, edgeDist: 0, edgesMatch: true, cornerDist: 0, cornersMatch: true, isVideoMatch: true });
+            if (similarPairs.length <= 5) {
+              console.log('DuplicateScanner: Video duplicate found', {
+                aName: a.filename,
+                bName: b.filename,
+              });
+            }
+          }
+        }
+        continue; // Skip fuzzy matching for videos
+      }
+      
+      // Images: use perceptual hash comparison with fuzzy matching
+      // Extract the actual hash (remove 'image:' prefix)
+      const aHash = a.hash.startsWith('image:') ? a.hash.substring(6) : a.hash;
+      const bHash = b.hash.startsWith('image:') ? b.hash.substring(6) : b.hash;
+      
       // Time difference
       const dt = Math.abs((b.createdTs || 0) - (a.createdTs || 0));
       
       // Hamming distance between 64-bit dHash (16-char hex from native module)
-      const dist = hammingDistance64(a.hash, b.hash);
+      const dist = hammingDistance64(aHash, bHash);
       
       // Edge hash comparison (5% border from all 4 sides)
       // If edges match exactly, photos have same background/scene

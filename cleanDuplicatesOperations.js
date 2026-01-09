@@ -43,15 +43,16 @@ export const startSimilarShotsReviewCore = async ({
     const result = await DuplicateScanner.scanSimilarPhotos({
       resolveReadableFilePath,
       abortRef,
+      includeVideos: true,
       onCollecting: () => {
-        onStatus('Collecting photos...');
+        onStatus('Collecting photos & videos...');
         onProgress(0);
       },
       onProgress: (current, total, status) => {
         // Map progress: 5% for collecting, 5-95% for analyzing, 95-100% for finding matches
         const analyzeProgress = total > 0 ? (current / total) * 0.9 : 0;
         onProgress(0.05 + analyzeProgress);
-        onStatus(`Analyzing ${current}/${total} photos...`);
+        onStatus(`Analyzing ${current}/${total} items...`);
       },
       onFindingMatches: () => {
         onStatus('Finding matches...');
@@ -170,25 +171,41 @@ export const startExactDuplicatesScanCore = async ({
 
     const DuplicateScanner = require('./duplicateScanner').default;
     
-    // Collecting phase
-    onStatus('Collecting photos...');
+    // Collecting phase - include videos for duplicate detection (0-10% of progress)
+    onStatus('Collecting photos & videos...');
     onProgress(0);
-    const assets = await DuplicateScanner.collectAllPhotoAssets();
+    const assets = await DuplicateScanner.collectAllPhotoAssets({ 
+      includeVideos: true,
+      onProgress: (progressData) => {
+        // Handle both old string format and new object format
+        if (typeof progressData === 'string') {
+          onStatus(progressData);
+        } else if (progressData && typeof progressData === 'object') {
+          const { collected, estimated, message } = progressData;
+          onStatus(message || `Collecting ${collected} items...`);
+          // Fill progress bar during collecting (0-10%)
+          if (estimated > 0) {
+            onProgress(Math.min(0.1, (collected / estimated) * 0.1));
+          }
+        }
+      },
+    });
     
     if (!assets || assets.length === 0) {
       return { noAssets: true };
     }
 
-    // Scan for exact duplicates
+    // Scan for exact duplicates (photos use perceptual hash, videos use file hash)
     const { duplicateGroups, stats, aborted } = await DuplicateScanner.scanExactDuplicates({
       assets,
       resolveReadableFilePath,
       abortRef,
+      includeVideos: true,
       onProgress: (hashedCount, totalCount, lastHash) => {
-        // Map progress: 5% for collecting, 5-95% for analyzing, 95-100% for finding matches
-        const analyzeProgress = totalCount > 0 ? (hashedCount / totalCount) * 0.9 : 0;
-        onProgress(0.05 + analyzeProgress);
-        onStatus(`Analyzing ${hashedCount}/${totalCount} photos...`);
+        // Map progress: 10% for collecting (done), 10-95% for analyzing, 95-100% for finding matches
+        const analyzeProgress = totalCount > 0 ? (hashedCount / totalCount) * 0.85 : 0;
+        onProgress(0.1 + analyzeProgress);
+        onStatus(`Analyzing ${hashedCount}/${totalCount} items...`);
       }
     });
 
