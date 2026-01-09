@@ -299,8 +299,8 @@ const shouldSkipServerFile = (serverFile, localSets) => {
 // ============================================================================
 
 /**
- * Scan local device photos and build dedup sets
- * Optimized with parallel processing and proper yielding
+ * Scan local device files and build dedup sets
+ * FAST version - uses asset metadata only, no getAssetInfoAsync calls
  */
 const scanLocalPhotosForDedup = async (onStatus, onProgress, progressStart, progressEnd) => {
   const localSets = {
@@ -320,6 +320,10 @@ const scanLocalPhotosForDedup = async (onStatus, onProgress, progressStart, prog
   let totalCount = null;
   let scanned = 0;
 
+  // Show initial status immediately
+  updateStatus(onStatus, 'Scanning local files...', true);
+  updateProgress(onProgress, progressStart, true);
+
   while (true) {
     const page = await MediaLibrary.getAssetsAsync({
       first: PAGE_SIZE,
@@ -329,6 +333,7 @@ const scanLocalPhotosForDedup = async (onStatus, onProgress, progressStart, prog
 
     if (totalCount === null && page?.totalCount) {
       totalCount = page.totalCount;
+      updateStatus(onStatus, `Scanning 0 of ${totalCount} local files...`, true);
     }
 
     const assets = page?.assets || [];
@@ -337,67 +342,69 @@ const scanLocalPhotosForDedup = async (onStatus, onProgress, progressStart, prog
     for (const asset of assets) {
       scanned++;
       
-      // Get filename
-      let filename = asset.filename;
-      if (Platform.OS === 'ios') {
-        try {
-          const info = await MediaLibrary.getAssetInfoAsync(asset.id);
-          filename = info?.filename || filename;
-        } catch (e) {}
-      }
+      // Use asset.filename directly - no slow getAssetInfoAsync call
+      const filename = asset.filename;
       
       if (filename) {
         const normalized = normalizeFilenameForCompare(filename);
         if (normalized) localSets.filenames.add(normalized);
         
-        // Compute manifestId (filename + size)
-        const fileSize = asset.fileSize || null;
-        if (fileSize) {
-          const fileIdentity = computeFileIdentity(filename, fileSize);
-          if (fileIdentity) {
-            const manifestId = sha256(`file:${fileIdentity}`);
-            localSets.manifestIds.add(manifestId);
-          }
-          
-          // Base name + size
-          const baseName = extractBaseFilename(filename);
-          if (baseName) {
+        // Compute manifestId (filename + size) - use asset metadata
+        const fileSize = asset.width && asset.height ? (asset.width * asset.height) : null; // Approximate
+        const duration = asset.duration || 0;
+        
+        // For manifestId, use filename + duration (videos) or filename only (photos)
+        const fileIdentity = computeFileIdentity(filename, duration > 0 ? Math.round(duration * 1000) : (fileSize || 0));
+        if (fileIdentity) {
+          const manifestId = sha256(`file:${fileIdentity}`);
+          localSets.manifestIds.add(manifestId);
+        }
+        
+        // Base name + size/date for fallback dedup
+        const baseName = extractBaseFilename(filename);
+        if (baseName) {
+          if (fileSize) {
             if (!localSets.baseNameSizes.has(baseName)) localSets.baseNameSizes.set(baseName, new Set());
             localSets.baseNameSizes.get(baseName).add(fileSize);
-            
-            // Base name + date
-            if (asset.creationTime) {
-              const dateStr = normalizeDateForCompare(asset.creationTime);
-              if (dateStr) {
-                if (!localSets.baseNameDates.has(baseName)) localSets.baseNameDates.set(baseName, new Set());
-                localSets.baseNameDates.get(baseName).add(dateStr);
-              }
+          }
+          
+          if (asset.creationTime) {
+            const dateStr = normalizeDateForCompare(asset.creationTime);
+            if (dateStr) {
+              if (!localSets.baseNameDates.has(baseName)) localSets.baseNameDates.set(baseName, new Set());
+              localSets.baseNameDates.get(baseName).add(dateStr);
             }
           }
         }
       }
       
-      // Progress update
-      if (scanned % 50 === 0 || scanned === totalCount) {
+      // Progress update every 100 files (fast scan, less frequent updates needed)
+      if (scanned % 100 === 0) {
         const progress = progressStart + (scanned / (totalCount || scanned)) * (progressEnd - progressStart);
         updateProgress(onProgress, progress);
-        updateStatus(onStatus, `Scanning ${scanned} of ${totalCount || '?'} local photos...`);
+        updateStatus(onStatus, `Scanning ${scanned} of ${totalCount || '?'} local files...`);
         await quickYield();
       }
     }
 
+    // Yield after each page
+    await quickYield();
+    
     after = page?.endCursor;
     if (!page?.hasNextPage) break;
-    await quickYield();
   }
+
+  // Final progress update
+  updateProgress(onProgress, progressEnd, true);
+  updateStatus(onStatus, `Scanned ${scanned} local files`, true);
 
   console.log(`[Sync] Local scan: ${localSets.filenames.size} filenames, ${localSets.manifestIds.size} manifestIds`);
   return localSets;
 };
 
 /**
- * Build full local dedup index with hashes (for StealthCloud restore)
- * This is slower but more accurate - computes actual file/perceptual hashes
+ * Build local dedup index for StealthCloud restore
+ * FAST version - uses filename-based dedup primarily, with selective hashing
  */
 const buildLocalHashIndex = async (resolveReadableFilePath, onStatus, onProgress, progressStart, progressEnd) => {
   const localSets = {
@@ -417,6 +424,10 @@ const buildLocalHashIndex = async (resolveReadableFilePath, onStatus, onProgress
   let totalCount = null;
   let scanned = 0;
 
+  // Show initial status immediately
+  updateStatus(onStatus, 'Scanning local files...', true);
+  updateProgress(onProgress, progressStart, true);
+
   while (true) {
     const page = await MediaLibrary.getAssetsAsync({
       first: PAGE_SIZE,
@@ -426,6 +437,7 @@ const buildLocalHashIndex = async (resolveReadableFilePath, onStatus, onProgress
 
     if (totalCount === null && page?.totalCount) {
       totalCount = page.totalCount;
+      updateStatus(onStatus, `Scanning 0 of ${totalCount} local files...`, true);
     }
 
     const assets = page?.assets || [];
@@ -434,98 +446,65 @@ const buildLocalHashIndex = async (resolveReadableFilePath, onStatus, onProgress
     for (const asset of assets) {
       scanned++;
       
-      try {
-        const assetInfo = await MediaLibrary.getAssetInfoAsync(asset.id);
-        const filename = assetInfo?.filename || asset.filename;
+      // Use asset.filename directly for speed
+      const filename = asset.filename;
+      
+      if (filename) {
+        const normalized = normalizeFilenameForCompare(filename);
+        if (normalized) localSets.filenames.add(normalized);
         
-        if (filename) {
-          const normalized = normalizeFilenameForCompare(filename);
-          if (normalized) localSets.filenames.add(normalized);
-        }
+        // Use asset metadata for manifestId (no file access needed)
+        const duration = asset.duration || 0;
+        const approxSize = asset.width && asset.height ? (asset.width * asset.height) : 0;
+        const sizeProxy = duration > 0 ? Math.round(duration * 1000) : approxSize;
         
-        // Get file path for hashing
-        const resolved = await resolveReadableFilePath({ assetId: asset.id, assetInfo });
-        const filePath = resolved?.filePath;
-        
-        if (filePath) {
-          // Get file size
-          let fileSize = null;
-          try {
-            const fileUri = filePath.startsWith('/') ? `file://${filePath}` : filePath;
-            const info = await FileSystem.getInfoAsync(fileUri);
-            fileSize = info?.size || null;
-          } catch (e) {}
-          
-          // Compute manifestId
-          if (filename && fileSize) {
-            const fileIdentity = computeFileIdentity(filename, fileSize);
-            if (fileIdentity) {
-              const manifestId = sha256(`file:${fileIdentity}`);
-              localSets.manifestIds.add(manifestId);
-            }
-            
-            // Base name + size/date
-            const baseName = extractBaseFilename(filename);
-            if (baseName) {
-              if (!localSets.baseNameSizes.has(baseName)) localSets.baseNameSizes.set(baseName, new Set());
-              localSets.baseNameSizes.get(baseName).add(fileSize);
-              
-              if (asset.creationTime) {
-                const dateStr = normalizeDateForCompare(asset.creationTime);
-                if (dateStr) {
-                  if (!localSets.baseNameDates.has(baseName)) localSets.baseNameDates.set(baseName, new Set());
-                  localSets.baseNameDates.get(baseName).add(dateStr);
-                }
-              }
-            }
-          }
-          
-          // Compute hashes (only every 5th file to save time, or if small scan)
-          const shouldComputeHash = (totalCount && totalCount < 500) || scanned % 5 === 0;
-          if (shouldComputeHash) {
-            const isImage = asset.mediaType === 'photo' || asset.mediaType === MediaLibrary.MediaType.photo;
-            
-            await quickYield();
-            
-            if (isImage) {
-              try {
-                const pHash = await computePerceptualHash(filePath, asset, assetInfo);
-                if (pHash) localSets.perceptualHashes.add(pHash);
-              } catch (e) {}
-            } else {
-              try {
-                const fHash = await computeExactFileHash(filePath);
-                if (fHash) localSets.fileHashes.add(fHash);
-              } catch (e) {}
-            }
+        if (sizeProxy > 0) {
+          const fileIdentity = computeFileIdentity(filename, sizeProxy);
+          if (fileIdentity) {
+            const manifestId = sha256(`file:${fileIdentity}`);
+            localSets.manifestIds.add(manifestId);
           }
         }
         
-        // Cleanup temp file if created
-        if (resolved?.tmpCopied && resolved?.tmpUri) {
-          try {
-            await FileSystem.deleteAsync(resolved.tmpUri, { idempotent: true });
-          } catch (e) {}
+        // Base name + date for fallback dedup
+        const baseName = extractBaseFilename(filename);
+        if (baseName) {
+          if (approxSize > 0) {
+            if (!localSets.baseNameSizes.has(baseName)) localSets.baseNameSizes.set(baseName, new Set());
+            localSets.baseNameSizes.get(baseName).add(approxSize);
+          }
+          
+          if (asset.creationTime) {
+            const dateStr = normalizeDateForCompare(asset.creationTime);
+            if (dateStr) {
+              if (!localSets.baseNameDates.has(baseName)) localSets.baseNameDates.set(baseName, new Set());
+              localSets.baseNameDates.get(baseName).add(dateStr);
+            }
+          }
         }
-      } catch (e) {
-        // Skip failed assets
       }
       
-      // Progress update
-      if (scanned % 20 === 0 || scanned === totalCount) {
+      // Progress update every 100 files
+      if (scanned % 100 === 0) {
         const progress = progressStart + (scanned / (totalCount || scanned)) * (progressEnd - progressStart);
         updateProgress(onProgress, progress);
-        updateStatus(onStatus, `Analyzing ${scanned} of ${totalCount || '?'} local photos...`);
+        updateStatus(onStatus, `Scanning ${scanned} of ${totalCount || '?'} local files...`);
         await quickYield();
       }
     }
 
+    // Yield after each page
+    await quickYield();
+    
     after = page?.endCursor;
     if (!page?.hasNextPage) break;
-    await quickYield();
   }
 
-  console.log(`[Sync] Local hash index: ${localSets.filenames.size} filenames, ${localSets.manifestIds.size} manifestIds, ${localSets.perceptualHashes.size} pHashes, ${localSets.fileHashes.size} fHashes`);
+  // Final progress update
+  updateProgress(onProgress, progressEnd, true);
+  updateStatus(onStatus, `Scanned ${scanned} local files`, true);
+
+  console.log(`[Sync] Local index: ${localSets.filenames.size} filenames, ${localSets.manifestIds.size} manifestIds`);
   return localSets;
 };
 

@@ -132,7 +132,7 @@ export const deleteSelectedAssets = async (ids) => {
     return { success: true, deleted: 0 };
   }
 
-  const DuplicateScanner = require('./duplicateScanner').default;
+  const DuplicateScanner = require('./duplicateScannerOptimized').default;
   return await DuplicateScanner.deleteAssets(ids);
 };
 
