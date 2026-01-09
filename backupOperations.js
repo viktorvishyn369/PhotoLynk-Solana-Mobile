@@ -427,6 +427,9 @@ const encryptAndUpload = async ({
 
     let position = 0;
     while (true) {
+      // Yield before file read
+      await quickYield();
+      
       let nextB64 = '';
       try {
         nextB64 = await FileSystem.readAsStringAsync(fileUri, {
@@ -442,17 +445,27 @@ const encryptAndUpload = async ({
       }
       if (!nextB64) break;
       
+      // Yield after file read, before base64 decode
+      await quickYield();
+      
       const plaintext = naclUtil.decodeBase64(nextB64);
       if (!plaintext || plaintext.length === 0) break;
 
       const nonce = makeChunkNonce(baseNonce16, chunkIndex);
       await throttleChunk(chunkIndex);
       
-      // Yield before EVERY encryption to keep UI responsive
+      // Yield before encryption (CPU intensive)
       await quickYield();
       
       const boxed = nacl.secretbox(plaintext, nonce, fileKey);
+      
+      // Yield after encryption, before hash
+      await quickYield();
+      
       const chunkId = sha256.create().update(boxed).hex();
+      
+      // Yield after hash, before upload
+      await quickYield();
       
       await trackInFlightPromise(
         chunkUploadsInFlight,
@@ -464,9 +477,6 @@ const encryptAndUpload = async ({
       chunkSizes.push(plaintext.length);
       chunkIndex++;
       position += plaintext.length;
-      
-      // Yield after each chunk to allow UI updates
-      await quickYield();
 
       if (plaintext.length < effectiveBytes) break;
     }
@@ -505,16 +515,30 @@ const encryptAndUpload = async ({
         (async () => {
           try {
             while (queue.length) {
+              // Yield before processing
+              await quickYield();
+              
               const nextB64 = queue.shift();
+              
+              // Yield after queue access, before decode
+              await quickYield();
+              
               const plaintext = naclUtil.decodeBase64(nextB64);
               const nonce = makeChunkNonce(baseNonce16, chunkIndex);
               await throttleChunk(chunkIndex);
               
-              // Yield before EVERY encryption to keep UI responsive
+              // Yield before encryption (CPU intensive)
               await quickYield();
               
               const boxed = nacl.secretbox(plaintext, nonce, fileKey);
+              
+              // Yield after encryption, before hash
+              await quickYield();
+              
               const chunkId = sha256.create().update(boxed).hex();
+              
+              // Yield after hash, before upload
+              await quickYield();
               
               await trackInFlightPromise(
                 chunkUploadsInFlight,
@@ -525,9 +549,6 @@ const encryptAndUpload = async ({
               chunkIds.push(chunkId);
               chunkSizes.push(plaintext.length);
               chunkIndex++;
-              
-              // Yield after each chunk to allow UI updates
-              await quickYield();
             }
           } catch (e) {
             reject(e);
