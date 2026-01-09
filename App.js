@@ -131,6 +131,7 @@ import {
   localRemoteRestoreCore,
 } from './syncOperations';
 import { fetchStealthCloudPickerPage, fetchLocalRemotePickerPage } from './syncPickerOperations';
+import { SettingsScreen } from './SettingsScreen';
 import {
   validateAuthInputs,
   resolveEffectiveServerSettings,
@@ -3903,283 +3904,38 @@ export default function App() {
 
   if (view === 'settings') {
     return (
-      <View style={styles.container}>
-        <View style={styles.header}>
-          <TouchableOpacity onPress={() => setView('home')} style={styles.backBtn}>
-            <Text style={styles.backText}>Back</Text>
-          </TouchableOpacity>
-          <Text style={styles.headerTitle}>Settings</Text>
-          <View style={styles.backBtn} />
-        </View>
-
-        <ScrollView style={styles.content} contentContainerStyle={styles.contentContainer}>
-          <View style={[styles.settingsCard, glassModeEnabled && styles.glassCard]}>
-            <Text style={styles.settingsTitle}>Server</Text>
-            <Text style={styles.settingsDescription}>
-              Choose where your cloud will be running:
-            </Text>
-
-            <View style={styles.serverToggle}>
-              <TouchableOpacity
-                style={[styles.toggleBtn, serverType === 'local' && styles.toggleBtnActive]}
-                onPress={() => setServerType('local')}>
-                <Text numberOfLines={1} ellipsizeMode="tail" style={[styles.toggleText, serverType === 'local' && styles.toggleTextActive]}>
-                  Local
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.toggleBtn, serverType === 'remote' && styles.toggleBtnActive]}
-                onPress={() => setServerType('remote')}>
-                <Text numberOfLines={1} ellipsizeMode="tail" style={[styles.toggleText, serverType === 'remote' && styles.toggleTextActive]}>
-                  Remote
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.toggleBtn, serverType === 'stealthcloud' && styles.toggleBtnActive]}
-                onPress={async () => {
-                  await SecureStore.setItemAsync('server_type', 'stealthcloud');
-                  setServerType('stealthcloud');
-                  await logout();
-                }}>
-                <Text numberOfLines={1} ellipsizeMode="tail" style={[styles.toggleText, serverType === 'stealthcloud' && styles.toggleTextActive]}>
-                  StealthCloud
-                </Text>
-              </TouchableOpacity>
-            </View>
-
-            {serverType !== 'stealthcloud' && (
-              <View style={styles.serverExplanation}>
-                {serverType === 'local' ? (
-                  <Text style={styles.serverExplanationText}>
-                    📱 <Text style={styles.boldText}>Local:</Text> Server on same WiFi network{'\n'}
-                    (e.g., your home computer or laptop)
-                  </Text>
-                ) : serverType === 'remote' ? (
-                  <Text style={styles.serverExplanationText}>
-                    🌐 <Text style={styles.boldText}>Remote:</Text> Server anywhere on internet{'\n'}
-                    (e.g., cloud server — open port 3000 externally)
-                  </Text>
-                ) : null}
-              </View>
-            )}
-
-            {serverType === 'remote' && (
-              <TextInput
-                style={[styles.input, {marginTop: 12}]}
-                placeholder="IP or domain of your server"
-                placeholderTextColor="#666666"
-                value={remoteHost}
-                onChangeText={(t) => setRemoteHost(normalizeHostInput(t))}
-                autoCapitalize="none"
-              />
-            )}
-
-            {serverType === 'local' && (
-              <View style={{flexDirection: 'row', alignItems: 'center', marginTop: 12}}>
-                <TextInput
-                  style={[styles.input, {flex: 1, marginTop: 0, marginRight: 8}]}
-                  placeholder="Local server IP"
-                  placeholderTextColor="#666666"
-                  value={localHost}
-                  onChangeText={(t) => setLocalHost(normalizeHostInput(t))}
-                  autoCapitalize="none"
-                />
-                <TouchableOpacity
-                  style={{
-                    width: 44,
-                    height: 44,
-                    borderRadius: 8,
-                    backgroundColor: '#1f1f1f',
-                    borderWidth: 1,
-                    borderColor: '#2f2f2f',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                  }}
-                  onPress={async () => {
-                    if (!cameraPermission?.granted) {
-                      const result = await requestCameraPermission();
-                      if (!result.granted) {
-                        showDarkAlert('Camera Permission', 'Camera access is needed to scan QR codes.');
-                        return;
-                      }
-                    }
-                    setQrScannerOpen(true);
-                  }}
-                >
-                  <View style={{width: 22, height: 22}}>
-                    <View style={{position: 'absolute', top: 0, left: 0, width: 10, height: 10, borderWidth: 2, borderColor: '#fff', borderRadius: 2}} />
-                    <View style={{position: 'absolute', top: 0, right: 0, width: 10, height: 10, borderWidth: 2, borderColor: '#fff', borderRadius: 2}} />
-                    <View style={{position: 'absolute', bottom: 0, left: 0, width: 10, height: 10, borderWidth: 2, borderColor: '#fff', borderRadius: 2}} />
-                    <View style={{position: 'absolute', bottom: 0, right: 0, width: 10, height: 10, borderWidth: 2, borderColor: '#fff', borderRadius: 2}} />
-                    <View style={{position: 'absolute', top: 8, left: 8, width: 6, height: 6, backgroundColor: '#fff', borderRadius: 1}} />
-                  </View>
-                </TouchableOpacity>
-              </View>
-            )}
-
-            <View style={styles.serverInfo}>
-              <Text style={styles.serverInfoLabel}>Chosen connection:</Text>
-              <Text style={styles.serverInfoText}>{getServerUrl()}</Text>
-            </View>
-
-            {serverType !== 'stealthcloud' && (
-              <TouchableOpacity
-                style={styles.btnPrimary}
-                onPress={async () => {
-                  await SecureStore.setItemAsync('server_type', serverType);
-                  if (serverType === 'remote') {
-                    await SecureStore.setItemAsync('remote_host', remoteHost);
-                  } else if (serverType === 'local') {
-                    await SecureStore.setItemAsync('local_host', localHost);
-                  }
-                  await logout();
-                  showDarkAlert('Saved', 'Server settings updated');
-                }}>
-                <Text style={styles.btnText}>Save Changes</Text>
-              </TouchableOpacity>
-            )}
-          </View>
-
-          {/* Auto Upload toggle hidden - feature kept for future background upload support
-          {serverType === 'stealthcloud' && (
-            <View style={styles.settingsCard}>
-              <Text style={styles.settingsTitle}>Auto Upload</Text>
-              <Text style={styles.settingsDescription}>
-                Backs up photos & videos on Wi-Fi when charging or battery over 50%. Keep app open — backgrounding or locking will pause.
-              </Text>
-
-              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                <Text style={{ color: '#FFFFFF', fontSize: scale(16), fontWeight: '600' }}>Auto Upload</Text>
-                <Switch
-                  value={autoUploadEnabled}
-                  onValueChange={(next) => {
-                    if (next) {
-                      // Keep the switch OFF until the user confirms.
-                      setAutoUploadEnabledSafe(false);
-                      showDarkAlert(
-                        'Enable Auto Upload?',
-                        'Requires Wi-Fi and either charging or >50% battery.\n\nKeep the app open — backgrounding or locking will pause the upload.',
-                        [
-                          { text: 'Cancel', style: 'cancel' },
-                          {
-                            text: 'Enable',
-                            onPress: async () => {
-                              await persistAutoUploadEnabled(true);
-                              // Kick scheduling immediately.
-                              try {
-                                scheduleNextAutoUploadNightKick();
-                                if (serverTypeRef.current === 'stealthcloud' && tokenRef.current) {
-                                  void maybeStartAutoUploadNightSession();
-                                }
-                              } catch (e) {}
-                            }
-                          }
-                        ]
-                      );
-                      return;
-                    }
-
-                    persistAutoUploadEnabled(false);
-
-                    // Cancel any running auto upload session
-                    autoUploadNightRunnerCancelRef.current = true;
-                    autoUploadNightRunnerActiveRef.current = false;
-
-                    setStatus('Auto backup disabled');
-
-                    try {
-                      scheduleNextAutoUploadNightKick();
-                    } catch (e) {}
-                  }}
-                />
-              </View>
-            </View>
-          )}
-          */}
-
-          <View style={[styles.settingsCard, glassModeEnabled && styles.glassCard]}>
-            <Text style={styles.settingsTitle}>Performance</Text>
-            <View style={{flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between'}}>
-              <Text style={styles.inputLabel}>{fastModeEnabled ? 'Fast Mode' : 'Slow Mode'}</Text>
-              <Switch
-                value={fastModeEnabled}
-                onValueChange={persistFastModeEnabled}
-                trackColor={{ false: '#CCCCCC', true: '#FF4444' }}
-                thumbColor='#FFFFFF'
-              />
-            </View>
-            <Text style={styles.settingsDescription}>
-              {fastModeEnabled
-                ? "Faster uploads but uses more CPU and battery.\nRecommended when speed is a priority.\nWatch device's temperature and battery charge."
-                : "Safer for device CPU and battery.\nUploads will be slower but this device stays cooler.\nWatch device's temperature and battery charge."}
-            </Text>
-            <Text style={styles.settingsDescription}>
-              Screen stays on while the app is active. All activity pauses when the app is backgrounded.
-            </Text>
-          </View>
-
-          <View style={[styles.settingsCard, glassModeEnabled && styles.glassCard]}>
-            <Text style={styles.settingsTitle}>Appearance</Text>
-            <View style={{flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between'}}>
-              <Text style={styles.inputLabel}>{glassModeEnabled ? 'Glass Mode' : 'Standard Mode'}</Text>
-              <Switch
-                value={glassModeEnabled}
-                onValueChange={persistGlassModeEnabled}
-                trackColor={{ false: '#CCCCCC', true: '#007AFF' }}
-                thumbColor='#FFFFFF'
-              />
-            </View>
-            <Text style={styles.settingsDescription}>
-              {glassModeEnabled
-                ? "Frosted glass effect on cards and overlays.\nModern glassmorphism design."
-                : "Standard solid background cards.\nClassic app appearance."}
-            </Text>
-          </View>
-
-          {serverType === 'stealthcloud' ? (
-            <View style={[styles.settingsCard, glassModeEnabled && styles.glassCard]}>
-              <Text style={styles.settingsTitle}>StealthCloud</Text>
-              <Text style={styles.settingsDescription}>Danger zone</Text>
-
-              <TouchableOpacity
-                style={[styles.btnDanger, loading && styles.disabledCard]}
-                disabled={loading}
-                onPress={purgeStealthCloudData}>
-                <Text style={styles.btnDangerText}>Delete all data on server</Text>
-              </TouchableOpacity>
-
-              <Text style={styles.inputHint}>
-                This removes All Data from the server for your account.
-              </Text>
-            </View>
-          ) : (
-            <>
-              <View style={[styles.settingsCard, glassModeEnabled && styles.glassCard]}>
-                <Text style={styles.settingsTitle}>Performance</Text>
-                <Text style={styles.settingsDescription}>
-                  Screen stays on while the app is active. All activity is paused when the app is backgrounded.
-                </Text>
-              </View>
-
-              <View style={[styles.settingsCard, glassModeEnabled && styles.glassCard]}>
-                <Text style={styles.settingsTitle}>Server</Text>
-                <Text style={styles.settingsDescription}>Danger zone</Text>
-
-                <TouchableOpacity
-                  style={[styles.btnDanger, loading && styles.disabledCard]}
-                  disabled={loading}
-                  onPress={purgeClassicServerData}>
-                  <Text style={styles.btnDangerText}>Delete All Data on server</Text>
-                </TouchableOpacity>
-
-                <Text style={styles.inputHint}>
-                  This removes All Data from the server for your account.
-                </Text>
-              </View>
-            </>
-          )}
-
-        </ScrollView>
+      <>
+        <SettingsScreen
+          onBack={() => setView('home')}
+          serverType={serverType}
+          setServerType={setServerType}
+          localHost={localHost}
+          setLocalHost={setLocalHost}
+          remoteHost={remoteHost}
+          setRemoteHost={setRemoteHost}
+          getServerUrl={getServerUrl}
+          fastModeEnabled={fastModeEnabled}
+          persistFastModeEnabled={persistFastModeEnabled}
+          glassModeEnabled={glassModeEnabled}
+          persistGlassModeEnabled={persistGlassModeEnabled}
+          loading={loading}
+          logout={logout}
+          purgeStealthCloudData={purgeStealthCloudData}
+          purgeClassicServerData={purgeClassicServerData}
+          showDarkAlert={showDarkAlert}
+          onQrScan={async () => {
+            if (!cameraPermission?.granted) {
+              const result = await requestCameraPermission();
+              if (!result.granted) {
+                showDarkAlert('Camera Permission', 'Camera access is needed to scan QR codes.');
+                return;
+              }
+            }
+            setQrScannerOpen(true);
+          }}
+          normalizeHostInput={normalizeHostInput}
+          SecureStore={SecureStore}
+        />
 
         {qrScannerOpen && (
           <View style={[styles.overlay, {backgroundColor: 'rgba(0,0,0,0.95)'}]}>
@@ -4249,7 +4005,7 @@ export default function App() {
             </View>
           </View>
         )}
-      </View>
+      </>
     );
   }
 
