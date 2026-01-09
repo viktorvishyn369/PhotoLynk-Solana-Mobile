@@ -418,6 +418,10 @@ const encryptAndUpload = async ({
 
       const nonce = makeChunkNonce(baseNonce16, chunkIndex);
       await throttleChunk(chunkIndex);
+      
+      // Yield before encryption to keep UI responsive
+      if (chunkIndex % 2 === 0) await new Promise(r => setTimeout(r, 0));
+      
       const boxed = nacl.secretbox(plaintext, nonce, fileKey);
       const chunkId = sha256.create().update(boxed).hex();
       
@@ -473,6 +477,10 @@ const encryptAndUpload = async ({
               const plaintext = naclUtil.decodeBase64(nextB64);
               const nonce = makeChunkNonce(baseNonce16, chunkIndex);
               await throttleChunk(chunkIndex);
+              
+              // Yield before encryption to keep UI responsive
+              if (chunkIndex % 2 === 0) await new Promise(r => setTimeout(r, 0));
+              
               const boxed = nacl.secretbox(plaintext, nonce, fileKey);
               const chunkId = sha256.create().update(boxed).hex();
               
@@ -756,6 +764,9 @@ export const stealthCloudBackupCore = async ({
     }
 
     try {
+      // Yield before heavy file operations
+      await yieldToUi();
+      
       // Get file info
       const fileInfo = await getAssetFileInfo(asset);
       const { assetInfo, filePath, tmpCopied, tmpUri, originalSize, filename, manifestId, isImage, creationTime } = fileInfo;
@@ -768,9 +779,15 @@ export const stealthCloudBackupCore = async ({
         continue;
       }
 
+      // Yield before hashing (CPU intensive)
+      await yieldToUi();
+      
       // Compute hashes
-      updateStatus(onStatus, `Hashing ${fileNum} of ${totalFiles}: ${filename || 'file'}...`);
+      updateStatus(onStatus, `Hashing ${fileNum} of ${totalFiles}: ${filename || 'file'}...`, true);
       const { fileHash, perceptualHash } = await computeHashes(filePath, asset, assetInfo, isImage);
+
+      // Yield after hashing
+      await yieldToUi();
 
       // Hash-based dedup check
       const hashCheck = checkDedupByHash(fileHash, perceptualHash, dedupSets, sessionHashes);
@@ -780,8 +797,11 @@ export const stealthCloudBackupCore = async ({
         continue;
       }
 
+      // Yield before upload (network + encryption intensive)
+      await yieldToUi();
+      
       // Upload
-      updateStatus(onStatus, `Uploading ${fileNum} of ${totalFiles}: ${filename || 'file'}...`);
+      updateStatus(onStatus, `Uploading ${fileNum} of ${totalFiles}: ${filename || 'file'}...`, true);
       const result = await encryptAndUpload({
         asset, assetInfo, filePath, tmpCopied, tmpUri, originalSize, filename, manifestId,
         fileHash, perceptualHash, masterKey, config, SERVER_URL, fastMode
@@ -918,6 +938,9 @@ export const stealthCloudBackupSelectedCore = async ({
     }
 
     try {
+      // Yield before heavy file operations
+      await yieldToUi();
+      
       const fileInfo = await getAssetFileInfo(asset);
       const { assetInfo, filePath, tmpCopied, tmpUri, originalSize, filename, manifestId, isImage, creationTime } = fileInfo;
 
@@ -928,8 +951,14 @@ export const stealthCloudBackupSelectedCore = async ({
         continue;
       }
 
-      updateStatus(onStatus, `Hashing ${fileNum} of ${totalFiles}: ${filename || 'file'}...`);
+      // Yield before hashing (CPU intensive)
+      await yieldToUi();
+      
+      updateStatus(onStatus, `Hashing ${fileNum} of ${totalFiles}: ${filename || 'file'}...`, true);
       const { fileHash, perceptualHash } = await computeHashes(filePath, asset, assetInfo, isImage);
+
+      // Yield after hashing
+      await yieldToUi();
 
       const hashCheck = checkDedupByHash(fileHash, perceptualHash, dedupSets, sessionHashes);
       if (hashCheck.skip) {
@@ -938,7 +967,10 @@ export const stealthCloudBackupSelectedCore = async ({
         continue;
       }
 
-      updateStatus(onStatus, `Uploading ${fileNum} of ${totalFiles}: ${filename || 'file'}...`);
+      // Yield before upload (network + encryption intensive)
+      await yieldToUi();
+      
+      updateStatus(onStatus, `Uploading ${fileNum} of ${totalFiles}: ${filename || 'file'}...`, true);
       const result = await encryptAndUpload({
         asset, assetInfo, filePath, tmpCopied, tmpUri, originalSize, filename, manifestId,
         fileHash, perceptualHash, masterKey, config, SERVER_URL, fastMode
