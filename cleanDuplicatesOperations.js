@@ -48,11 +48,10 @@ export const startSimilarShotsReviewCore = async ({
         onStatus('Collecting photos & videos...');
         onProgress(0);
       },
-      onProgress: (current, total, status) => {
-        // Map progress: 5% for collecting, 5-95% for analyzing, 95-100% for finding matches
-        const analyzeProgress = total > 0 ? (current / total) * 0.9 : 0;
-        onProgress(0.05 + analyzeProgress);
-        onStatus(`Analyzing ${current}/${total} items...`);
+      onProgress: (progress, total, message) => {
+        // progress is already 0-1 from duplicateScanner, message has the status text
+        onProgress(progress);
+        if (message) onStatus(message);
       },
       onFindingMatches: () => {
         onStatus('Finding matches...');
