@@ -604,9 +604,9 @@ export const chooseStealthCloudChunkBytes = ({ platform, originalSize, fastMode 
     if (size !== null && size >= 1024 * MB) return 1 * MB; // Large files: 1MB
     return 512 * 1024; // Normal files: 512KB
   }
-  // Default: TINY chunks to keep UI responsive (encryption blocks JS thread)
-  // 32KB encrypts in ~5-10ms, allowing smooth 60fps UI
-  return 32 * 1024; // 32KB - maximum UI responsiveness
+  // Default: moderate chunks - cooldowns between files give UI time to breathe
+  // 512KB encrypts in ~80-150ms but cooldowns compensate
+  return 512 * 1024; // 512KB - balanced speed and responsiveness with cooldowns
 };
 
 export const chooseStealthCloudMaxParallelChunkUploads = ({ platform, originalSize, fastMode = false }) => {
