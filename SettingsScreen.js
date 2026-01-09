@@ -196,7 +196,7 @@ const ToggleRow = ({
       <Switch
         value={value}
         onValueChange={onValueChange}
-        trackColor={{ false: '#3A3A3C', true: trackColor }}
+        trackColor={{ false: '#3A3A3C', true: '#3B82F6' }}
         thumbColor="#FFFFFF"
         ios_backgroundColor="#3A3A3C"
       />
@@ -279,10 +279,10 @@ export const SettingsScreen = ({
       {/* Header */}
       <View style={settingsStyles.header}>
         <TouchableOpacity onPress={onBack} style={settingsStyles.backButton}>
-          <Text style={settingsStyles.backButtonText}>← Back</Text>
+          <Text style={settingsStyles.backButtonText}>Back</Text>
         </TouchableOpacity>
         <Text style={settingsStyles.headerTitle}>Settings</Text>
-        <View style={settingsStyles.backButton} />
+        <View style={{ width: scaleSpacing(60) }} />
       </View>
 
       <ScrollView 
@@ -401,7 +401,7 @@ export const SettingsScreen = ({
               : 'Balanced speed and battery efficiency'}
             value={fastModeEnabled}
             onValueChange={persistFastModeEnabled}
-            trackColor="#F59E0B"
+            trackColor="#3B82F6"
             isFirst
             isLast
             glassModeEnabled={glassModeEnabled}
@@ -423,7 +423,7 @@ export const SettingsScreen = ({
               : 'Classic solid backgrounds'}
             value={glassModeEnabled}
             onValueChange={persistGlassModeEnabled}
-            trackColor="#EC4899"
+            trackColor="#3B82F6"
             isFirst
             isLast
             glassModeEnabled={glassModeEnabled}
@@ -465,24 +465,23 @@ const settingsStyles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: scaleSpacing(16),
-    paddingTop: Platform.OS === 'ios' ? scaleSpacing(60) : scaleSpacing(20),
+    paddingHorizontal: scaleSpacing(20),
+    paddingTop: Math.min(60, Dimensions.get('window').height * 0.04 + 20),
     paddingBottom: scaleSpacing(16),
-    backgroundColor: '#000000',
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#2A2A2A',
+    backgroundColor: '#0A0A0A',
   },
   headerTitle: {
-    fontSize: scale(18),
-    fontWeight: '600',
+    fontSize: scale(28),
+    fontWeight: 'bold',
     color: '#FFFFFF',
   },
   backButton: {
-    width: scale(70),
+    paddingHorizontal: scaleSpacing(16),
+    paddingVertical: scaleSpacing(8),
   },
   backButtonText: {
     fontSize: scale(16),
-    color: '#3B82F6',
+    color: '#03DAC6',
     fontWeight: '500',
   },
   scrollView: {
