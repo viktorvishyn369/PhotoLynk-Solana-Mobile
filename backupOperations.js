@@ -2,7 +2,7 @@
 // Eliminates slow "Analyzing server files" phase by using server-side metadata
 // All dedup checks happen instantly using pre-fetched hash sets
 
-import { Platform, AppState } from 'react-native';
+import { Platform, AppState, InteractionManager } from 'react-native';
 import * as MediaLibrary from 'expo-media-library';
 import * as FileSystem from 'expo-file-system';
 import axios from 'axios';
@@ -56,8 +56,8 @@ import {
 // CONSTANTS & CONFIGURATION
 // ============================================================================
 
-const YIELD_INTERVAL_MS = 16; // ~60fps
-const PROGRESS_THROTTLE_MS = 100; // Max 10 updates/sec
+const YIELD_INTERVAL_MS = 50; // Longer yield for smoother UI
+const PROGRESS_THROTTLE_MS = 150; // Slower updates to reduce UI load
 const PAGE_SIZE = 250; // Assets per page when scanning
 
 // Throttle settings
@@ -98,7 +98,17 @@ const updateStatus = (onStatus, text, force = false) => {
   }
 };
 
-const yieldToUi = () => new Promise(r => setTimeout(r, YIELD_INTERVAL_MS));
+// Yield to UI using InteractionManager for proper navigation responsiveness
+const yieldToUi = () => new Promise(resolve => {
+  // First let any pending interactions complete (navigation, animations)
+  InteractionManager.runAfterInteractions(() => {
+    // Then add a small delay to ensure UI thread has time
+    setTimeout(resolve, YIELD_INTERVAL_MS);
+  });
+});
+
+// Quick yield for inside tight loops (less overhead)
+const quickYield = () => new Promise(r => setTimeout(r, 0));
 
 // ============================================================================
 // SERVER COMMUNICATION
@@ -420,7 +430,7 @@ const encryptAndUpload = async ({
       await throttleChunk(chunkIndex);
       
       // Yield before encryption to keep UI responsive
-      if (chunkIndex % 2 === 0) await new Promise(r => setTimeout(r, 0));
+      if (chunkIndex % 2 === 0) await quickYield();
       
       const boxed = nacl.secretbox(plaintext, nonce, fileKey);
       const chunkId = sha256.create().update(boxed).hex();
@@ -479,7 +489,7 @@ const encryptAndUpload = async ({
               await throttleChunk(chunkIndex);
               
               // Yield before encryption to keep UI responsive
-              if (chunkIndex % 2 === 0) await new Promise(r => setTimeout(r, 0));
+              if (chunkIndex % 2 === 0) await quickYield();
               
               const boxed = nacl.secretbox(plaintext, nonce, fileKey);
               const chunkId = sha256.create().update(boxed).hex();
