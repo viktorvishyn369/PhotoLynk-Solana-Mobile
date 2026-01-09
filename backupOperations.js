@@ -56,8 +56,8 @@ import {
 // CONSTANTS & CONFIGURATION
 // ============================================================================
 
-const YIELD_INTERVAL_MS = 50; // Longer yield for smoother UI
-const PROGRESS_THROTTLE_MS = 150; // Slower updates to reduce UI load
+const YIELD_INTERVAL_MS = 0; // Immediate yield
+const PROGRESS_THROTTLE_MS = 200; // Slower updates to reduce UI load
 const PAGE_SIZE = 250; // Assets per page when scanning
 
 // Throttle settings
@@ -98,17 +98,31 @@ const updateStatus = (onStatus, text, force = false) => {
   }
 };
 
-// Yield to UI using InteractionManager for proper navigation responsiveness
+// Yield to UI - use setImmediate for fastest possible yield that still allows UI updates
 const yieldToUi = () => new Promise(resolve => {
-  // First let any pending interactions complete (navigation, animations)
+  // setImmediate runs after I/O but before timers - best for UI responsiveness
+  if (typeof setImmediate !== 'undefined') {
+    setImmediate(resolve);
+  } else {
+    setTimeout(resolve, 0);
+  }
+});
+
+// Longer yield for navigation - waits for animations
+const yieldForNavigation = () => new Promise(resolve => {
   InteractionManager.runAfterInteractions(() => {
-    // Then add a small delay to ensure UI thread has time
-    setTimeout(resolve, YIELD_INTERVAL_MS);
+    setTimeout(resolve, 16); // One frame
   });
 });
 
-// Quick yield for inside tight loops (less overhead)
-const quickYield = () => new Promise(r => setTimeout(r, 0));
+// Quick yield for inside tight loops
+const quickYield = () => new Promise(r => {
+  if (typeof setImmediate !== 'undefined') {
+    setImmediate(r);
+  } else {
+    setTimeout(r, 0);
+  }
+});
 
 // ============================================================================
 // SERVER COMMUNICATION
@@ -351,11 +365,15 @@ const computeHashes = async (filePath, asset, assetInfo, isImage) => {
   let perceptualHash = null;
 
   if (isImage) {
+    // Yield before each heavy operation
+    await quickYield();
     try {
       perceptualHash = await computePerceptualHash(filePath, asset, assetInfo);
     } catch (e) {
       console.warn('computePerceptualHash failed:', asset.id, e?.message);
     }
+    // Yield between operations
+    await quickYield();
     try {
       fileHash = await computeExactFileHash(filePath);
     } catch (e) {
@@ -363,6 +381,7 @@ const computeHashes = async (filePath, asset, assetInfo, isImage) => {
     }
   } else {
     // Video - use file hash only
+    await quickYield();
     try {
       fileHash = await computeExactFileHash(filePath);
     } catch (e) {
@@ -429,8 +448,8 @@ const encryptAndUpload = async ({
       const nonce = makeChunkNonce(baseNonce16, chunkIndex);
       await throttleChunk(chunkIndex);
       
-      // Yield before encryption to keep UI responsive
-      if (chunkIndex % 2 === 0) await quickYield();
+      // Yield before EVERY encryption to keep UI responsive
+      await quickYield();
       
       const boxed = nacl.secretbox(plaintext, nonce, fileKey);
       const chunkId = sha256.create().update(boxed).hex();
@@ -445,6 +464,9 @@ const encryptAndUpload = async ({
       chunkSizes.push(plaintext.length);
       chunkIndex++;
       position += plaintext.length;
+      
+      // Yield after each chunk to allow UI updates
+      await quickYield();
 
       if (plaintext.length < effectiveBytes) break;
     }
@@ -488,8 +510,8 @@ const encryptAndUpload = async ({
               const nonce = makeChunkNonce(baseNonce16, chunkIndex);
               await throttleChunk(chunkIndex);
               
-              // Yield before encryption to keep UI responsive
-              if (chunkIndex % 2 === 0) await quickYield();
+              // Yield before EVERY encryption to keep UI responsive
+              await quickYield();
               
               const boxed = nacl.secretbox(plaintext, nonce, fileKey);
               const chunkId = sha256.create().update(boxed).hex();
@@ -503,6 +525,9 @@ const encryptAndUpload = async ({
               chunkIds.push(chunkId);
               chunkSizes.push(plaintext.length);
               chunkIndex++;
+              
+              // Yield after each chunk to allow UI updates
+              await quickYield();
             }
           } catch (e) {
             reject(e);
