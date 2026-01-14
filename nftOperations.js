@@ -140,8 +140,9 @@ let cachedSolPrice = null;
 let solPriceLastFetch = 0;
 const SOL_PRICE_CACHE_MS = 60000;
 
-// Local NFT storage
+// Local NFT storage - using FileSystem instead of SecureStore to avoid 2KB limit
 const NFT_STORAGE_KEY = 'photolynk_nfts';
+const NFT_STORAGE_FILE = `${FileSystem.documentDirectory}photolynk_nfts.json`;
 
 // ============================================================================
 // METAPLEX TOKEN METADATA INSTRUCTION BUILDERS
@@ -1644,7 +1645,7 @@ export const saveNFTToStorage = async (nftData, serverUrl = null, authHeaders = 
     // Save locally first
     const existing = await getStoredNFTs();
     existing.push(nftData);
-    await SecureStore.setItemAsync(NFT_STORAGE_KEY, JSON.stringify(existing));
+    await saveNFTsToFile(existing);
     
     // Sync to server if available (for persistence across reinstalls)
     if (serverUrl && authHeaders) {
@@ -1667,16 +1668,41 @@ export const saveNFTToStorage = async (nftData, serverUrl = null, authHeaders = 
 };
 
 /**
- * Get all stored NFTs (local)
+ * Get all stored NFTs (local) - uses FileSystem for unlimited storage
  */
 export const getStoredNFTs = async () => {
   try {
-    const stored = await SecureStore.getItemAsync(NFT_STORAGE_KEY);
+    // Check if file exists
+    const fileInfo = await FileSystem.getInfoAsync(NFT_STORAGE_FILE);
+    if (!fileInfo.exists) {
+      // One-time migration from SecureStore (if any data exists there)
+      try {
+        const legacyData = await SecureStore.getItemAsync(NFT_STORAGE_KEY);
+        if (legacyData) {
+          const nfts = JSON.parse(legacyData);
+          await FileSystem.writeAsStringAsync(NFT_STORAGE_FILE, legacyData);
+          await SecureStore.deleteItemAsync(NFT_STORAGE_KEY);
+          console.log('[NFT] Migrated', nfts.length, 'NFTs from SecureStore to FileSystem');
+          return nfts;
+        }
+      } catch (migrationErr) {
+        // SecureStore may not have data, that's fine
+      }
+      return [];
+    }
+    const stored = await FileSystem.readAsStringAsync(NFT_STORAGE_FILE);
     return stored ? JSON.parse(stored) : [];
   } catch (e) {
     console.error('[NFT] Failed to get NFTs:', e);
     return [];
   }
+};
+
+/**
+ * Save NFTs array to FileSystem
+ */
+const saveNFTsToFile = async (nfts) => {
+  await FileSystem.writeAsStringAsync(NFT_STORAGE_FILE, JSON.stringify(nfts));
 };
 
 /**
@@ -1717,7 +1743,7 @@ export const syncNFTsFromServer = async (serverUrl, authHeaders) => {
     
     // Save merged list
     if (merged > 0) {
-      await SecureStore.setItemAsync(NFT_STORAGE_KEY, JSON.stringify(localNFTs));
+      await saveNFTsToFile(localNFTs);
       console.log(`[NFT] Merged ${merged} NFTs from server`);
     }
     
@@ -1761,7 +1787,7 @@ export const removeNFTFromStorage = async (mintAddress, serverUrl = null, authHe
   try {
     const existing = await getStoredNFTs();
     const filtered = existing.filter(nft => nft.mintAddress !== mintAddress);
-    await SecureStore.setItemAsync(NFT_STORAGE_KEY, JSON.stringify(filtered));
+    await saveNFTsToFile(filtered);
     
     // Sync removal to server
     if (serverUrl && authHeaders) {
@@ -1787,7 +1813,9 @@ export const removeNFTFromStorage = async (mintAddress, serverUrl = null, authHe
  */
 export const clearAllStoredNFTs = async () => {
   try {
-    await SecureStore.deleteItemAsync(NFT_STORAGE_KEY);
+    await FileSystem.deleteAsync(NFT_STORAGE_FILE, { idempotent: true });
+    // Also clear legacy SecureStore if it exists
+    try { await SecureStore.deleteItemAsync(NFT_STORAGE_KEY); } catch (e) {}
     console.log('[NFT] Cleared all stored NFTs');
     return { success: true };
   } catch (e) {
