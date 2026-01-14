@@ -1,0 +1,78 @@
+{
+  "app": { "name": "PhotoLynk", "tagline": "안전한 사진 백업" },
+  "auth": {
+    "login": "로그인", "register": "회원가입", "logout": "로그아웃", "email": "이메일", "password": "비밀번호",
+    "confirmPassword": "비밀번호 확인", "forgotPassword": "비밀번호를 잊으셨나요?", "resetPassword": "비밀번호 재설정",
+    "newPassword": "새 비밀번호", "verificationCode": "인증 코드", "sendCode": "코드 전송", "resendCode": "재전송",
+    "verify": "확인", "signingIn": "로그인 중...", "registering": "가입 중...", "unlockToSignIn": "잠금 해제하여 로그인",
+    "welcomeBack": "다시 오셨군요!", "createAccount": "계정 만들기", "alreadyHaveAccount": "이미 계정이 있으신가요?",
+    "dontHaveAccount": "계정이 없으신가요?", "passwordMismatch": "비밀번호가 일치하지 않습니다", "invalidEmail": "유효한 이메일을 입력하세요",
+    "passwordTooShort": "비밀번호는 6자 이상이어야 합니다", "loginFailed": "로그인 실패", "registerFailed": "가입 실패",
+    "resetSuccess": "비밀번호가 재설정되었습니다", "codeSent": "인증 코드가 이메일로 전송되었습니다", "invalidCode": "유효하지 않거나 만료된 코드",
+    "countryVerification": "새 위치 감지됨", "countryVerificationMessage": "{{country}}에서 로그인이 감지되었습니다. 이메일로 전송된 인증 코드를 입력하세요.",
+    "emailVerificationRequired": "로그인 전에 이메일을 확인하세요"
+  },
+  "home": {
+    "backup": "백업", "restore": "복원", "settings": "설정", "photos": "사진", "videos": "동영상", "all": "전체",
+    "selected": "선택됨", "selectAll": "전체 선택", "deselectAll": "선택 해제", "startBackup": "백업 시작",
+    "stopBackup": "백업 중지", "backupComplete": "백업 완료", "backupInProgress": "백업 중",
+    "backupPaused": "백업 일시 중지", "noPhotosSelected": "선택된 사진 없음",
+    "uploadingPhoto": "사진 업로드 중 {{current}}/{{total}}", "processingPhoto": "사진 처리 중 {{current}}/{{total}}",
+    "backupFailed": "백업 실패", "retrying": "재시도 중...", "skipped": "건너뜀 (이미 백업됨)",
+    "storage": "저장 공간", "used": "사용됨", "available": "사용 가능", "unlimited": "무제한"
+  },
+  "restore": {
+    "title": "사진 복원", "selectPhotos": "복원할 사진 선택", "restoreSelected": "선택 항목 복원", "restoreAll": "전체 복원",
+    "restoring": "복원 중...", "restoreComplete": "복원 완료", "restoreFailed": "복원 실패",
+    "downloadingPhoto": "사진 다운로드 중 {{current}}/{{total}}", "noBackups": "백업을 찾을 수 없음", "lastBackup": "마지막 백업: {{date}}"
+  },
+  "settings": {
+    "title": "설정", "account": "계정", "server": "서버", "serverType": "서버 유형", "local": "로컬 서버",
+    "remote": "원격 서버", "stealthcloud": "StealthCloud", "serverAddress": "서버 주소", "testConnection": "연결 테스트",
+    "connectionSuccess": "연결 성공", "connectionFailed": "연결 실패", "language": "언어", "changeLanguage": "언어 변경",
+    "switchToEnglish": "영어로 전환", "theme": "테마", "darkMode": "다크 모드", "lightMode": "라이트 모드",
+    "autoBackup": "자동 백업", "wifiOnly": "Wi-Fi만", "notifications": "알림", "about": "정보", "version": "버전",
+    "privacyPolicy": "개인정보 처리방침", "termsOfService": "서비스 약관", "support": "지원", "deleteAccount": "계정 삭제",
+    "deleteAccountWarning": "계정과 모든 데이터가 영구적으로 삭제됩니다. 이 작업은 취소할 수 없습니다.",
+    "confirmDelete": "확인을 위해 삭제 입력", "biometricLock": "생체 인식 잠금", "faceId": "Face ID", "touchId": "Touch ID", "fingerprint": "지문"
+  },
+  "subscription": {
+    "title": "구독", "currentPlan": "현재 플랜", "freeTier": "무료", "upgradePlan": "플랜 업그레이드",
+    "managePlan": "구독 관리", "storage100": "100 GB", "storage200": "200 GB", "storage400": "400 GB", "storage1000": "1 TB",
+    "perMonth": "/월", "perYear": "/년", "freeTrial": "7일 무료 체험", "subscribe": "구독", "cancel": "구독 취소",
+    "expired": "구독 만료", "renew": "구독 갱신", "trialEnds": "체험 종료일: {{date}}"
+  },
+  "nft": {
+    "title": "NFT 갤러리", "mint": "NFT 생성", "minting": "생성 중...", "mintSuccess": "NFT가 성공적으로 생성되었습니다!",
+    "mintFailed": "NFT 생성 실패", "selectPhoto": "사진 선택", "nftName": "NFT 이름", "nftDescription": "설명", "collection": "컬렉션",
+    "noNfts": "아직 NFT가 없습니다", "viewOnSolana": "Solana에서 보기", "share": "공유"
+  },
+  "duplicates": {
+    "title": "중복 정리", "scanning": "중복 검색 중...", "found": "{{count}}개의 중복 발견", "noDuplicates": "중복 없음",
+    "review": "중복 검토", "delete": "선택 삭제", "keep": "유지", "deleteAll": "모든 중복 삭제", "spaceRecovered": "복구된 공간: {{size}}"
+  },
+  "common": {
+    "ok": "확인", "cancel": "취소", "save": "저장", "delete": "삭제", "edit": "편집", "done": "완료", "next": "다음", "back": "뒤로",
+    "close": "닫기", "retry": "재시도", "loading": "로딩 중...", "error": "오류", "success": "성공", "warning": "경고",
+    "confirm": "확인", "yes": "예", "no": "아니오", "search": "검색", "refresh": "새로고침", "share": "공유", "copy": "복사", "paste": "붙여넣기",
+    "selectAll": "전체 선택", "none": "없음", "all": "전체", "more": "더 보기", "less": "접기", "show": "표시", "hide": "숨기기",
+    "enable": "활성화", "disable": "비활성화", "on": "켜기", "off": "끄기", "required": "필수", "optional": "선택", "comingSoon": "곧 출시"
+  },
+  "errors": {
+    "networkError": "네트워크 오류. 연결을 확인하세요.", "serverError": "서버 오류. 나중에 다시 시도하세요.",
+    "unknownError": "알 수 없는 오류가 발생했습니다", "sessionExpired": "세션이 만료되었습니다. 다시 로그인하세요.",
+    "permissionDenied": "권한이 거부되었습니다", "storagePermission": "사진 백업에는 저장소 권한이 필요합니다",
+    "cameraPermission": "카메라 권한이 필요합니다", "notificationPermission": "백업 알림에는 알림 권한이 필요합니다",
+    "noInternet": "인터넷 연결 없음", "timeout": "요청 시간 초과", "tooManyAttempts": "시도 횟수가 너무 많습니다. 나중에 다시 시도하세요."
+  },
+  "permissions": {
+    "title": "권한 필요", "photos": "사진 접근", "photosDescription": "사진 백업 및 복원에 필요합니다",
+    "camera": "카메라 접근", "cameraDescription": "NFT용 사진 촬영에 필요합니다", "notifications": "알림",
+    "notificationsDescription": "백업 완료 시 알림 받기", "grant": "권한 부여", "openSettings": "설정 열기"
+  },
+  "onboarding": {
+    "welcome": "PhotoLynk에 오신 것을 환영합니다", "slide1Title": "안전한 백업", "slide1Description": "사진이 암호화되어 안전하게 저장됩니다",
+    "slide2Title": "쉬운 복원", "slide2Description": "언제 어디서나 사진 복원", "slide3Title": "NFT 갤러리",
+    "slide3Description": "최고의 사진을 NFT로 변환", "getStarted": "시작하기", "skip": "건너뛰기"
+  }
+}

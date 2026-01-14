@@ -1,0 +1,78 @@
+{
+  "app": { "name": "PhotoLynk", "tagline": "Bezpieczna kopia zapasowa zdjęć" },
+  "auth": {
+    "login": "Zaloguj", "register": "Zarejestruj", "logout": "Wyloguj", "email": "E-mail", "password": "Hasło",
+    "confirmPassword": "Potwierdź hasło", "forgotPassword": "Zapomniałeś hasła?", "resetPassword": "Zresetuj hasło",
+    "newPassword": "Nowe hasło", "verificationCode": "Kod weryfikacyjny", "sendCode": "Wyślij kod", "resendCode": "Wyślij ponownie",
+    "verify": "Zweryfikuj", "signingIn": "Logowanie...", "registering": "Rejestracja...", "unlockToSignIn": "Odblokuj, aby się zalogować",
+    "welcomeBack": "Witaj ponownie!", "createAccount": "Utwórz konto", "alreadyHaveAccount": "Masz już konto?",
+    "dontHaveAccount": "Nie masz konta?", "passwordMismatch": "Hasła nie pasują", "invalidEmail": "Wprowadź prawidłowy e-mail",
+    "passwordTooShort": "Hasło musi mieć co najmniej 6 znaków", "loginFailed": "Logowanie nie powiodło się", "registerFailed": "Rejestracja nie powiodła się",
+    "resetSuccess": "Hasło zostało zresetowane", "codeSent": "Kod weryfikacyjny wysłany na e-mail", "invalidCode": "Nieprawidłowy lub wygasły kod",
+    "countryVerification": "Wykryto nową lokalizację", "countryVerificationMessage": "Wykryliśmy logowanie z {{country}}. Wprowadź kod weryfikacyjny wysłany na e-mail.",
+    "emailVerificationRequired": "Zweryfikuj e-mail przed zalogowaniem"
+  },
+  "home": {
+    "backup": "Kopia zapasowa", "restore": "Przywróć", "settings": "Ustawienia", "photos": "Zdjęcia", "videos": "Filmy", "all": "Wszystko",
+    "selected": "Wybrane", "selectAll": "Zaznacz wszystko", "deselectAll": "Odznacz wszystko", "startBackup": "Rozpocznij kopię",
+    "stopBackup": "Zatrzymaj kopię", "backupComplete": "Kopia zakończona", "backupInProgress": "Tworzenie kopii",
+    "backupPaused": "Kopia wstrzymana", "noPhotosSelected": "Nie wybrano zdjęć",
+    "uploadingPhoto": "Przesyłanie zdjęcia {{current}}/{{total}}", "processingPhoto": "Przetwarzanie zdjęcia {{current}}/{{total}}",
+    "backupFailed": "Kopia nie powiodła się", "retrying": "Ponowna próba...", "skipped": "Pominięto (już skopiowane)",
+    "storage": "Pamięć", "used": "Użyte", "available": "Dostępne", "unlimited": "Bez limitu"
+  },
+  "restore": {
+    "title": "Przywróć zdjęcia", "selectPhotos": "Wybierz zdjęcia do przywrócenia", "restoreSelected": "Przywróć wybrane", "restoreAll": "Przywróć wszystko",
+    "restoring": "Przywracanie...", "restoreComplete": "Przywracanie zakończone", "restoreFailed": "Przywracanie nie powiodło się",
+    "downloadingPhoto": "Pobieranie zdjęcia {{current}}/{{total}}", "noBackups": "Brak kopii zapasowych", "lastBackup": "Ostatnia kopia: {{date}}"
+  },
+  "settings": {
+    "title": "Ustawienia", "account": "Konto", "server": "Serwer", "serverType": "Typ serwera", "local": "Serwer lokalny",
+    "remote": "Serwer zdalny", "stealthcloud": "StealthCloud", "serverAddress": "Adres serwera", "testConnection": "Testuj połączenie",
+    "connectionSuccess": "Połączenie udane", "connectionFailed": "Połączenie nieudane", "language": "Język", "changeLanguage": "Zmień język",
+    "switchToEnglish": "Przełącz na angielski", "theme": "Motyw", "darkMode": "Tryb ciemny", "lightMode": "Tryb jasny",
+    "autoBackup": "Automatyczna kopia", "wifiOnly": "Tylko Wi-Fi", "notifications": "Powiadomienia", "about": "O aplikacji", "version": "Wersja",
+    "privacyPolicy": "Polityka prywatności", "termsOfService": "Warunki użytkowania", "support": "Wsparcie", "deleteAccount": "Usuń konto",
+    "deleteAccountWarning": "To trwale usunie Twoje konto i wszystkie dane. Tej operacji nie można cofnąć.",
+    "confirmDelete": "Wpisz USUŃ, aby potwierdzić", "biometricLock": "Blokada biometryczna", "faceId": "Face ID", "touchId": "Touch ID", "fingerprint": "Odcisk palca"
+  },
+  "subscription": {
+    "title": "Subskrypcja", "currentPlan": "Aktualny plan", "freeTier": "Bezpłatny", "upgradePlan": "Ulepsz plan",
+    "managePlan": "Zarządzaj subskrypcją", "storage100": "100 GB", "storage200": "200 GB", "storage400": "400 GB", "storage1000": "1 TB",
+    "perMonth": "/mies.", "perYear": "/rok", "freeTrial": "7 dni za darmo", "subscribe": "Subskrybuj", "cancel": "Anuluj subskrypcję",
+    "expired": "Subskrypcja wygasła", "renew": "Odnów subskrypcję", "trialEnds": "Okres próbny kończy się: {{date}}"
+  },
+  "nft": {
+    "title": "Galeria NFT", "mint": "Utwórz NFT", "minting": "Tworzenie...", "mintSuccess": "NFT utworzone pomyślnie!",
+    "mintFailed": "Tworzenie NFT nie powiodło się", "selectPhoto": "Wybierz zdjęcie", "nftName": "Nazwa NFT", "nftDescription": "Opis", "collection": "Kolekcja",
+    "noNfts": "Brak NFT", "viewOnSolana": "Zobacz na Solana", "share": "Udostępnij"
+  },
+  "duplicates": {
+    "title": "Usuń duplikaty", "scanning": "Szukanie duplikatów...", "found": "Znaleziono {{count}} duplikatów", "noDuplicates": "Brak duplikatów",
+    "review": "Przejrzyj duplikaty", "delete": "Usuń wybrane", "keep": "Zachowaj", "deleteAll": "Usuń wszystkie duplikaty", "spaceRecovered": "Odzyskane miejsce: {{size}}"
+  },
+  "common": {
+    "ok": "OK", "cancel": "Anuluj", "save": "Zapisz", "delete": "Usuń", "edit": "Edytuj", "done": "Gotowe", "next": "Dalej", "back": "Wstecz",
+    "close": "Zamknij", "retry": "Ponów", "loading": "Ładowanie...", "error": "Błąd", "success": "Sukces", "warning": "Ostrzeżenie",
+    "confirm": "Potwierdź", "yes": "Tak", "no": "Nie", "search": "Szukaj", "refresh": "Odśwież", "share": "Udostępnij", "copy": "Kopiuj", "paste": "Wklej",
+    "selectAll": "Zaznacz wszystko", "none": "Brak", "all": "Wszystko", "more": "Więcej", "less": "Mniej", "show": "Pokaż", "hide": "Ukryj",
+    "enable": "Włącz", "disable": "Wyłącz", "on": "Wł.", "off": "Wył.", "required": "Wymagane", "optional": "Opcjonalne", "comingSoon": "Wkrótce"
+  },
+  "errors": {
+    "networkError": "Błąd sieci. Sprawdź połączenie.", "serverError": "Błąd serwera. Spróbuj później.",
+    "unknownError": "Wystąpił nieznany błąd", "sessionExpired": "Sesja wygasła. Zaloguj się ponownie.",
+    "permissionDenied": "Brak uprawnień", "storagePermission": "Wymagane uprawnienia do pamięci",
+    "cameraPermission": "Wymagane uprawnienia do kamery", "notificationPermission": "Wymagane uprawnienia do powiadomień",
+    "noInternet": "Brak połączenia z internetem", "timeout": "Przekroczono limit czasu", "tooManyAttempts": "Zbyt wiele prób. Spróbuj później."
+  },
+  "permissions": {
+    "title": "Wymagane uprawnienia", "photos": "Dostęp do zdjęć", "photosDescription": "Wymagane do tworzenia kopii i przywracania zdjęć",
+    "camera": "Dostęp do kamery", "cameraDescription": "Wymagane do robienia zdjęć NFT", "notifications": "Powiadomienia",
+    "notificationsDescription": "Powiadomienia o zakończeniu kopii", "grant": "Przyznaj uprawnienia", "openSettings": "Otwórz ustawienia"
+  },
+  "onboarding": {
+    "welcome": "Witaj w PhotoLynk", "slide1Title": "Bezpieczna kopia", "slide1Description": "Twoje zdjęcia są szyfrowane i bezpiecznie przechowywane",
+    "slide2Title": "Łatwe przywracanie", "slide2Description": "Przywróć zdjęcia w dowolnym czasie i miejscu", "slide3Title": "Galeria NFT",
+    "slide3Description": "Zamień najlepsze zdjęcia w NFT", "getStarted": "Rozpocznij", "skip": "Pomiń"
+  }
+}

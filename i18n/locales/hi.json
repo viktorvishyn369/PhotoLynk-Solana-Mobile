@@ -1,0 +1,78 @@
+{
+  "app": { "name": "PhotoLynk", "tagline": "सुरक्षित फोटो बैकअप" },
+  "auth": {
+    "login": "लॉगिन", "register": "रजिस्टर", "logout": "लॉगआउट", "email": "ईमेल", "password": "पासवर्ड",
+    "confirmPassword": "पासवर्ड की पुष्टि करें", "forgotPassword": "पासवर्ड भूल गए?", "resetPassword": "पासवर्ड रीसेट करें",
+    "newPassword": "नया पासवर्ड", "verificationCode": "सत्यापन कोड", "sendCode": "कोड भेजें", "resendCode": "पुनः भेजें",
+    "verify": "सत्यापित करें", "signingIn": "लॉगिन हो रहा है...", "registering": "रजिस्टर हो रहा है...", "unlockToSignIn": "लॉगिन के लिए अनलॉक करें",
+    "welcomeBack": "वापसी पर स्वागत है!", "createAccount": "खाता बनाएं", "alreadyHaveAccount": "पहले से खाता है?",
+    "dontHaveAccount": "खाता नहीं है?", "passwordMismatch": "पासवर्ड मेल नहीं खाते", "invalidEmail": "कृपया वैध ईमेल दर्ज करें",
+    "passwordTooShort": "पासवर्ड कम से कम 6 अक्षर का होना चाहिए", "loginFailed": "लॉगिन विफल", "registerFailed": "रजिस्ट्रेशन विफल",
+    "resetSuccess": "पासवर्ड सफलतापूर्वक रीसेट हो गया", "codeSent": "सत्यापन कोड आपके ईमेल पर भेजा गया", "invalidCode": "अमान्य या समाप्त कोड",
+    "countryVerification": "नया स्थान पता चला", "countryVerificationMessage": "हमने {{country}} से लॉगिन का पता लगाया। कृपया अपने ईमेल पर भेजा गया सत्यापन कोड दर्ज करें।",
+    "emailVerificationRequired": "लॉगिन से पहले कृपया अपना ईमेल सत्यापित करें"
+  },
+  "home": {
+    "backup": "बैकअप", "restore": "रिस्टोर", "settings": "सेटिंग्स", "photos": "फोटो", "videos": "वीडियो", "all": "सभी",
+    "selected": "चयनित", "selectAll": "सभी चुनें", "deselectAll": "चयन हटाएं", "startBackup": "बैकअप शुरू करें",
+    "stopBackup": "बैकअप रोकें", "backupComplete": "बैकअप पूर्ण", "backupInProgress": "बैकअप जारी",
+    "backupPaused": "बैकअप रुका हुआ", "noPhotosSelected": "कोई फोटो चयनित नहीं",
+    "uploadingPhoto": "फोटो अपलोड हो रहा है {{current}}/{{total}}", "processingPhoto": "फोटो प्रोसेस हो रहा है {{current}}/{{total}}",
+    "backupFailed": "बैकअप विफल", "retrying": "पुनः प्रयास...", "skipped": "छोड़ा गया (पहले से बैकअप)",
+    "storage": "स्टोरेज", "used": "उपयोग किया", "available": "उपलब्ध", "unlimited": "असीमित"
+  },
+  "restore": {
+    "title": "फोटो रिस्टोर करें", "selectPhotos": "रिस्टोर के लिए फोटो चुनें", "restoreSelected": "चयनित रिस्टोर करें", "restoreAll": "सभी रिस्टोर करें",
+    "restoring": "रिस्टोर हो रहा है...", "restoreComplete": "रिस्टोर पूर्ण", "restoreFailed": "रिस्टोर विफल",
+    "downloadingPhoto": "फोटो डाउनलोड हो रहा है {{current}}/{{total}}", "noBackups": "कोई बैकअप नहीं मिला", "lastBackup": "अंतिम बैकअप: {{date}}"
+  },
+  "settings": {
+    "title": "सेटिंग्स", "account": "खाता", "server": "सर्वर", "serverType": "सर्वर प्रकार", "local": "लोकल सर्वर",
+    "remote": "रिमोट सर्वर", "stealthcloud": "StealthCloud", "serverAddress": "सर्वर पता", "testConnection": "कनेक्शन टेस्ट",
+    "connectionSuccess": "कनेक्शन सफल", "connectionFailed": "कनेक्शन विफल", "language": "भाषा", "changeLanguage": "भाषा बदलें",
+    "switchToEnglish": "अंग्रेजी में बदलें", "theme": "थीम", "darkMode": "डार्क मोड", "lightMode": "लाइट मोड",
+    "autoBackup": "ऑटो बैकअप", "wifiOnly": "केवल Wi-Fi", "notifications": "सूचनाएं", "about": "के बारे में", "version": "संस्करण",
+    "privacyPolicy": "गोपनीयता नीति", "termsOfService": "सेवा की शर्तें", "support": "सहायता", "deleteAccount": "खाता हटाएं",
+    "deleteAccountWarning": "यह आपके खाते और सभी डेटा को स्थायी रूप से हटा देगा। यह क्रिया पूर्ववत नहीं की जा सकती।",
+    "confirmDelete": "पुष्टि के लिए हटाएं टाइप करें", "biometricLock": "बायोमेट्रिक लॉक", "faceId": "Face ID", "touchId": "Touch ID", "fingerprint": "फिंगरप्रिंट"
+  },
+  "subscription": {
+    "title": "सब्सक्रिप्शन", "currentPlan": "वर्तमान प्लान", "freeTier": "मुफ्त", "upgradePlan": "प्लान अपग्रेड करें",
+    "managePlan": "सब्सक्रिप्शन प्रबंधित करें", "storage100": "100 GB", "storage200": "200 GB", "storage400": "400 GB", "storage1000": "1 TB",
+    "perMonth": "/महीना", "perYear": "/साल", "freeTrial": "7 दिन मुफ्त ट्रायल", "subscribe": "सब्सक्राइब करें", "cancel": "सब्सक्रिप्शन रद्द करें",
+    "expired": "सब्सक्रिप्शन समाप्त", "renew": "सब्सक्रिप्शन नवीनीकृत करें", "trialEnds": "ट्रायल समाप्ति: {{date}}"
+  },
+  "nft": {
+    "title": "NFT गैलरी", "mint": "NFT बनाएं", "minting": "बन रहा है...", "mintSuccess": "NFT सफलतापूर्वक बना!",
+    "mintFailed": "NFT बनाना विफल", "selectPhoto": "फोटो चुनें", "nftName": "NFT नाम", "nftDescription": "विवरण", "collection": "संग्रह",
+    "noNfts": "अभी कोई NFT नहीं", "viewOnSolana": "Solana पर देखें", "share": "शेयर करें"
+  },
+  "duplicates": {
+    "title": "डुप्लीकेट साफ करें", "scanning": "डुप्लीकेट खोज रहे हैं...", "found": "{{count}} डुप्लीकेट मिले", "noDuplicates": "कोई डुप्लीकेट नहीं",
+    "review": "डुप्लीकेट देखें", "delete": "चयनित हटाएं", "keep": "रखें", "deleteAll": "सभी डुप्लीकेट हटाएं", "spaceRecovered": "पुनर्प्राप्त स्थान: {{size}}"
+  },
+  "common": {
+    "ok": "ठीक है", "cancel": "रद्द करें", "save": "सहेजें", "delete": "हटाएं", "edit": "संपादित करें", "done": "हो गया", "next": "अगला", "back": "वापस",
+    "close": "बंद करें", "retry": "पुनः प्रयास", "loading": "लोड हो रहा है...", "error": "त्रुटि", "success": "सफल", "warning": "चेतावनी",
+    "confirm": "पुष्टि करें", "yes": "हां", "no": "नहीं", "search": "खोजें", "refresh": "रिफ्रेश", "share": "शेयर", "copy": "कॉपी", "paste": "पेस्ट",
+    "selectAll": "सभी चुनें", "none": "कोई नहीं", "all": "सभी", "more": "और", "less": "कम", "show": "दिखाएं", "hide": "छुपाएं",
+    "enable": "सक्षम करें", "disable": "अक्षम करें", "on": "चालू", "off": "बंद", "required": "आवश्यक", "optional": "वैकल्पिक", "comingSoon": "जल्द आ रहा है"
+  },
+  "errors": {
+    "networkError": "नेटवर्क त्रुटि। कृपया अपना कनेक्शन जांचें।", "serverError": "सर्वर त्रुटि। कृपया बाद में पुनः प्रयास करें।",
+    "unknownError": "एक अज्ञात त्रुटि हुई", "sessionExpired": "सत्र समाप्त। कृपया पुनः लॉगिन करें।",
+    "permissionDenied": "अनुमति अस्वीकृत", "storagePermission": "फोटो बैकअप के लिए स्टोरेज अनुमति आवश्यक",
+    "cameraPermission": "कैमरा अनुमति आवश्यक", "notificationPermission": "बैकअप अलर्ट के लिए सूचना अनुमति आवश्यक",
+    "noInternet": "इंटरनेट कनेक्शन नहीं", "timeout": "अनुरोध समय समाप्त", "tooManyAttempts": "बहुत अधिक प्रयास। कृपया बाद में पुनः प्रयास करें।"
+  },
+  "permissions": {
+    "title": "अनुमतियां आवश्यक", "photos": "फोटो एक्सेस", "photosDescription": "फोटो बैकअप और रिस्टोर के लिए आवश्यक",
+    "camera": "कैमरा एक्सेस", "cameraDescription": "NFT के लिए फोटो लेने हेतु आवश्यक", "notifications": "सूचनाएं",
+    "notificationsDescription": "बैकअप पूर्ण होने पर सूचित करें", "grant": "अनुमति दें", "openSettings": "सेटिंग्स खोलें"
+  },
+  "onboarding": {
+    "welcome": "PhotoLynk में आपका स्वागत है", "slide1Title": "सुरक्षित बैकअप", "slide1Description": "आपकी फोटो एन्क्रिप्टेड और सुरक्षित रूप से संग्रहीत हैं",
+    "slide2Title": "आसान रिस्टोर", "slide2Description": "कभी भी, कहीं भी अपनी फोटो रिस्टोर करें", "slide3Title": "NFT गैलरी",
+    "slide3Description": "अपनी सर्वश्रेष्ठ फोटो को NFT में बदलें", "getStarted": "शुरू करें", "skip": "छोड़ें"
+  }
+}

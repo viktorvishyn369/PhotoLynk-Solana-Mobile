@@ -1,0 +1,78 @@
+{
+  "app": { "name": "PhotoLynk", "tagline": "Güvenli Fotoğraf Yedekleme" },
+  "auth": {
+    "login": "Giriş Yap", "register": "Kayıt Ol", "logout": "Çıkış Yap", "email": "E-posta", "password": "Şifre",
+    "confirmPassword": "Şifreyi Onayla", "forgotPassword": "Şifremi Unuttum?", "resetPassword": "Şifreyi Sıfırla",
+    "newPassword": "Yeni Şifre", "verificationCode": "Doğrulama Kodu", "sendCode": "Kod Gönder", "resendCode": "Tekrar Gönder",
+    "verify": "Doğrula", "signingIn": "Giriş yapılıyor...", "registering": "Kayıt olunuyor...", "unlockToSignIn": "Giriş için kilidi aç",
+    "welcomeBack": "Tekrar hoş geldiniz!", "createAccount": "Hesap Oluştur", "alreadyHaveAccount": "Zaten hesabınız var mı?",
+    "dontHaveAccount": "Hesabınız yok mu?", "passwordMismatch": "Şifreler eşleşmiyor", "invalidEmail": "Geçerli bir e-posta girin",
+    "passwordTooShort": "Şifre en az 6 karakter olmalı", "loginFailed": "Giriş başarısız", "registerFailed": "Kayıt başarısız",
+    "resetSuccess": "Şifre başarıyla sıfırlandı", "codeSent": "Doğrulama kodu e-postanıza gönderildi", "invalidCode": "Geçersiz veya süresi dolmuş kod",
+    "countryVerification": "Yeni Konum Algılandı", "countryVerificationMessage": "{{country}} konumundan giriş algılandı. Lütfen e-postanıza gönderilen doğrulama kodunu girin.",
+    "emailVerificationRequired": "Giriş yapmadan önce e-postanızı doğrulayın"
+  },
+  "home": {
+    "backup": "Yedekle", "restore": "Geri Yükle", "settings": "Ayarlar", "photos": "Fotoğraflar", "videos": "Videolar", "all": "Tümü",
+    "selected": "Seçili", "selectAll": "Tümünü Seç", "deselectAll": "Seçimi Kaldır", "startBackup": "Yedeklemeyi Başlat",
+    "stopBackup": "Yedeklemeyi Durdur", "backupComplete": "Yedekleme Tamamlandı", "backupInProgress": "Yedekleniyor",
+    "backupPaused": "Yedekleme Duraklatıldı", "noPhotosSelected": "Fotoğraf seçilmedi",
+    "uploadingPhoto": "Fotoğraf yükleniyor {{current}}/{{total}}", "processingPhoto": "Fotoğraf işleniyor {{current}}/{{total}}",
+    "backupFailed": "Yedekleme başarısız", "retrying": "Yeniden deneniyor...", "skipped": "Atlandı (zaten yedekli)",
+    "storage": "Depolama", "used": "Kullanılan", "available": "Kullanılabilir", "unlimited": "Sınırsız"
+  },
+  "restore": {
+    "title": "Fotoğrafları Geri Yükle", "selectPhotos": "Geri yüklenecek fotoğrafları seçin", "restoreSelected": "Seçilenleri Geri Yükle", "restoreAll": "Tümünü Geri Yükle",
+    "restoring": "Geri yükleniyor...", "restoreComplete": "Geri Yükleme Tamamlandı", "restoreFailed": "Geri yükleme başarısız",
+    "downloadingPhoto": "Fotoğraf indiriliyor {{current}}/{{total}}", "noBackups": "Yedek bulunamadı", "lastBackup": "Son yedekleme: {{date}}"
+  },
+  "settings": {
+    "title": "Ayarlar", "account": "Hesap", "server": "Sunucu", "serverType": "Sunucu Türü", "local": "Yerel Sunucu",
+    "remote": "Uzak Sunucu", "stealthcloud": "StealthCloud", "serverAddress": "Sunucu Adresi", "testConnection": "Bağlantıyı Test Et",
+    "connectionSuccess": "Bağlantı başarılı", "connectionFailed": "Bağlantı başarısız", "language": "Dil", "changeLanguage": "Dili Değiştir",
+    "switchToEnglish": "İngilizceye Geç", "theme": "Tema", "darkMode": "Karanlık Mod", "lightMode": "Aydınlık Mod",
+    "autoBackup": "Otomatik Yedekleme", "wifiOnly": "Sadece Wi-Fi", "notifications": "Bildirimler", "about": "Hakkında", "version": "Sürüm",
+    "privacyPolicy": "Gizlilik Politikası", "termsOfService": "Kullanım Şartları", "support": "Destek", "deleteAccount": "Hesabı Sil",
+    "deleteAccountWarning": "Bu, hesabınızı ve tüm verilerinizi kalıcı olarak silecektir. Bu işlem geri alınamaz.",
+    "confirmDelete": "Onaylamak için SİL yazın", "biometricLock": "Biyometrik Kilit", "faceId": "Face ID", "touchId": "Touch ID", "fingerprint": "Parmak İzi"
+  },
+  "subscription": {
+    "title": "Abonelik", "currentPlan": "Mevcut Plan", "freeTier": "Ücretsiz", "upgradePlan": "Planı Yükselt",
+    "managePlan": "Aboneliği Yönet", "storage100": "100 GB", "storage200": "200 GB", "storage400": "400 GB", "storage1000": "1 TB",
+    "perMonth": "/ay", "perYear": "/yıl", "freeTrial": "7 gün ücretsiz deneme", "subscribe": "Abone Ol", "cancel": "Aboneliği İptal Et",
+    "expired": "Abonelik Sona Erdi", "renew": "Aboneliği Yenile", "trialEnds": "Deneme bitiş: {{date}}"
+  },
+  "nft": {
+    "title": "NFT Galerisi", "mint": "NFT Oluştur", "minting": "Oluşturuluyor...", "mintSuccess": "NFT başarıyla oluşturuldu!",
+    "mintFailed": "NFT oluşturma başarısız", "selectPhoto": "Fotoğraf Seç", "nftName": "NFT Adı", "nftDescription": "Açıklama", "collection": "Koleksiyon",
+    "noNfts": "Henüz NFT yok", "viewOnSolana": "Solana'da Görüntüle", "share": "Paylaş"
+  },
+  "duplicates": {
+    "title": "Yinelenenleri Temizle", "scanning": "Yinelenenler aranıyor...", "found": "{{count}} yinelenen bulundu", "noDuplicates": "Yinelenen bulunamadı",
+    "review": "Yinelenenleri İncele", "delete": "Seçilenleri Sil", "keep": "Tut", "deleteAll": "Tüm Yinelenenleri Sil", "spaceRecovered": "Kurtarılan alan: {{size}}"
+  },
+  "common": {
+    "ok": "Tamam", "cancel": "İptal", "save": "Kaydet", "delete": "Sil", "edit": "Düzenle", "done": "Bitti", "next": "İleri", "back": "Geri",
+    "close": "Kapat", "retry": "Tekrar Dene", "loading": "Yükleniyor...", "error": "Hata", "success": "Başarılı", "warning": "Uyarı",
+    "confirm": "Onayla", "yes": "Evet", "no": "Hayır", "search": "Ara", "refresh": "Yenile", "share": "Paylaş", "copy": "Kopyala", "paste": "Yapıştır",
+    "selectAll": "Tümünü Seç", "none": "Hiçbiri", "all": "Tümü", "more": "Daha Fazla", "less": "Daha Az", "show": "Göster", "hide": "Gizle",
+    "enable": "Etkinleştir", "disable": "Devre Dışı", "on": "Açık", "off": "Kapalı", "required": "Gerekli", "optional": "İsteğe Bağlı", "comingSoon": "Yakında"
+  },
+  "errors": {
+    "networkError": "Ağ hatası. Bağlantınızı kontrol edin.", "serverError": "Sunucu hatası. Lütfen daha sonra tekrar deneyin.",
+    "unknownError": "Bilinmeyen bir hata oluştu", "sessionExpired": "Oturum süresi doldu. Lütfen tekrar giriş yapın.",
+    "permissionDenied": "İzin reddedildi", "storagePermission": "Fotoğraf yedeklemesi için depolama izni gerekli",
+    "cameraPermission": "Kamera izni gerekli", "notificationPermission": "Yedekleme uyarıları için bildirim izni gerekli",
+    "noInternet": "İnternet bağlantısı yok", "timeout": "İstek zaman aşımına uğradı", "tooManyAttempts": "Çok fazla deneme. Lütfen daha sonra tekrar deneyin."
+  },
+  "permissions": {
+    "title": "İzinler Gerekli", "photos": "Fotoğraflara Erişim", "photosDescription": "Fotoğrafları yedeklemek ve geri yüklemek için gerekli",
+    "camera": "Kameraya Erişim", "cameraDescription": "NFT için fotoğraf çekmek için gerekli", "notifications": "Bildirimler",
+    "notificationsDescription": "Yedekleme tamamlandığında bildirim al", "grant": "İzin Ver", "openSettings": "Ayarları Aç"
+  },
+  "onboarding": {
+    "welcome": "PhotoLynk'e Hoş Geldiniz", "slide1Title": "Güvenli Yedekleme", "slide1Description": "Fotoğraflarınız şifrelenerek güvenle saklanır",
+    "slide2Title": "Kolay Geri Yükleme", "slide2Description": "Fotoğraflarınızı istediğiniz zaman, istediğiniz yerden geri yükleyin", "slide3Title": "NFT Galerisi",
+    "slide3Description": "En iyi fotoğraflarınızı NFT'ye dönüştürün", "getStarted": "Başla", "skip": "Atla"
+  }
+}
