@@ -116,22 +116,26 @@ export const buildLocalAssetIdSetPaged = async ({ album, maxInitialEmptyWaitMs =
 };
 
 /**
- * Fetch all server files with pagination (for Remote/Local backup/sync)
+ * Fetch all server files with pagination
  * @param {string} serverUrl - Server base URL
  * @param {Object} config - Axios config with auth headers
  * @param {Function} onFetchProgress - Optional callback (fetchedCount, estimatedTotal) for progress
+ * @param {boolean} includeMeta - Whether to include hash metadata (for cross-device dedup)
  * @returns {Promise<Array>}
  */
-export const fetchAllServerFilesPaged = async (serverUrl, config, onFetchProgress = null) => {
+export const fetchAllServerFilesPaged = async (serverUrl, config, onFetchProgress = null, includeMeta = false) => {
   const PAGE_LIMIT = 500;
   const allFiles = [];
   let offset = 0;
   let estimatedTotal = null;
 
   while (true) {
+    const params = { offset, limit: PAGE_LIMIT };
+    if (includeMeta) params.meta = 'true';
+    
     const response = await axios.get(`${serverUrl}/api/files`, {
       ...config,
-      params: { offset, limit: PAGE_LIMIT }
+      params
     });
 
     const files = (response.data && response.data.files) ? response.data.files : [];

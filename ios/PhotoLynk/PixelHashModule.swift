@@ -29,71 +29,33 @@ class PixelHashModule: NSObject {
           return
         }
         
-        // Get source image dimensions and pixel data (raw, no EXIF rotation)
-        let srcWidth = cgImage.width
-        let srcHeight = cgImage.height
-        let srcBytesPerPixel = 4
-        let srcBytesPerRow = srcBytesPerPixel * srcWidth
-        var srcPixelData = [UInt8](repeating: 0, count: srcWidth * srcHeight * srcBytesPerPixel)
+        // Use CGContext with high-quality interpolation to match Sharp's lanczos resize
+        let hashWidth = 9
+        let hashHeight = 8
+        let bytesPerPixel = 4
+        let bytesPerRow = bytesPerPixel * hashWidth
+        var pixelData = [UInt8](repeating: 0, count: hashWidth * hashHeight * bytesPerPixel)
         
-        guard let srcContext = CGContext(
-          data: &srcPixelData,
-          width: srcWidth,
-          height: srcHeight,
+        guard let context = CGContext(
+          data: &pixelData,
+          width: hashWidth,
+          height: hashHeight,
           bitsPerComponent: 8,
-          bytesPerRow: srcBytesPerRow,
+          bytesPerRow: bytesPerRow,
           space: CGColorSpaceCreateDeviceRGB(),
           bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
         ) else {
-          reject("E_CONTEXT", "Cannot create source context", nil)
+          reject("E_CONTEXT", "Cannot create context", nil)
           return
         }
         
-        srcContext.draw(cgImage, in: CGRect(x: 0, y: 0, width: srcWidth, height: srcHeight))
-        
-        // Custom bilinear scaling to 9x8 (identical to Android implementation)
-        let hashWidth = 9
-        let hashHeight = 8
-        var scaledPixelData = [UInt8](repeating: 0, count: hashWidth * hashHeight * srcBytesPerPixel)
-        
-        let xRatio = Float(srcWidth - 1) / Float(hashWidth - 1)
-        let yRatio = Float(srcHeight - 1) / Float(hashHeight - 1)
-        
-        for y in 0..<hashHeight {
-          for x in 0..<hashWidth {
-            let srcX = Float(x) * xRatio
-            let srcY = Float(y) * yRatio
-            
-            let x1 = Int(srcX)
-            let y1 = Int(srcY)
-            let x2 = min(x1 + 1, srcWidth - 1)
-            let y2 = min(y1 + 1, srcHeight - 1)
-            
-            let xWeight = srcX - Float(x1)
-            let yWeight = srcY - Float(y1)
-            
-            for c in 0..<3 {
-              let p11 = Float(srcPixelData[(y1 * srcWidth + x1) * srcBytesPerPixel + c])
-              let p21 = Float(srcPixelData[(y1 * srcWidth + x2) * srcBytesPerPixel + c])
-              let p12 = Float(srcPixelData[(y2 * srcWidth + x1) * srcBytesPerPixel + c])
-              let p22 = Float(srcPixelData[(y2 * srcWidth + x2) * srcBytesPerPixel + c])
-              
-              let top = p11 * (1.0 - xWeight) + p21 * xWeight
-              let bottom = p12 * (1.0 - xWeight) + p22 * xWeight
-              let value = top * (1.0 - yWeight) + bottom * yWeight
-              
-              scaledPixelData[(y * hashWidth + x) * srcBytesPerPixel + c] = UInt8(value + 0.5)
-            }
-            scaledPixelData[(y * hashWidth + x) * srcBytesPerPixel + 3] = 255
-          }
-        }
-        
-        let pixelData = scaledPixelData
+        // Use high-quality interpolation to match Sharp's default (lanczos3)
+        context.interpolationQuality = .high
+        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: hashWidth, height: hashHeight))
         
         // Compute grayscale values in 2D array for easier adjacent pixel comparison
         var grayValues = [[UInt8]](repeating: [UInt8](repeating: 0, count: hashWidth), count: hashHeight)
         
-        let bytesPerPixel = 4
         for y in 0..<hashHeight {
           for x in 0..<hashWidth {
             let offset = (y * hashWidth + x) * bytesPerPixel

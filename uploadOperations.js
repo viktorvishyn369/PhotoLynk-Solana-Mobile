@@ -13,6 +13,10 @@ import { createConcurrencyLimiter } from './backgroundTask';
 import { buildLocalAssetIdSetPaged, fetchAllServerFilesPaged } from './mediaHelpers';
 import { PHOTO_ALBUM_NAME, LEGACY_PHOTO_ALBUM_NAME } from './backupManager';
 import { findFirstAlbumByTitle } from './autoUpload';
+import { computePerceptualHash, computeExactFileHash, findPerceptualHashMatch } from './duplicateScanner';
+
+// dHash threshold for backup dedup (6 bits = ~9% tolerance for cross-platform differences)
+const BACKUP_DHASH_THRESHOLD = 6;
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
@@ -64,6 +68,7 @@ export const localRemoteBackupCore = async ({
   getServerUrl,
   resolveReadableFilePath,
   ensureAutoUploadPolicyAllowsWorkIfBackgrounded,
+  appStateRef,
   fastMode,
   onStatus,
   onProgress,
@@ -84,31 +89,51 @@ export const localRemoteBackupCore = async ({
   try {
     console.log('\n🔍 ===== BACKUP TRACE START =====');
 
-    // 1. Get Server List (with pagination to get ALL files)
+    // 1. Get Server List with hash metadata (for cross-device dedup)
     const config = await getAuthHeaders();
     const SERVER_URL = getServerUrl();
     console.log('Using server URL for backup:', SERVER_URL);
     onStatus('Fetching server files...');
     onProgress(0.01);
     
+    // Fetch with meta=true to get hash metadata for cross-device dedup
     const allServerFiles = await fetchAllServerFilesPaged(SERVER_URL, config, (fetched, total) => {
       // Progress fills 1-5% during fetch
       const fetchProgress = total > 0 ? (fetched / total) * 0.04 : 0;
       throttledProgress(onProgress, 0.01 + fetchProgress);
       throttledStatus(onStatus, `Fetching ${fetched}${total > fetched ? ` of ${total}` : ''} server files...`);
-    });
+    }, true); // includeMeta=true
     
     onProgress(0.05);
 
     console.log(`\n☁️  Server response: ${allServerFiles.length} files`);
 
-    const serverFiles = new Set(
-      allServerFiles
-        .map(f => normalizeFilenameForCompare(f && f.filename ? f.filename : null))
-        .filter(Boolean)
-    );
+    // Build dedup sets from server files
+    const serverFiles = new Set();
+    const serverFileHashes = new Set();
+    const serverPerceptualHashes = new Set();
+    // Platform-specific hashes for double-confirm dedup
+    const platformFileHashes = { ios: new Set(), android: new Set() };
+    const platformPerceptualHashes = { ios: new Set(), android: new Set() };
+    
+    for (const f of allServerFiles) {
+      const normalized = normalizeFilenameForCompare(f && f.filename ? f.filename : null);
+      if (normalized) serverFiles.add(normalized);
+      if (f.fileHash) serverFileHashes.add(f.fileHash);
+      if (f.perceptualHash) serverPerceptualHashes.add(f.perceptualHash);
+      // Collect platform-specific hashes
+      if (f.platformHashes) {
+        for (const plat of ['ios', 'android']) {
+          const ph = f.platformHashes[plat];
+          if (ph?.fileHash) platformFileHashes[plat].add(ph.fileHash);
+          if (ph?.perceptualHash) platformPerceptualHashes[plat].add(ph.perceptualHash);
+        }
+      }
+    }
 
-    console.log(`📊 Server files (unique, lowercase): ${serverFiles.size}`);
+    const platformPhashCount = platformPerceptualHashes.ios.size + platformPerceptualHashes.android.size;
+    const platformFhashCount = platformFileHashes.ios.size + platformFileHashes.android.size;
+    console.log(`📊 Server files: ${serverFiles.size} filenames, ${serverFileHashes.size} fileHashes, ${serverPerceptualHashes.size} perceptualHashes, ${platformPhashCount} platformPhashes, ${platformFhashCount} platformFhashes`);
 
     // 2. Exclude files already in app album to prevent re-uploading restored files
     const albums = await MediaLibrary.getAlbumsAsync();
@@ -211,6 +236,11 @@ export const localRemoteBackupCore = async ({
     await sleep(500);
 
     // 4. Upload Loop with per-file error handling (parallel)
+    // Session hash tracking for cross-device dedup (same content, different filename)
+    const sessionPerceptualHashes = new Set();
+    const sessionFileHashes = new Set();
+    let hashDedupCount = 0;
+    
     let successCount = 0;
     let duplicateCount = 0;
     let failedCount = 0;
@@ -225,7 +255,14 @@ export const localRemoteBackupCore = async ({
 
     const uploadTasks = toUpload.map((asset, idx) => runUpload(async () => {
       try {
-        if (!(await ensureAutoUploadPolicyAllowsWorkIfBackgrounded())) return;
+        // Wait if app is backgrounded (pause instead of failing)
+        if (appStateRef) {
+          while (appStateRef.current !== 'active') {
+            await sleep(1000);
+          }
+        }
+        // Only check background policy if function is provided (auto-upload only)
+        if (ensureAutoUploadPolicyAllowsWorkIfBackgrounded && !(await ensureAutoUploadPolicyAllowsWorkIfBackgrounded())) return;
 
         // Get file info
         const assetInfo = await MediaLibrary.getAssetInfoAsync(asset.id);
@@ -241,6 +278,67 @@ export const localRemoteBackupCore = async ({
 
         // iOS fix: Use the actual filename from assetInfo, not the UUID
         const actualFilename = assetInfo.filename || asset.filename;
+        const isVideo = /\.(mov|mp4|m4v|avi|mkv|webm|3gp)$/i.test(actualFilename);
+
+        // Compute hash for cross-device dedup (same content, different filename)
+        let skipByHash = false;
+        let skipReason = null;
+        try {
+          if (isVideo) {
+            const fileHash = await computeExactFileHash(filePath);
+            if (fileHash) {
+              // Check against server hashes first (cross-device dedup)
+              if (serverFileHashes.has(fileHash)) {
+                skipByHash = true;
+                skipReason = 'server fileHash';
+              } else if (sessionFileHashes.has(fileHash)) {
+                skipByHash = true;
+                skipReason = 'session fileHash';
+              } else {
+                // FALLBACK: Check ALL platform hashes (double-confirm before upload)
+                for (const plat of ['ios', 'android']) {
+                  if (platformFileHashes[plat].has(fileHash)) {
+                    skipByHash = true;
+                    skipReason = `platform_${plat} fileHash`;
+                    break;
+                  }
+                }
+                if (!skipByHash) sessionFileHashes.add(fileHash);
+              }
+            }
+          } else {
+            const phash = await computePerceptualHash(filePath);
+            if (phash) {
+              // Check against server hashes first (cross-device dedup)
+              if (findPerceptualHashMatch(phash, serverPerceptualHashes, BACKUP_DHASH_THRESHOLD)) {
+                skipByHash = true;
+                skipReason = 'server perceptualHash';
+              } else if (findPerceptualHashMatch(phash, sessionPerceptualHashes, BACKUP_DHASH_THRESHOLD)) {
+                skipByHash = true;
+                skipReason = 'session perceptualHash';
+              } else {
+                // FALLBACK: Check ALL platform hashes (double-confirm before upload)
+                for (const plat of ['ios', 'android']) {
+                  if (findPerceptualHashMatch(phash, platformPerceptualHashes[plat], BACKUP_DHASH_THRESHOLD)) {
+                    skipByHash = true;
+                    skipReason = `platform_${plat} perceptualHash`;
+                    break;
+                  }
+                }
+                if (!skipByHash) sessionPerceptualHashes.add(phash);
+              }
+            }
+          }
+        } catch (hashErr) {
+          console.warn(`Hash computation failed for ${actualFilename}:`, hashErr.message);
+          // Continue with upload if hash fails
+        }
+
+        if (skipByHash) {
+          console.log(`⊘ Skipped (${skipReason}): ${actualFilename}`);
+          hashDedupCount++;
+          return;
+        }
 
         const mime = getMimeFromFilename(actualFilename, asset.mediaType);
         const fileUri = filePath.startsWith('file://') ? filePath : `file://${filePath}`;
@@ -278,9 +376,40 @@ export const localRemoteBackupCore = async ({
           console.log(`✓ Uploaded: ${actualFilename}`);
         }
       } catch (fileError) {
-        console.error(`✗ Failed to upload ${asset.filename}:`, fileError.message);
-        failedCount++;
-        failedFiles.push(asset.filename);
+        // If connection failed and app was backgrounded, wait and retry once
+        if (fileError.message?.includes('Failed to connect') && appStateRef?.current !== 'active') {
+          console.log(`⏸ Upload paused (backgrounded): ${asset.filename}, waiting to retry...`);
+          while (appStateRef?.current !== 'active') {
+            await sleep(1000);
+          }
+          // Retry the upload once after coming back to foreground
+          try {
+            const retryRes = await FileSystem.uploadAsync(uploadUrl, fileUri, {
+              uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT,
+              sessionType: sessionTypeUpload,
+              headers: {
+                ...config.headers,
+                'Content-Type': mime,
+                'X-Filename': actualFilename,
+              }
+            });
+            if (retryRes && retryRes.status >= 200 && retryRes.status < 300) {
+              successCount++;
+              console.log(`✓ Uploaded (retry): ${actualFilename}`);
+            } else {
+              failedCount++;
+              failedFiles.push(asset.filename);
+            }
+          } catch (retryErr) {
+            console.error(`✗ Retry failed for ${asset.filename}:`, retryErr.message);
+            failedCount++;
+            failedFiles.push(asset.filename);
+          }
+        } else {
+          console.error(`✗ Failed to upload ${asset.filename}:`, fileError.message);
+          failedCount++;
+          failedFiles.push(asset.filename);
+        }
       } finally {
         processedCount++;
         // Upload phase: 20-100% progress
@@ -300,11 +429,12 @@ export const localRemoteBackupCore = async ({
     console.log(`On server before: ${serverFiles.size}`);
     console.log(`Marked for upload: ${toUpload.length}`);
     console.log(`Actually uploaded: ${successCount}`);
-    console.log(`Duplicates skipped: ${duplicateCount}`);
+    console.log(`Duplicates skipped (filename): ${duplicateCount}`);
+    console.log(`Duplicates skipped (hash): ${hashDedupCount}`);
     console.log(`Failed: ${failedCount}`);
     console.log('===== END BACKUP TRACE =====\n');
 
-    const skippedCount = checkedCount - toUpload.length + duplicateCount;
+    const skippedCount = checkedCount - toUpload.length + duplicateCount + hashDedupCount;
 
     return {
       uploaded: successCount,
@@ -338,6 +468,7 @@ export const localRemoteBackupSelectedCore = async ({
   getServerUrl,
   resolveReadableFilePath,
   ensureAutoUploadPolicyAllowsWorkIfBackgrounded,
+  appStateRef,
   onStatus,
   onProgress,
 }) => {
@@ -362,19 +493,38 @@ export const localRemoteBackupSelectedCore = async ({
     onStatus?.('Fetching server files...');
     onProgress?.(0.01);
     
+    // Fetch with meta=true to get hash metadata for cross-device dedup
     const allServerFiles = await fetchAllServerFilesPaged(SERVER_URL, config, (fetched, total) => {
       // Progress fills 1-5% during fetch
       const fetchProgress = total > 0 ? (fetched / total) * 0.04 : 0;
       throttledProgress(onProgress, 0.01 + fetchProgress);
       throttledStatus(onStatus, `Fetching ${fetched}${total > fetched ? ` of ${total}` : ''} server files...`);
-    });
+    }, true); // includeMeta=true
     
     onProgress?.(0.05);
-    const serverFiles = new Set(
-      allServerFiles
-        .map(f => normalizeFilenameForCompare(f && f.filename ? f.filename : null))
-        .filter(Boolean)
-    );
+    
+    // Build dedup sets from server files
+    const serverFiles = new Set();
+    const serverFileHashes = new Set();
+    const serverPerceptualHashes = new Set();
+    // Platform-specific hashes for double-confirm dedup
+    const platformFileHashes = { ios: new Set(), android: new Set() };
+    const platformPerceptualHashes = { ios: new Set(), android: new Set() };
+    
+    for (const f of allServerFiles) {
+      const normalized = normalizeFilenameForCompare(f && f.filename ? f.filename : null);
+      if (normalized) serverFiles.add(normalized);
+      if (f.fileHash) serverFileHashes.add(f.fileHash);
+      if (f.perceptualHash) serverPerceptualHashes.add(f.perceptualHash);
+      // Collect platform-specific hashes
+      if (f.platformHashes) {
+        for (const plat of ['ios', 'android']) {
+          const ph = f.platformHashes[plat];
+          if (ph?.fileHash) platformFileHashes[plat].add(ph.fileHash);
+          if (ph?.perceptualHash) platformPerceptualHashes[plat].add(ph.perceptualHash);
+        }
+      }
+    }
 
     const albums = await MediaLibrary.getAlbumsAsync();
     const photoSyncAlbum = findFirstAlbumByTitle(albums, [PHOTO_ALBUM_NAME, LEGACY_PHOTO_ALBUM_NAME]);
@@ -408,11 +558,16 @@ export const localRemoteBackupSelectedCore = async ({
     }
 
     if (toUpload.length === 0) {
-      return { alreadyBackedUp: true, total: list.length };
+      return { alreadyBackedUp: true, total: list.length, skipped: list.length };
     }
 
     // Brief pause before starting uploads
     await sleep(500);
+
+    // Session hash tracking for cross-device dedup
+    const sessionPerceptualHashes = new Set();
+    const sessionFileHashes = new Set();
+    let hashDedupCount = 0;
 
     let successCount = 0;
     let failedCount = 0;
@@ -420,7 +575,14 @@ export const localRemoteBackupSelectedCore = async ({
     for (let i = 0; i < toUpload.length; i++) {
       const asset = toUpload[i];
       try {
-        if (!(await ensureAutoUploadPolicyAllowsWorkIfBackgrounded())) {
+        // Wait if app is backgrounded (pause instead of failing)
+        if (appStateRef) {
+          while (appStateRef.current !== 'active') {
+            await sleep(1000);
+          }
+        }
+        // Only check background policy if function is provided (auto-upload only)
+        if (ensureAutoUploadPolicyAllowsWorkIfBackgrounded && !(await ensureAutoUploadPolicyAllowsWorkIfBackgrounded())) {
           break;
         }
         // Upload phase: 20-100% progress
@@ -437,6 +599,59 @@ export const localRemoteBackupSelectedCore = async ({
         }
 
         const actualFilename = assetInfo.filename || asset.filename;
+        const isVideo = /\.(mov|mp4|m4v|avi|mkv|webm|3gp)$/i.test(actualFilename);
+
+        // Compute hash for cross-device dedup
+        let skipByHash = false;
+        try {
+          if (isVideo) {
+            const fileHash = await computeExactFileHash(filePath);
+            if (fileHash) {
+              // Check against server hashes first (cross-device dedup)
+              if (serverFileHashes.has(fileHash)) {
+                skipByHash = true;
+              } else if (sessionFileHashes.has(fileHash)) {
+                skipByHash = true;
+              } else {
+                // FALLBACK: Check ALL platform hashes (double-confirm before upload)
+                for (const plat of ['ios', 'android']) {
+                  if (platformFileHashes[plat].has(fileHash)) {
+                    skipByHash = true;
+                    break;
+                  }
+                }
+                if (!skipByHash) sessionFileHashes.add(fileHash);
+              }
+            }
+          } else {
+            const phash = await computePerceptualHash(filePath);
+            if (phash) {
+              // Check against server hashes first (cross-device dedup)
+              if (findPerceptualHashMatch(phash, serverPerceptualHashes, BACKUP_DHASH_THRESHOLD)) {
+                skipByHash = true;
+              } else if (findPerceptualHashMatch(phash, sessionPerceptualHashes, BACKUP_DHASH_THRESHOLD)) {
+                skipByHash = true;
+              } else {
+                // FALLBACK: Check ALL platform hashes (double-confirm before upload)
+                for (const plat of ['ios', 'android']) {
+                  if (findPerceptualHashMatch(phash, platformPerceptualHashes[plat], BACKUP_DHASH_THRESHOLD)) {
+                    skipByHash = true;
+                    break;
+                  }
+                }
+                if (!skipByHash) sessionPerceptualHashes.add(phash);
+              }
+            }
+          }
+        } catch (hashErr) {
+          // Continue with upload if hash fails
+        }
+
+        if (skipByHash) {
+          hashDedupCount++;
+          continue;
+        }
+
         const mime = getMimeFromFilename(actualFilename, asset.mediaType);
         const fileUri = filePath.startsWith('file://') ? filePath : `file://${filePath}`;
 
@@ -465,11 +680,39 @@ export const localRemoteBackupSelectedCore = async ({
 
         successCount++;
       } catch (e) {
-        failedCount++;
+        // If connection failed and app was backgrounded, wait and retry once
+        if (e.message?.includes('Failed to connect') && appStateRef?.current !== 'active') {
+          console.log(`⏸ Upload paused (backgrounded): ${actualFilename}, waiting to retry...`);
+          while (appStateRef?.current !== 'active') {
+            await sleep(1000);
+          }
+          try {
+            const retryRes = await FileSystem.uploadAsync(`${SERVER_URL}/api/upload/raw`, fileUri, {
+              httpMethod: 'POST',
+              uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT,
+              sessionType,
+              headers: {
+                ...config.headers,
+                'Content-Type': mime,
+                'X-Filename': actualFilename,
+              }
+            });
+            if (retryRes && retryRes.status >= 200 && retryRes.status < 300) {
+              successCount++;
+              console.log(`✓ Uploaded (retry): ${actualFilename}`);
+            } else {
+              failedCount++;
+            }
+          } catch (retryErr) {
+            failedCount++;
+          }
+        } else {
+          failedCount++;
+        }
       }
     }
 
-    const skippedCount = list.length - toUpload.length;
+    const skippedCount = list.length - toUpload.length + hashDedupCount;
     return { uploaded: successCount, skipped: skippedCount, failed: failedCount };
   } catch (error) {
     console.error('Backup selected error:', error);

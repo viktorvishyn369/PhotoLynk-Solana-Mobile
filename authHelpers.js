@@ -159,6 +159,8 @@ export const storeCredentialsWithBiometrics = async ({ password, normalizedEmail
         authenticationPrompt: type === 'register' ? 'Secure your account with biometrics' : 'Unlock to sign in'
       });
       await SecureStore.setItemAsync(SAVED_PASSWORD_EMAIL_KEY, normalizedEmail);
+      // Track storage mode for downstream logic
+      await SecureStore.setItemAsync('password_stored_with_biometric', 'true');
     } else {
       // Android: try biometric first, fallback to silent storage
       let storedWithBiometric = false;
@@ -257,27 +259,69 @@ export const loadServerSettings = async () => {
 };
 
 /**
- * Validates an existing token against the server.
+ * Validates an existing token against the server and retrieves saved password for master key.
  * @param {Object} params
- * @param {string} params.baseUrl - Server base URL
- * @param {string} params.token - Auth token
+ * @param {string} params.storedToken - Auth token
+ * @param {string} params.storedEmail - User email
+ * @param {string} params.storedUserId - User ID
  * @param {string} params.uuid - Device UUID
- * @returns {Promise<{ valid: boolean, networkError?: boolean }>}
+ * @param {string} params.baseUrl - Server base URL
+ * @param {Function} params.onStatus - Status update callback
+ * @returns {Promise<{ success: boolean, savedPassword?: string, networkError?: boolean }>}
  */
-export const validateToken = async ({ baseUrl, token, uuid }) => {
+export const validateToken = async ({ storedToken, storedEmail, storedUserId, uuid, baseUrl, onStatus }) => {
+  // Check if user explicitly logged out
+  const userLoggedOut = await SecureStore.getItemAsync('user_logged_out');
+  if (userLoggedOut === 'true') {
+    console.log('[Auth] User logged out - skipping token validation');
+    return { success: false };
+  }
+
+  if (!storedToken) {
+    return { success: false };
+  }
+
   try {
+    onStatus?.('Verifying session...');
     const headers = {
-      'Authorization': `Bearer ${token}`,
+      'Authorization': `Bearer ${storedToken}`,
       'X-Device-UUID': uuid || 'unknown'
     };
     await axios.get(`${baseUrl}/api/cloud/usage`, { headers, timeout: 5000 });
-    return { valid: true };
+    
+    // Token valid - try to get saved password for master key (with biometric)
+    let savedPassword = null;
+    const savedPasswordEmail = await SecureStore.getItemAsync(SAVED_PASSWORD_EMAIL_KEY);
+    if (savedPasswordEmail === storedEmail) {
+      onStatus?.('Unlock to sign in...');
+      const storedWithBiometric = Platform.OS === 'ios' ||
+        (await SecureStore.getItemAsync('password_stored_with_biometric')) === 'true';
+      
+      if (storedWithBiometric) {
+        try {
+          savedPassword = await SecureStore.getItemAsync(SAVED_PASSWORD_KEY, {
+            requireAuthentication: true,
+            authenticationPrompt: 'Unlock to sign in'
+          });
+        } catch (e) {
+          // Biometric cancelled/failed - still allow login but without master key
+          console.log('[Auth] Biometric for master key skipped:', e?.message);
+        }
+      } else {
+        savedPassword = await SecureStore.getItemAsync(SAVED_PASSWORD_KEY);
+      }
+    }
+    
+    return { success: true, savedPassword };
   } catch (e) {
     const isNetworkError = !e?.response && (e?.message?.includes('Network') || e?.code === 'ECONNABORTED' || e?.message?.includes('timeout'));
     if (isNetworkError) {
-      return { valid: false, networkError: true };
+      // Network error - allow offline access if we have credentials
+      console.log('[Auth] Network error during token validation - allowing offline access');
+      return { success: true, networkError: true };
     }
-    return { valid: false, networkError: false };
+    console.log('[Auth] Token validation failed:', e?.response?.status || e?.message);
+    return { success: false, networkError: false };
   }
 };
 

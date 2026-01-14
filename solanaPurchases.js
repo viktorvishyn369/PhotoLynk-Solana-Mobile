@@ -204,7 +204,7 @@ export const getWalletBalance = async (walletAddress = null) => {
 // ============================================================================
 
 /**
- * Fetch current SOL price in USD from CoinGecko
+ * Fetch current SOL price in USD from multiple APIs with fallbacks
  * @returns {number} SOL price in USD
  */
 export const fetchSolPrice = async () => {
@@ -215,27 +215,45 @@ export const fetchSolPrice = async () => {
     return cachedSolPrice;
   }
   
-  try {
-    // CoinGecko free API
-    const response = await axios.get(
-      'https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd',
-      { timeout: 10000 }
-    );
-    
-    const price = response.data?.solana?.usd;
-    if (price && typeof price === 'number') {
-      cachedSolPrice = price;
-      solPriceLastFetch = now;
-      console.log('SOL price fetched:', price);
-      return price;
+  // Try multiple price APIs with fallbacks
+  const priceApis = [
+    {
+      name: 'CoinGecko',
+      url: 'https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd',
+      extract: (data) => data?.solana?.usd,
+    },
+    {
+      name: 'Binance',
+      url: 'https://api.binance.com/api/v3/ticker/price?symbol=SOLUSDT',
+      extract: (data) => parseFloat(data?.price),
+    },
+    {
+      name: 'CoinCap',
+      url: 'https://api.coincap.io/v2/assets/solana',
+      extract: (data) => parseFloat(data?.data?.priceUsd),
+    },
+  ];
+  
+  for (const api of priceApis) {
+    try {
+      const response = await axios.get(api.url, { timeout: 8000 });
+      const price = api.extract(response.data);
+      
+      if (price && typeof price === 'number' && price > 0) {
+        cachedSolPrice = price;
+        solPriceLastFetch = now;
+        console.log(`SOL price from ${api.name}:`, price);
+        return price;
+      }
+    } catch (e) {
+      console.warn(`${api.name} price fetch failed:`, e.message);
+      // Continue to next API
     }
-    
-    throw new Error('Invalid price response');
-  } catch (e) {
-    console.error('Failed to fetch SOL price:', e.message);
-    // Return cached price if available, otherwise estimate
-    return cachedSolPrice || 150; // Fallback estimate
   }
+  
+  console.error('All SOL price APIs failed, using fallback');
+  // Return cached price if available, otherwise estimate
+  return cachedSolPrice || 150; // Fallback estimate
 };
 
 /**

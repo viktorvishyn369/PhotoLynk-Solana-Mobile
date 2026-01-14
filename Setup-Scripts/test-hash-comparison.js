@@ -4,17 +4,33 @@ const crypto = require('crypto');
 const nacl = require('tweetnacl');
 const naclUtil = require('tweetnacl-util');
 const sha256 = require('js-sha256');
-const heicDecode = require('heic-decode');
+const sharp = require('sharp');
+
+// Decode image (supports HEIC, JPG, PNG, etc via sharp)
+async function decodeImage(filePath) {
+  const ext = path.extname(filePath).toLowerCase();
+  
+  // Use sharp for all formats (handles HEIC, JPG, PNG, etc)
+  const image = sharp(filePath);
+  const metadata = await image.metadata();
+  const { data, info } = await image.raw().toBuffer({ resolveWithObject: true });
+  
+  return {
+    data: data,
+    width: info.width,
+    height: info.height,
+    channels: info.channels
+  };
+}
 
 // Desktop implementation (current)
 async function computeDesktopHash(filePath) {
-  const inputBuffer = fs.readFileSync(filePath);
-  const decoded = await heicDecode({ buffer: inputBuffer });
+  const decoded = await decodeImage(filePath);
   
   const srcData = Buffer.from(decoded.data);
   const srcWidth = decoded.width;
   const srcHeight = decoded.height;
-  const srcChannels = 4; // RGBA
+  const srcChannels = decoded.channels || 3; // RGB or RGBA
   
   const hashWidth = 9;
   const hashHeight = 8;
@@ -91,16 +107,15 @@ async function computeDesktopHash(filePath) {
   return hexHash;
 }
 
-// Simulated iOS implementation (using same heic-decode to isolate algorithm differences)
+// Simulated iOS implementation (using sharp to decode, same algorithm as iOS native)
 async function computeIOSStyleHash(filePath) {
-  const inputBuffer = fs.readFileSync(filePath);
-  const decoded = await heicDecode({ buffer: inputBuffer });
+  const decoded = await decodeImage(filePath);
   
   // Simulate iOS: CGContext with premultipliedLast RGBA
   const srcPixelData = decoded.data;
   const srcWidth = decoded.width;
   const srcHeight = decoded.height;
-  const srcBytesPerPixel = 4;
+  const srcBytesPerPixel = decoded.channels || 3; // RGB or RGBA
   
   const hashWidth = 9;
   const hashHeight = 8;

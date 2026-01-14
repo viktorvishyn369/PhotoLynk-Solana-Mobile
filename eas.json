@@ -4,20 +4,29 @@
     "appVersionSource": "local"
   },
   "build": {
+    "base": {
+      "env": {
+        "EXPO_NO_DOCTOR": "1"
+      }
+    },
     "development": {
       "developmentClient": true,
-      "distribution": "internal"
+      "distribution": "internal",
+      "extends": "base"
     },
     "preview": {
-      "distribution": "internal"
+      "distribution": "internal",
+      "extends": "base"
     },
     "production": {
+      "extends": "base",
       "autoIncrement": true,
       "android": {
         "buildType": "app-bundle"
       }
     },
     "apk": {
+      "extends": "base",
       "android": {
         "buildType": "apk"
       }

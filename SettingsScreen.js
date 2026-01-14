@@ -1,11 +1,7 @@
 /**
  * SettingsScreen.js
  * 
- * Modern 2025 Settings UI following Material Design and iOS Human Interface Guidelines
- * - Grouped sections with headers
- * - List-style rows with icons
- * - Clean typography hierarchy
- * - Proper containment and spacing
+ * Professional Settings UI - Clean, minimal, premium feel
  */
 
 import React from 'react';
@@ -20,6 +16,7 @@ import {
   Platform,
   Dimensions,
 } from 'react-native';
+import { Feather } from '@expo/vector-icons';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const isTablet = Math.min(SCREEN_WIDTH, SCREEN_HEIGHT) >= 600;
@@ -37,199 +34,83 @@ const scaleSpacing = (size) => {
   return size;
 };
 
-// Icons as simple View components (no external dependencies)
-const Icon = ({ name, size = 22, color = '#FFFFFF' }) => {
-  const s = scale(size);
-  
-  const icons = {
-    server: (
-      <View style={{ width: s, height: s, justifyContent: 'center', alignItems: 'center' }}>
-        <View style={{ width: s * 0.8, height: s * 0.2, backgroundColor: color, borderRadius: 2, marginBottom: 2 }} />
-        <View style={{ width: s * 0.8, height: s * 0.2, backgroundColor: color, borderRadius: 2, marginBottom: 2 }} />
-        <View style={{ width: s * 0.8, height: s * 0.2, backgroundColor: color, borderRadius: 2 }} />
-      </View>
-    ),
-    speed: (
-      <View style={{ width: s, height: s, justifyContent: 'center', alignItems: 'center' }}>
-        <View style={{ width: s * 0.8, height: s * 0.8, borderWidth: 2, borderColor: color, borderRadius: s * 0.4 }}>
-          <View style={{ position: 'absolute', top: '50%', left: '50%', width: s * 0.35, height: 2, backgroundColor: color, transform: [{ rotate: '-45deg' }, { translateX: -s * 0.1 }] }} />
-        </View>
-      </View>
-    ),
-    palette: (
-      <View style={{ width: s, height: s, justifyContent: 'center', alignItems: 'center' }}>
-        <View style={{ width: s * 0.7, height: s * 0.7, borderRadius: s * 0.35, borderWidth: 2, borderColor: color }}>
-          <View style={{ position: 'absolute', top: s * 0.15, left: s * 0.15, width: s * 0.15, height: s * 0.15, backgroundColor: '#FF6B6B', borderRadius: s * 0.075 }} />
-          <View style={{ position: 'absolute', top: s * 0.15, right: s * 0.15, width: s * 0.15, height: s * 0.15, backgroundColor: '#4ECDC4', borderRadius: s * 0.075 }} />
-          <View style={{ position: 'absolute', bottom: s * 0.15, left: s * 0.25, width: s * 0.15, height: s * 0.15, backgroundColor: '#FFE66D', borderRadius: s * 0.075 }} />
-        </View>
-      </View>
-    ),
-    cloud: (
-      <View style={{ width: s, height: s, justifyContent: 'center', alignItems: 'center' }}>
-        <View style={{ width: s * 0.8, height: s * 0.5, backgroundColor: color, borderRadius: s * 0.25, marginTop: s * 0.15 }} />
-        <View style={{ position: 'absolute', top: s * 0.1, left: s * 0.15, width: s * 0.35, height: s * 0.35, backgroundColor: color, borderRadius: s * 0.175 }} />
-        <View style={{ position: 'absolute', top: s * 0.05, right: s * 0.2, width: s * 0.3, height: s * 0.3, backgroundColor: color, borderRadius: s * 0.15 }} />
-      </View>
-    ),
-    trash: (
-      <View style={{ width: s, height: s, justifyContent: 'center', alignItems: 'center' }}>
-        <View style={{ width: s * 0.6, height: s * 0.1, backgroundColor: color, borderRadius: 1 }} />
-        <View style={{ width: s * 0.5, height: s * 0.6, backgroundColor: color, borderRadius: 2, marginTop: 2 }} />
-      </View>
-    ),
-    chevron: (
-      <View style={{ width: s * 0.4, height: s * 0.4, borderRightWidth: 2, borderBottomWidth: 2, borderColor: color, transform: [{ rotate: '-45deg' }] }} />
-    ),
-    wifi: (
-      <View style={{ width: s, height: s, justifyContent: 'center', alignItems: 'center' }}>
-        <View style={{ width: s * 0.15, height: s * 0.15, backgroundColor: color, borderRadius: s * 0.075, position: 'absolute', bottom: s * 0.1 }} />
-        <View style={{ width: s * 0.5, height: s * 0.25, borderWidth: 2, borderColor: color, borderRadius: s * 0.25, borderBottomWidth: 0, position: 'absolute', bottom: s * 0.25 }} />
-        <View style={{ width: s * 0.8, height: s * 0.4, borderWidth: 2, borderColor: color, borderRadius: s * 0.4, borderBottomWidth: 0, position: 'absolute', bottom: s * 0.4 }} />
-      </View>
-    ),
-    globe: (
-      <View style={{ width: s, height: s, justifyContent: 'center', alignItems: 'center' }}>
-        <View style={{ width: s * 0.8, height: s * 0.8, borderWidth: 2, borderColor: color, borderRadius: s * 0.4 }}>
-          <View style={{ position: 'absolute', top: '50%', left: 0, right: 0, height: 1.5, backgroundColor: color, marginTop: -0.75 }} />
-          <View style={{ position: 'absolute', left: '50%', top: 0, bottom: 0, width: 1.5, backgroundColor: color, marginLeft: -0.75 }} />
-        </View>
-      </View>
-    ),
-    qr: (
-      <View style={{ width: s, height: s, justifyContent: 'center', alignItems: 'center' }}>
-        <View style={{ width: s * 0.8, height: s * 0.8, flexDirection: 'row', flexWrap: 'wrap' }}>
-          <View style={{ width: '45%', height: '45%', borderWidth: 2, borderColor: color, margin: '2.5%' }} />
-          <View style={{ width: '45%', height: '45%', borderWidth: 2, borderColor: color, margin: '2.5%' }} />
-          <View style={{ width: '45%', height: '45%', borderWidth: 2, borderColor: color, margin: '2.5%' }} />
-          <View style={{ width: '45%', height: '45%', backgroundColor: color, margin: '2.5%' }} />
-        </View>
-      </View>
-    ),
-  };
-  
-  return icons[name] || <View style={{ width: s, height: s }} />;
-};
-
-// Section Header Component
-const SectionHeader = ({ title, glassModeEnabled }) => (
-  <View style={settingsStyles.sectionHeader}>
-    <Text style={[settingsStyles.sectionHeaderText, glassModeEnabled && { color: 'rgba(255,255,255,0.6)' }]}>
-      {title.toUpperCase()}
-    </Text>
+// Reusable Card Component
+const Card = ({ children, style, glassModeEnabled }) => (
+  <View style={[
+    styles.card,
+    glassModeEnabled && styles.cardGlass,
+    style
+  ]}>
+    {children}
   </View>
 );
 
-// Settings Row Component
-const SettingsRow = ({ 
-  icon, 
-  iconColor = '#3B82F6',
-  title, 
-  subtitle, 
-  value,
-  onPress, 
-  rightElement,
-  isFirst,
-  isLast,
-  glassModeEnabled,
-  danger = false,
-}) => (
-  <TouchableOpacity 
+// Server Option Button
+const ServerOption = ({ icon, label, description, isSelected, onPress, glassModeEnabled }) => (
+  <TouchableOpacity
     style={[
-      settingsStyles.row,
-      isFirst && settingsStyles.rowFirst,
-      isLast && settingsStyles.rowLast,
-      glassModeEnabled && settingsStyles.rowGlass,
+      styles.serverOption,
+      isSelected && styles.serverOptionSelected,
+      glassModeEnabled && styles.serverOptionGlass,
     ]}
     onPress={onPress}
-    disabled={!onPress}
-    activeOpacity={onPress ? 0.7 : 1}
+    activeOpacity={0.7}
   >
-    {icon && (
-      <View style={[settingsStyles.iconContainer, { backgroundColor: danger ? 'rgba(239,68,68,0.15)' : `${iconColor}20` }]}>
-        <Icon name={icon} size={18} color={danger ? '#EF4444' : iconColor} />
-      </View>
-    )}
-    <View style={settingsStyles.rowContent}>
-      <View style={settingsStyles.rowTextContainer}>
-        <Text style={[settingsStyles.rowTitle, danger && { color: '#EF4444' }]}>{title}</Text>
-        {subtitle && <Text style={settingsStyles.rowSubtitle}>{subtitle}</Text>}
-      </View>
-      {value && <Text style={settingsStyles.rowValue}>{value}</Text>}
-      {rightElement}
-      {onPress && !rightElement && <Icon name="chevron" size={14} color="#666" />}
+    <View style={[styles.serverOptionIcon, isSelected && styles.serverOptionIconSelected]}>
+      <Feather name={icon} size={scale(20)} color={isSelected ? '#FFFFFF' : '#888888'} />
+    </View>
+    <View style={styles.serverOptionContent}>
+      <Text style={[styles.serverOptionLabel, isSelected && styles.serverOptionLabelSelected]}>
+        {label}
+      </Text>
+      {description && (
+        <Text style={styles.serverOptionDesc}>{description}</Text>
+      )}
     </View>
   </TouchableOpacity>
 );
 
-// Toggle Row Component
-const ToggleRow = ({
-  icon,
-  iconColor = '#3B82F6',
-  title,
-  subtitle,
-  value,
-  onValueChange,
-  trackColor = '#3B82F6',
-  isFirst,
-  isLast,
-  glassModeEnabled,
-}) => (
-  <View 
-    style={[
-      settingsStyles.row,
-      isFirst && settingsStyles.rowFirst,
-      isLast && settingsStyles.rowLast,
-      glassModeEnabled && settingsStyles.rowGlass,
-    ]}
-  >
-    {icon && (
-      <View style={[settingsStyles.iconContainer, { backgroundColor: `${iconColor}20` }]}>
-        <Icon name={icon} size={18} color={iconColor} />
-      </View>
-    )}
-    <View style={settingsStyles.rowContent}>
-      <View style={settingsStyles.rowTextContainer}>
-        <Text style={settingsStyles.rowTitle}>{title}</Text>
-        {subtitle && <Text style={settingsStyles.rowSubtitle}>{subtitle}</Text>}
-      </View>
-      <Switch
-        value={value}
-        onValueChange={onValueChange}
-        trackColor={{ false: '#3A3A3C', true: '#3B82F6' }}
-        thumbColor="#FFFFFF"
-        ios_backgroundColor="#3A3A3C"
-      />
+// Toggle Setting Row
+const ToggleSetting = ({ icon, title, subtitle, value, onValueChange, glassModeEnabled }) => (
+  <View style={[styles.settingRow, glassModeEnabled && styles.settingRowGlass]}>
+    <View style={styles.settingIcon}>
+      <Feather name={icon} size={scale(20)} color="#888888" />
     </View>
+    <View style={styles.settingContent}>
+      <Text style={styles.settingTitle}>{title}</Text>
+      {subtitle && <Text style={styles.settingSubtitle}>{subtitle}</Text>}
+    </View>
+    <Switch
+      value={value}
+      onValueChange={onValueChange}
+      trackColor={{ false: '#3A3A3C', true: '#03E1FF' }}
+      thumbColor="#FFFFFF"
+      ios_backgroundColor="#3A3A3C"
+    />
   </View>
 );
 
-// Server Type Selector Component
-const ServerTypeSelector = ({ serverType, onSelect, glassModeEnabled }) => (
-  <View style={[settingsStyles.segmentedControl, glassModeEnabled && settingsStyles.segmentedControlGlass]}>
-    {['local', 'remote', 'stealthcloud'].map((type, index) => (
-      <TouchableOpacity
-        key={type}
-        style={[
-          settingsStyles.segment,
-          serverType === type && settingsStyles.segmentActive,
-          index === 0 && settingsStyles.segmentFirst,
-          index === 2 && settingsStyles.segmentLast,
-        ]}
-        onPress={() => onSelect(type)}
-      >
-        <Text style={[
-          settingsStyles.segmentText,
-          serverType === type && settingsStyles.segmentTextActive,
-        ]}>
-          {type === 'local' ? 'Local' : type === 'remote' ? 'Remote' : 'StealthCloud'}
-        </Text>
-      </TouchableOpacity>
-    ))}
-  </View>
+// Action Button
+const ActionButton = ({ title, subtitle, onPress, danger, disabled, glassModeEnabled }) => (
+  <TouchableOpacity
+    style={[
+      styles.actionButton,
+      danger && styles.actionButtonDanger,
+      disabled && styles.actionButtonDisabled,
+      glassModeEnabled && styles.actionButtonGlass,
+    ]}
+    onPress={onPress}
+    disabled={disabled}
+    activeOpacity={0.7}
+  >
+    <Text style={[styles.actionButtonText, danger && styles.actionButtonTextDanger]}>
+      {title}
+    </Text>
+    {subtitle && <Text style={styles.actionButtonSubtitle}>{subtitle}</Text>}
+  </TouchableOpacity>
 );
 
-// Main Settings Screen Component
+// Main Settings Screen
 export const SettingsScreen = ({
   onBack,
   serverType,
@@ -252,7 +133,7 @@ export const SettingsScreen = ({
   normalizeHostInput,
   SecureStore,
 }) => {
-  
+
   const handleServerTypeChange = async (type) => {
     if (type === 'stealthcloud') {
       await SecureStore.setItemAsync('server_type', 'stealthcloud');
@@ -263,7 +144,7 @@ export const SettingsScreen = ({
     }
   };
 
-  const handleSaveServerSettings = async () => {
+  const handleSaveSettings = async () => {
     await SecureStore.setItemAsync('server_type', serverType);
     if (serverType === 'remote') {
       await SecureStore.setItemAsync('remote_host', remoteHost);
@@ -271,184 +152,157 @@ export const SettingsScreen = ({
       await SecureStore.setItemAsync('local_host', localHost);
     }
     await logout();
-    showDarkAlert('Saved', 'Server settings updated. Please log in again.');
+    showDarkAlert('Saved', 'Server settings updated');
   };
 
   return (
-    <View style={settingsStyles.container}>
+    <View style={styles.container}>
       {/* Header */}
-      <View style={settingsStyles.header}>
-        <TouchableOpacity onPress={onBack} style={settingsStyles.backButton}>
-          <Text style={settingsStyles.backButtonText}>Back</Text>
+      <View style={styles.header}>
+        <TouchableOpacity onPress={onBack} style={styles.backButton}>
+          <Text style={styles.backButtonText}>Back</Text>
         </TouchableOpacity>
-        <Text style={settingsStyles.headerTitle}>Settings</Text>
+        <Text style={styles.headerTitle}>Settings</Text>
         <View style={{ width: scaleSpacing(60) }} />
       </View>
 
-      <ScrollView 
-        style={settingsStyles.scrollView}
-        contentContainerStyle={settingsStyles.scrollContent}
+      <ScrollView
+        style={styles.scrollView}
+        contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        {/* CONNECTION SECTION */}
-        <SectionHeader title="Connection" glassModeEnabled={glassModeEnabled} />
-        <View style={[settingsStyles.section, glassModeEnabled && settingsStyles.sectionGlass]}>
-          <View style={settingsStyles.serverTypeContainer}>
-            <Text style={settingsStyles.serverTypeLabel}>Server Type</Text>
-            <ServerTypeSelector 
-              serverType={serverType} 
-              onSelect={handleServerTypeChange}
-              glassModeEnabled={glassModeEnabled}
-            />
-          </View>
+        {/* Server Selection */}
+        <Text style={styles.sectionTitle}>Server</Text>
+        <Card glassModeEnabled={glassModeEnabled}>
+          <ServerOption
+            icon="cloud"
+            label="StealthCloud"
+            description="Secure cloud backup"
+            isSelected={serverType === 'stealthcloud'}
+            onPress={() => handleServerTypeChange('stealthcloud')}
+            glassModeEnabled={glassModeEnabled}
+          />
+          <View style={styles.divider} />
+          <ServerOption
+            icon="wifi"
+            label="Local Server"
+            description="Same WiFi network"
+            isSelected={serverType === 'local'}
+            onPress={() => handleServerTypeChange('local')}
+            glassModeEnabled={glassModeEnabled}
+          />
+          <View style={styles.divider} />
+          <ServerOption
+            icon="globe"
+            label="Remote Server"
+            description="Internet connection"
+            isSelected={serverType === 'remote'}
+            onPress={() => handleServerTypeChange('remote')}
+            glassModeEnabled={glassModeEnabled}
+          />
+        </Card>
 
-          {serverType === 'local' && (
-            <>
-              <View style={settingsStyles.divider} />
-              <View style={settingsStyles.inputRow}>
-                <View style={settingsStyles.inputIconContainer}>
-                  <Icon name="wifi" size={18} color="#10B981" />
-                </View>
-                <View style={settingsStyles.inputWrapper}>
-                  <Text style={settingsStyles.inputLabel}>Local Server IP</Text>
-                  <View style={settingsStyles.inputWithButton}>
-                    <TextInput
-                      style={settingsStyles.textInput}
-                      placeholder="192.168.1.100"
-                      placeholderTextColor="#666"
-                      value={localHost}
-                      onChangeText={(t) => setLocalHost(normalizeHostInput(t))}
-                      autoCapitalize="none"
-                      keyboardType="url"
-                    />
-                    <TouchableOpacity style={settingsStyles.qrButton} onPress={onQrScan}>
-                      <Icon name="qr" size={20} color="#FFF" />
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              </View>
-              <Text style={settingsStyles.helperText}>
-                Server running on the same WiFi network
-              </Text>
-            </>
-          )}
-
-          {serverType === 'remote' && (
-            <>
-              <View style={settingsStyles.divider} />
-              <View style={settingsStyles.inputRow}>
-                <View style={settingsStyles.inputIconContainer}>
-                  <Icon name="globe" size={18} color="#8B5CF6" />
-                </View>
-                <View style={settingsStyles.inputWrapper}>
-                  <Text style={settingsStyles.inputLabel}>Remote Server Address</Text>
+        {/* Server Configuration */}
+        {serverType === 'local' && (
+          <>
+            <Text style={styles.sectionTitle}>Local Server</Text>
+            <Card glassModeEnabled={glassModeEnabled}>
+              <View style={styles.inputContainer}>
+                <Text style={styles.inputLabel}>Server IP Address</Text>
+                <View style={styles.inputRow}>
                   <TextInput
-                    style={[settingsStyles.textInput, { flex: 1 }]}
-                    placeholder="your-server.com or IP address"
+                    style={styles.textInput}
+                    placeholder="192.168.1.100"
                     placeholderTextColor="#666"
-                    value={remoteHost}
-                    onChangeText={(t) => setRemoteHost(normalizeHostInput(t))}
+                    value={localHost}
+                    onChangeText={(t) => setLocalHost(normalizeHostInput(t))}
                     autoCapitalize="none"
                     keyboardType="url"
                   />
+                  <TouchableOpacity style={styles.qrButton} onPress={onQrScan}>
+                    <Feather name="maximize" size={scale(18)} color="#FFFFFF" />
+                  </TouchableOpacity>
                 </View>
               </View>
-              <Text style={settingsStyles.helperText}>
-                Server accessible from anywhere (port 3000 must be open)
-              </Text>
-            </>
-          )}
+              <ActionButton
+                title="Save & Connect"
+                onPress={handleSaveSettings}
+                glassModeEnabled={glassModeEnabled}
+              />
+            </Card>
+          </>
+        )}
 
-          {serverType === 'stealthcloud' && (
-            <>
-              <View style={settingsStyles.divider} />
-              <View style={settingsStyles.cloudInfo}>
-                <Icon name="cloud" size={24} color="#3B82F6" />
-                <Text style={settingsStyles.cloudInfoText}>
-                  End-to-end encrypted cloud storage
-                </Text>
+        {serverType === 'remote' && (
+          <>
+            <Text style={styles.sectionTitle}>Remote Server</Text>
+            <Card glassModeEnabled={glassModeEnabled}>
+              <View style={styles.inputContainer}>
+                <Text style={styles.inputLabel}>Server Address</Text>
+                <TextInput
+                  style={[styles.textInput, { flex: 0 }]}
+                  placeholder="your-server.com or IP address"
+                  placeholderTextColor="#666"
+                  value={remoteHost}
+                  onChangeText={(t) => setRemoteHost(normalizeHostInput(t))}
+                  autoCapitalize="none"
+                  keyboardType="url"
+                />
               </View>
-            </>
-          )}
+              <ActionButton
+                title="Save & Connect"
+                onPress={handleSaveSettings}
+                glassModeEnabled={glassModeEnabled}
+              />
+            </Card>
+          </>
+        )}
 
-          {/* Current Connection */}
-          <View style={settingsStyles.divider} />
-          <View style={settingsStyles.connectionStatus}>
-            <Text style={settingsStyles.connectionLabel}>Current Connection</Text>
-            <Text style={settingsStyles.connectionUrl} numberOfLines={1}>{getServerUrl()}</Text>
+        {/* Current Connection */}
+        {serverType !== 'stealthcloud' && ((serverType === 'local' && localHost) || (serverType === 'remote' && remoteHost)) && (
+          <View style={styles.connectionInfo}>
+            <Feather name="link" size={scale(14)} color="#666" />
+            <Text style={styles.connectionText}>{getServerUrl()}</Text>
           </View>
+        )}
 
-          {/* Save Button for Local/Remote */}
-          {serverType !== 'stealthcloud' && (
-            <TouchableOpacity 
-              style={settingsStyles.saveButton}
-              onPress={handleSaveServerSettings}
-            >
-              <Text style={settingsStyles.saveButtonText}>Save & Reconnect</Text>
-            </TouchableOpacity>
-          )}
-        </View>
-
-        {/* PERFORMANCE SECTION */}
-        <SectionHeader title="Performance" glassModeEnabled={glassModeEnabled} />
-        <View style={[settingsStyles.section, glassModeEnabled && settingsStyles.sectionGlass]}>
-          <ToggleRow
-            icon="speed"
-            iconColor="#F59E0B"
-            title={fastModeEnabled ? 'Fast Mode' : 'Standard Mode'}
-            subtitle={fastModeEnabled 
-              ? 'Faster uploads, higher CPU/battery usage' 
-              : 'Balanced speed and battery efficiency'}
+        {/* Preferences */}
+        <Text style={styles.sectionTitle}>Preferences</Text>
+        <Card glassModeEnabled={glassModeEnabled}>
+          <ToggleSetting
+            icon="zap"
+            title="Fast Mode"
+            subtitle={fastModeEnabled ? 'Higher speed, more battery usage' : 'Balanced performance'}
             value={fastModeEnabled}
             onValueChange={persistFastModeEnabled}
-            trackColor="#3B82F6"
-            isFirst
-            isLast
             glassModeEnabled={glassModeEnabled}
           />
-        </View>
-        <Text style={settingsStyles.footerText}>
-          Screen stays on while app is active. Activity pauses when backgrounded.
-        </Text>
-
-        {/* APPEARANCE SECTION */}
-        <SectionHeader title="Appearance" glassModeEnabled={glassModeEnabled} />
-        <View style={[settingsStyles.section, glassModeEnabled && settingsStyles.sectionGlass]}>
-          <ToggleRow
-            icon="palette"
-            iconColor="#EC4899"
-            title={glassModeEnabled ? 'Glass Mode' : 'Standard Mode'}
-            subtitle={glassModeEnabled 
-              ? 'Frosted glass effect on cards' 
-              : 'Classic solid backgrounds'}
+          {/* Glass Effect toggle hidden for future use
+          <View style={styles.divider} />
+          <ToggleSetting
+            icon="eye"
+            title="Glass Effect"
+            subtitle={glassModeEnabled ? 'Frosted glass UI' : 'Standard appearance'}
             value={glassModeEnabled}
             onValueChange={persistGlassModeEnabled}
-            trackColor="#3B82F6"
-            isFirst
-            isLast
             glassModeEnabled={glassModeEnabled}
           />
-        </View>
+          */}
+        </Card>
 
-        {/* DANGER ZONE SECTION */}
-        <SectionHeader title="Danger Zone" glassModeEnabled={glassModeEnabled} />
-        <View style={[settingsStyles.section, settingsStyles.sectionDanger, glassModeEnabled && settingsStyles.sectionGlass]}>
-          <SettingsRow
-            icon="trash"
+        {/* Danger Zone */}
+        <Text style={[styles.sectionTitle, { color: '#EF4444' }]}>Danger Zone</Text>
+        <Card glassModeEnabled={glassModeEnabled} style={styles.dangerCard}>
+          <ActionButton
             title="Delete All Server Data"
-            subtitle="Permanently removes all your backed up files"
+            subtitle="This cannot be undone"
             onPress={serverType === 'stealthcloud' ? purgeStealthCloudData : purgeClassicServerData}
-            isFirst
-            isLast
-            glassModeEnabled={glassModeEnabled}
             danger
+            disabled={loading}
+            glassModeEnabled={glassModeEnabled}
           />
-        </View>
-        <Text style={settingsStyles.footerText}>
-          This action cannot be undone. All data will be permanently deleted.
-        </Text>
+        </Card>
 
-        {/* Bottom Spacing */}
         <View style={{ height: scaleSpacing(40) }} />
       </ScrollView>
     </View>
@@ -456,23 +310,23 @@ export const SettingsScreen = ({
 };
 
 // Styles
-const settingsStyles = StyleSheet.create({
+const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#000000',
+    backgroundColor: '#0A0A0A',
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: scaleSpacing(20),
-    paddingTop: Math.min(60, Dimensions.get('window').height * 0.04 + 20),
+    paddingTop: Math.min(60, SCREEN_HEIGHT * 0.04 + 20),
     paddingBottom: scaleSpacing(16),
     backgroundColor: '#0A0A0A',
   },
   headerTitle: {
-    fontSize: scale(28),
-    fontWeight: 'bold',
+    fontSize: scale(22),
+    fontWeight: '700',
     color: '#FFFFFF',
   },
   backButton: {
@@ -481,235 +335,200 @@ const settingsStyles = StyleSheet.create({
   },
   backButtonText: {
     fontSize: scale(16),
-    color: '#03DAC6',
-    fontWeight: '500',
+    color: '#03E1FF',
+    fontWeight: '600',
   },
   scrollView: {
     flex: 1,
   },
   scrollContent: {
-    paddingHorizontal: scaleSpacing(16),
+    paddingHorizontal: scaleSpacing(20),
     paddingTop: scaleSpacing(8),
   },
-  sectionHeader: {
-    paddingHorizontal: scaleSpacing(4),
-    paddingTop: scaleSpacing(24),
-    paddingBottom: scaleSpacing(8),
-  },
-  sectionHeaderText: {
+  sectionTitle: {
     fontSize: scale(13),
     fontWeight: '600',
-    color: '#6B7280',
-    letterSpacing: 0.5,
+    color: '#888888',
+    textTransform: 'uppercase',
+    letterSpacing: 1,
+    marginTop: scaleSpacing(24),
+    marginBottom: scaleSpacing(12),
+    marginLeft: scaleSpacing(4),
   },
-  section: {
-    backgroundColor: '#1C1C1E',
-    borderRadius: scaleSpacing(12),
+  card: {
+    backgroundColor: '#1A1A1A',
+    borderRadius: scale(16),
+    borderWidth: 1,
+    borderColor: '#2A2A2A',
     overflow: 'hidden',
   },
-  sectionGlass: {
-    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+  cardGlass: {
+    backgroundColor: 'rgba(255, 255, 255, 0.06)',
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.1)',
   },
-  sectionDanger: {
+  dangerCard: {
     borderWidth: 1,
     borderColor: 'rgba(239, 68, 68, 0.3)',
   },
-  row: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: scaleSpacing(12),
-    paddingHorizontal: scaleSpacing(16),
-    backgroundColor: '#1C1C1E',
-    minHeight: scaleSpacing(56),
-  },
-  rowFirst: {
-    borderTopLeftRadius: scaleSpacing(12),
-    borderTopRightRadius: scaleSpacing(12),
-  },
-  rowLast: {
-    borderBottomLeftRadius: scaleSpacing(12),
-    borderBottomRightRadius: scaleSpacing(12),
-  },
-  rowGlass: {
-    backgroundColor: 'transparent',
-  },
-  iconContainer: {
-    width: scaleSpacing(36),
-    height: scaleSpacing(36),
-    borderRadius: scaleSpacing(8),
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: scaleSpacing(12),
-  },
-  rowContent: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  rowTextContainer: {
-    flex: 1,
-    marginRight: scaleSpacing(12),
-  },
-  rowTitle: {
-    fontSize: scale(16),
-    fontWeight: '500',
-    color: '#FFFFFF',
-  },
-  rowSubtitle: {
-    fontSize: scale(13),
-    color: '#8E8E93',
-    marginTop: scaleSpacing(2),
-  },
-  rowValue: {
-    fontSize: scale(15),
-    color: '#8E8E93',
-    marginRight: scaleSpacing(8),
-  },
   divider: {
     height: StyleSheet.hairlineWidth,
-    backgroundColor: '#3A3A3C',
-    marginLeft: scaleSpacing(64),
+    backgroundColor: '#2A2A2A',
+    marginLeft: scaleSpacing(56),
   },
-  serverTypeContainer: {
-    padding: scaleSpacing(16),
-  },
-  serverTypeLabel: {
-    fontSize: scale(13),
-    color: '#8E8E93',
-    marginBottom: scaleSpacing(12),
-  },
-  segmentedControl: {
+  // Server Options
+  serverOption: {
     flexDirection: 'row',
-    backgroundColor: '#2C2C2E',
-    borderRadius: scaleSpacing(8),
-    padding: scaleSpacing(2),
-  },
-  segmentedControlGlass: {
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
-  },
-  segment: {
-    flex: 1,
-    paddingVertical: scaleSpacing(10),
     alignItems: 'center',
-    borderRadius: scaleSpacing(6),
-  },
-  segmentFirst: {
-    borderTopLeftRadius: scaleSpacing(6),
-    borderBottomLeftRadius: scaleSpacing(6),
-  },
-  segmentLast: {
-    borderTopRightRadius: scaleSpacing(6),
-    borderBottomRightRadius: scaleSpacing(6),
-  },
-  segmentActive: {
-    backgroundColor: '#3B82F6',
-  },
-  segmentText: {
-    fontSize: scale(13),
-    fontWeight: '500',
-    color: '#8E8E93',
-  },
-  segmentTextActive: {
-    color: '#FFFFFF',
-  },
-  inputRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    paddingVertical: scaleSpacing(12),
+    paddingVertical: scaleSpacing(16),
     paddingHorizontal: scaleSpacing(16),
   },
-  inputIconContainer: {
-    width: scaleSpacing(36),
-    height: scaleSpacing(36),
-    borderRadius: scaleSpacing(8),
-    backgroundColor: 'rgba(16, 185, 129, 0.15)',
+  serverOptionSelected: {
+    backgroundColor: 'transparent',
+    borderWidth: 2,
+    borderColor: '#03E1FF',
+    borderRadius: scale(12),
+    marginHorizontal: scaleSpacing(4),
+    marginVertical: scaleSpacing(2),
+  },
+  serverOptionGlass: {},
+  serverOptionIcon: {
+    width: scaleSpacing(40),
+    height: scaleSpacing(40),
+    borderRadius: scaleSpacing(10),
+    backgroundColor: '#2A2A2A',
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: scaleSpacing(12),
   },
-  inputWrapper: {
+  serverOptionIconSelected: {
+    backgroundColor: 'rgba(59, 130, 246, 0.2)',
+  },
+  serverOptionContent: {
     flex: 1,
   },
-  inputLabel: {
-    fontSize: scale(13),
-    color: '#8E8E93',
-    marginBottom: scaleSpacing(8),
-  },
-  inputWithButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  textInput: {
-    flex: 1,
-    backgroundColor: '#2C2C2E',
-    borderRadius: scaleSpacing(8),
-    paddingHorizontal: scaleSpacing(14),
-    paddingVertical: scaleSpacing(12),
-    fontSize: scale(15),
-    color: '#FFFFFF',
-  },
-  qrButton: {
-    width: scaleSpacing(44),
-    height: scaleSpacing(44),
-    backgroundColor: '#3B82F6',
-    borderRadius: scaleSpacing(8),
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginLeft: scaleSpacing(8),
-  },
-  helperText: {
-    fontSize: scale(12),
-    color: '#6B7280',
-    paddingHorizontal: scaleSpacing(16),
-    paddingBottom: scaleSpacing(12),
-  },
-  cloudInfo: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: scaleSpacing(16),
-  },
-  cloudInfoText: {
-    fontSize: scale(14),
-    color: '#8E8E93',
-    marginLeft: scaleSpacing(12),
-  },
-  connectionStatus: {
-    padding: scaleSpacing(16),
-  },
-  connectionLabel: {
-    fontSize: scale(12),
-    color: '#6B7280',
-    marginBottom: scaleSpacing(4),
-  },
-  connectionUrl: {
-    fontSize: scale(14),
-    color: '#10B981',
-    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
-  },
-  saveButton: {
-    marginHorizontal: scaleSpacing(16),
-    marginBottom: scaleSpacing(16),
-    backgroundColor: '#3B82F6',
-    borderRadius: scaleSpacing(10),
-    paddingVertical: scaleSpacing(14),
-    alignItems: 'center',
-  },
-  saveButtonText: {
+  serverOptionLabel: {
     fontSize: scale(16),
     fontWeight: '600',
     color: '#FFFFFF',
   },
-  footerText: {
+  serverOptionLabelSelected: {
+    color: '#FFFFFF',
+  },
+  serverOptionDesc: {
+    fontSize: scale(13),
+    color: '#888888',
+    marginTop: scaleSpacing(2),
+  },
+  checkmark: {
+    width: scaleSpacing(24),
+    height: scaleSpacing(24),
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  // Settings Row
+  settingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: scaleSpacing(14),
+    paddingHorizontal: scaleSpacing(16),
+  },
+  settingRowGlass: {},
+  settingIcon: {
+    width: scaleSpacing(40),
+    height: scaleSpacing(40),
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: scaleSpacing(12),
+  },
+  settingContent: {
+    flex: 1,
+  },
+  settingTitle: {
+    fontSize: scale(16),
+    fontWeight: '500',
+    color: '#FFFFFF',
+  },
+  settingSubtitle: {
+    fontSize: scale(13),
+    color: '#666666',
+    marginTop: 2,
+  },
+  // Input
+  inputContainer: {
+    paddingHorizontal: scaleSpacing(16),
+    paddingTop: scaleSpacing(16),
+    paddingBottom: scaleSpacing(12),
+  },
+  inputLabel: {
+    fontSize: scale(13),
+    fontWeight: '500',
+    color: '#888888',
+    marginBottom: scaleSpacing(8),
+  },
+  inputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: scaleSpacing(8),
+  },
+  textInput: {
+    flex: 1,
+    height: scaleSpacing(48),
+    backgroundColor: '#0A0A0A',
+    borderRadius: scaleSpacing(10),
+    paddingHorizontal: scaleSpacing(16),
+    fontSize: scale(16),
+    color: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#2A2A2A',
+  },
+  qrButton: {
+    width: scaleSpacing(48),
+    height: scaleSpacing(48),
+    backgroundColor: '#2A2A2A',
+    borderRadius: scaleSpacing(10),
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  // Action Button
+  actionButton: {
+    marginHorizontal: scaleSpacing(16),
+    marginVertical: scaleSpacing(16),
+    paddingVertical: scaleSpacing(14),
+    backgroundColor: '#03E1FF',
+    borderRadius: scaleSpacing(10),
+    alignItems: 'center',
+  },
+  actionButtonGlass: {},
+  actionButtonDanger: {
+    backgroundColor: 'transparent',
+  },
+  actionButtonDisabled: {
+    opacity: 0.5,
+  },
+  actionButtonText: {
+    fontSize: scale(16),
+    fontWeight: '600',
+    color: '#000000',
+  },
+  actionButtonTextDanger: {
+    color: '#EF4444',
+  },
+  actionButtonSubtitle: {
     fontSize: scale(12),
-    color: '#6B7280',
-    paddingHorizontal: scaleSpacing(20),
-    paddingTop: scaleSpacing(8),
-    paddingBottom: scaleSpacing(4),
-    lineHeight: scale(18),
+    color: '#888888',
+    marginTop: 2,
+  },
+  // Connection Info
+  connectionInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: scaleSpacing(12),
+    gap: scaleSpacing(6),
+  },
+  connectionText: {
+    fontSize: scale(13),
+    color: '#666666',
   },
 });
-
-export default SettingsScreen;

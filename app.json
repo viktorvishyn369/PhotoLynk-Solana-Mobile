@@ -2,7 +2,7 @@
   "expo": {
     "name": "PhotoLynk",
     "slug": "photosync",
-    "version": "1.2.1",
+    "version": "1.4.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
@@ -69,7 +69,7 @@
         "android.permission.RECORD_AUDIO"
       ],
       "package": "com.photolynk.solana",
-      "versionCode": 3,
+      "versionCode": 5,
       "intentFilters": [
         {
           "action": "VIEW",

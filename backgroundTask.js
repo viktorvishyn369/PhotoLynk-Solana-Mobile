@@ -40,7 +40,18 @@ export const AUTO_UPLOAD_CURSOR_KEY = 'auto_upload_cursor_v1';
 
 // Resolve readable file path (stages asset if needed)
 export const resolveReadableFilePath = async ({ assetId, assetInfo }) => {
-  const localUri = (assetInfo && (assetInfo.localUri || assetInfo.uri)) || null;
+  let localUri = (assetInfo && (assetInfo.localUri || assetInfo.uri)) || null;
+  
+  // If no localUri, try to get it via getAssetInfoAsync (needed for Android)
+  if (!localUri && assetId) {
+    try {
+      const fullInfo = await MediaLibrary.getAssetInfoAsync(assetId);
+      localUri = fullInfo?.localUri || fullInfo?.uri || null;
+    } catch (e) {
+      // Fall through to error
+    }
+  }
+  
   if (!localUri) throw new Error('Missing localUri');
   if (localUri.startsWith('file://') || localUri.startsWith('/')) {
     const p = normalizeFilePath(localUri);

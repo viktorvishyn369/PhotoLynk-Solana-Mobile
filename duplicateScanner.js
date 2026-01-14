@@ -57,9 +57,7 @@ const hammingDistance64 = (a, b) => {
 };
 
 // Cross-platform deduplication threshold for 64-bit dHash
-// Threshold of 6 bits to account for HEIC decoder differences across platforms
-// (heic-convert on desktop vs native ImageIO on iOS vs ImageDecoder on Android)
-// 6 bits = ~9% difference tolerance, still strict enough to avoid false positives
+// 6 bits = ~9% difference tolerance, accounts for iOS/Android decoder differences
 const CROSS_PLATFORM_DHASH_THRESHOLD = 6;
 
 // Extract base filename for cross-platform variant deduplication
@@ -444,6 +442,32 @@ const getHashTarget = async ({ asset, info, resolveReadableFilePath }) => {
   let tmpUri = null;
   const rawUri = (info && (info.localUri || info.uri)) || null;
   
+  // Helper to try resolving with shouldDownloadFromNetwork on iOS
+  const tryIosDownload = async () => {
+    if (Platform.OS !== 'ios') return null;
+    try {
+      const infoDownloaded = await MediaLibrary.getAssetInfoAsync(asset.id, { shouldDownloadFromNetwork: true });
+      const dlUri = (infoDownloaded && (infoDownloaded.localUri || infoDownloaded.uri)) || null;
+      if (dlUri && typeof dlUri === 'string' && (dlUri.startsWith('file://') || dlUri.startsWith('/'))) {
+        let path = dlUri.startsWith('file://') ? dlUri.replace('file://', '') : dlUri;
+        const hashIdx = path.indexOf('#');
+        if (hashIdx !== -1) path = path.slice(0, hashIdx);
+        const qIdx = path.indexOf('?');
+        if (qIdx !== -1) path = path.slice(0, qIdx);
+        try { path = decodeURI(path); } catch (e) {}
+        return { hashTarget: path, tmpCopied: false, tmpUri: null, infoDownloaded };
+      }
+      // Try staging
+      const resolved = await resolveReadableFilePath({ assetId: asset.id, assetInfo: infoDownloaded });
+      if (resolved && resolved.filePath) {
+        return { hashTarget: resolved.filePath, tmpCopied: resolved.tmpCopied || false, tmpUri: resolved.tmpUri || null, infoDownloaded };
+      }
+    } catch (e) {
+      // Failed
+    }
+    return null;
+  };
+  
   if (rawUri && typeof rawUri === 'string') {
     if (rawUri.startsWith('file://') || rawUri.startsWith('/')) {
       // Direct file path - use as-is
@@ -455,35 +479,38 @@ const getHashTarget = async ({ asset, info, resolveReadableFilePath }) => {
       if (qIdx !== -1) hashTarget = hashTarget.slice(0, qIdx);
       try { hashTarget = decodeURI(hashTarget); } catch (e) {}
     } else if (rawUri.startsWith('ph://') || rawUri.startsWith('content://')) {
-      // Always stage to temp file for consistent hashing
-      // Android content:// URIs can return different pixel data (e.g., Google Photos cloud re-encoding)
-      {
-        // Need to stage to temp file
-        try {
-          const resolved = await resolveReadableFilePath({ assetId: asset.id, assetInfo: info });
-          hashTarget = resolved && resolved.filePath ? resolved.filePath : null;
-          tmpCopied = resolved && resolved.tmpCopied ? resolved.tmpCopied : false;
-          tmpUri = resolved && resolved.tmpUri ? resolved.tmpUri : null;
-        } catch (e) {
-          // iOS fallback: try with shouldDownloadFromNetwork
-          if (Platform.OS === 'ios') {
-            try {
-              const infoDownloaded = await MediaLibrary.getAssetInfoAsync(asset.id, { shouldDownloadFromNetwork: true });
-              const dlUri = (infoDownloaded && (infoDownloaded.localUri || infoDownloaded.uri)) || null;
-              if (dlUri && typeof dlUri === 'string' && (dlUri.startsWith('file://') || dlUri.startsWith('/'))) {
-                hashTarget = dlUri.startsWith('file://') ? dlUri.replace('file://', '') : dlUri;
-              } else {
-                const resolved = await resolveReadableFilePath({ assetId: asset.id, assetInfo: infoDownloaded });
-                hashTarget = resolved && resolved.filePath ? resolved.filePath : null;
-                tmpCopied = resolved && resolved.tmpCopied ? resolved.tmpCopied : false;
-                tmpUri = resolved && resolved.tmpUri ? resolved.tmpUri : null;
-              }
-            } catch (e2) {
-              // Failed to get readable path
-            }
-          }
+      // Need to stage to temp file
+      try {
+        const resolved = await resolveReadableFilePath({ assetId: asset.id, assetInfo: info });
+        hashTarget = resolved && resolved.filePath ? resolved.filePath : null;
+        tmpCopied = resolved && resolved.tmpCopied ? resolved.tmpCopied : false;
+        tmpUri = resolved && resolved.tmpUri ? resolved.tmpUri : null;
+      } catch (e) {
+        // iOS fallback: try with shouldDownloadFromNetwork
+        const iosResult = await tryIosDownload();
+        if (iosResult) {
+          hashTarget = iosResult.hashTarget;
+          tmpCopied = iosResult.tmpCopied;
+          tmpUri = iosResult.tmpUri;
         }
       }
+    } else {
+      // Unknown URI scheme - try iOS download fallback
+      const iosResult = await tryIosDownload();
+      if (iosResult) {
+        hashTarget = iosResult.hashTarget;
+        tmpCopied = iosResult.tmpCopied;
+        tmpUri = iosResult.tmpUri;
+      }
+    }
+  } else {
+    // No rawUri at all - iOS often returns null localUri for iCloud photos
+    // Try to get it with shouldDownloadFromNetwork
+    const iosResult = await tryIosDownload();
+    if (iosResult) {
+      hashTarget = iosResult.hashTarget;
+      tmpCopied = iosResult.tmpCopied;
+      tmpUri = iosResult.tmpUri;
     }
   }
   
@@ -618,7 +645,7 @@ export const scanExactDuplicates = async ({ assets, resolveReadableFilePath, onP
     console.warn('PixelHash native module not available - will only scan videos with file hash');
   }
   
-  const hashGroups = {};
+  const allHashedItems = []; // Collect all items with hashes for Union-Find clustering
   let hashedCount = 0;
   let inspectFailed = 0;
   let hashSkipped = 0;
@@ -645,6 +672,20 @@ export const scanExactDuplicates = async ({ assets, resolveReadableFilePath, onP
       info = Platform.OS === 'ios' 
         ? await MediaLibrary.getAssetInfoAsync(asset.id, { shouldDownloadFromNetwork: true })
         : await MediaLibrary.getAssetInfoAsync(asset.id);
+      
+      // Debug: log first few assets to see if iCloud download worked
+      if (hashedCount < 5 && Platform.OS === 'ios') {
+        const ext = (info?.filename || '').split('.').pop()?.toLowerCase() || '';
+        console.log('[DupScanner] iOS asset info:', {
+          filename: info?.filename,
+          ext,
+          localUri: info?.localUri ? info.localUri.substring(0, 60) + '...' : 'null',
+          uri: info?.uri ? info.uri.substring(0, 60) + '...' : 'null',
+          width: info?.width,
+          height: info?.height,
+          mediaSubtypes: info?.mediaSubtypes, // Live Photo detection
+        });
+      }
     } catch (e) {
       inspectFailed++;
       continue;
@@ -694,32 +735,42 @@ export const scanExactDuplicates = async ({ assets, resolveReadableFilePath, onP
     }
 
     try {
-      let hashHex = null;
+      let fileHashHex = null;
+      let dHashHex = null;
+      
+      const filename = info?.filename || asset.filename || '';
+      const ext = filename.split('.').pop()?.toLowerCase() || '';
       
       if (isVideo) {
-        // Videos: use exact file hash (SHA-256)
-        hashHex = await computeExactFileHash(hashTarget);
-        if (hashHex) {
-          hashHex = 'video:' + hashHex; // Prefix to separate from image hashes
+        // Videos: use exact file hash (SHA-256) only
+        fileHashHex = await computeExactFileHash(hashTarget);
+        if (fileHashHex) {
+          fileHashHex = 'video:' + fileHashHex;
           videoCount++;
         }
-        if (hashedCount < 3 || videoCount <= 2) {
-          console.log('DuplicateScanner: Video file hash computed', {
-            filename: info?.filename || asset.filename,
-            hashStart: hashHex ? hashHex.substring(0, 20) + '...' : 'none',
-          });
+        if (hashedCount < 6 || videoCount <= 3) {
+          console.log('[DupScanner] Video hash computed:', { filename, hashStart: fileHashHex ? fileHashHex.substring(0, 30) + '...' : 'none' });
         }
       } else {
-        // Images: use perceptual hash (dHash)
-        hashHex = await PixelHash.hashImagePixels(hashTarget);
-        if (hashHex) {
-          hashHex = 'image:' + hashHex; // Prefix to separate from video hashes
-          photoCount++;
+        // Images: use perceptual dHash only (catches visually identical photos)
+        // dHash is resistant to compression, re-encoding, and minor edits
+        if (hasPixelHash) {
+          try {
+            const dHash = await PixelHash.hashImagePixels(hashTarget);
+            if (dHash) {
+              dHashHex = 'dhash:' + dHash;
+              photoCount++;
+            }
+          } catch (e) {
+            // dHash failed
+          }
         }
-        if (hashedCount < 3) {
-          console.log('DuplicateScanner: Image dHash computed', {
-            filename: info?.filename || asset.filename,
-            hashStart: hashHex ? hashHex.substring(0, 20) + '...' : 'none',
+        
+        // Log HEIC/HEIF files specifically + first few of any type
+        if (hashedCount < 6 || (ext === 'heic' || ext === 'heif') && photoCount <= 10) {
+          console.log('[DupScanner] Image dHash computed:', { 
+            filename, ext, 
+            dHash: dHashHex || 'none'
           });
         }
       }
@@ -728,11 +779,12 @@ export const scanExactDuplicates = async ({ assets, resolveReadableFilePath, onP
 
       // Progress callback
       if (hashedCount % 10 === 0 && onProgress) {
-        onProgress(hashedCount, assets.length, hashHex ? hashHex.substring(0, 12) : '');
+        onProgress(hashedCount, assets.length, fileHashHex ? fileHashHex.substring(0, 12) : '');
       }
 
-      // Group by hash - skip if hash is null/empty
-      if (!hashHex) {
+      // Group by BOTH hashes - an image can be in multiple groups
+      // This allows matching by either file hash OR perceptual hash
+      if (!fileHashHex && !dHashHex) {
         hashSkipped++;
         hashFailed++;
         if (sampleSkipped.length < 5) {
@@ -740,8 +792,19 @@ export const scanExactDuplicates = async ({ assets, resolveReadableFilePath, onP
         }
         continue;
       }
-      if (!hashGroups[hashHex]) hashGroups[hashHex] = [];
-      hashGroups[hashHex].push({ asset, info });
+      
+      // Store item with both hashes for later Union-Find grouping
+      const rawDHash = dHashHex ? dHashHex.substring(6) : null;
+      const rawFileHash = fileHashHex ? fileHashHex.substring(fileHashHex.indexOf(':') + 1) : null;
+      
+      allHashedItems.push({
+        asset,
+        info,
+        fileHashHex,
+        rawFileHash,
+        rawDHash,
+        isVideo: fileHashHex && fileHashHex.startsWith('video:'),
+      });
 
     } catch (e) {
       hashSkipped++;
@@ -767,24 +830,99 @@ export const scanExactDuplicates = async ({ assets, resolveReadableFilePath, onP
     photoCount,
     videoCount,
     hashSkipped,
+    hashFailed,
     inspectFailed,
-    hashGroupsCount: Object.keys(hashGroups).length
+    skippedNoUri,
+    allHashedItems: allHashedItems.length,
+    sampleSkipped: sampleSkipped.slice(0, 10) // Show first 10 skipped items with reasons
   });
 
-  // Convert hash groups to duplicate groups (groups with >1 item)
-  // Sort each group by creation time: oldest first (keep oldest, delete newer)
-  const duplicateGroups = [];
-  Object.values(hashGroups).forEach(group => {
+  // Union-Find for proper transitive grouping
+  const parent = new Map();
+  const rank = new Map();
+  
+  const find = (x) => {
+    if (!parent.has(x)) { parent.set(x, x); rank.set(x, 0); }
+    if (parent.get(x) !== x) { parent.set(x, find(parent.get(x))); }
+    return parent.get(x);
+  };
+  
+  const union = (x, y) => {
+    const px = find(x);
+    const py = find(y);
+    if (px === py) return;
+    const rx = rank.get(px) || 0;
+    const ry = rank.get(py) || 0;
+    if (rx < ry) { parent.set(px, py); }
+    else if (rx > ry) { parent.set(py, px); }
+    else { parent.set(py, px); rank.set(px, rx + 1); }
+  };
+
+  // Group by exact file hash first (O(n) - fast)
+  const fileHashGroups = {};
+  for (const item of allHashedItems) {
+    if (item.fileHashHex) {
+      if (!fileHashGroups[item.fileHashHex]) fileHashGroups[item.fileHashHex] = [];
+      fileHashGroups[item.fileHashHex].push(item);
+    }
+  }
+  
+  // Union items with same file hash
+  for (const group of Object.values(fileHashGroups)) {
     if (group.length > 1) {
+      for (let i = 1; i < group.length; i++) {
+        union(group[0].asset.id, group[i].asset.id);
+      }
+    }
+  }
+
+  // Fuzzy dHash comparison (O(n²) but only for images with dHash)
+  const itemsWithDHash = allHashedItems.filter(item => item.rawDHash && !item.isVideo);
+  let comparisons = 0;
+  
+  for (let i = 0; i < itemsWithDHash.length; i++) {
+    for (let j = i + 1; j < itemsWithDHash.length; j++) {
+      const dist = hammingDistance64(itemsWithDHash[i].rawDHash, itemsWithDHash[j].rawDHash);
+      if (dist <= CROSS_PLATFORM_DHASH_THRESHOLD) {
+        union(itemsWithDHash[i].asset.id, itemsWithDHash[j].asset.id);
+      }
+      comparisons++;
+      // Thermal cooldown every 2000 comparisons to reduce heat
+      if (comparisons % 2000 === 0) {
+        await new Promise(r => setTimeout(r, 100));
+      }
+    }
+  }
+
+  // Build groups from Union-Find
+  const groupMap = new Map();
+  for (const item of allHashedItems) {
+    const root = find(item.asset.id);
+    if (!groupMap.has(root)) groupMap.set(root, []);
+    groupMap.get(root).push(item);
+  }
+
+  // Convert to duplicate groups (only groups with >1 item)
+  const duplicateGroups = [];
+  for (const group of groupMap.values()) {
+    if (group.length > 1) {
+      // Sort by creation time (oldest first)
       group.sort((a, b) => {
-        const aTime = (a.info && a.info.creationTime) || a.asset.creationTime || 0;
-        const bTime = (b.info && b.info.creationTime) || b.asset.creationTime || 0;
+        const aTime = a.info?.creationTime || a.asset.creationTime || 0;
+        const bTime = b.info?.creationTime || b.asset.creationTime || 0;
         return aTime - bTime;
       });
       duplicateGroups.push(group);
+      
       console.log('DuplicateScanner: Found duplicate group, size:', group.length, 
         'keeping oldest:', (group[0].info?.filename || group[0].asset.filename));
     }
+  }
+
+  console.log('DuplicateScanner: Union-Find complete', {
+    itemsWithDHash: itemsWithDHash.length,
+    comparisons,
+    duplicateGroups: duplicateGroups.length,
   });
 
   return {
@@ -1033,6 +1171,19 @@ export const scanSimilarPhotos = async ({ resolveReadableFilePath, onProgress, o
     }
     
     if (hash) {
+      // Extract EXIF capture time (actual photo taken time) instead of file system creation time
+      // This prevents false positives when photos are copied to device (all get same fs creation time)
+      const exifData = extractExifForDedup(info, asset);
+      let captureTs = asset.creationTime || 0;
+      let hasExifTime = false;
+      if (exifData.captureTime) {
+        const parsed = Date.parse(exifData.captureTime);
+        if (!isNaN(parsed)) {
+          captureTs = parsed;
+          hasExifTime = true;
+        }
+      }
+      
       items.push({
         asset,
         info,
@@ -1040,13 +1191,23 @@ export const scanSimilarPhotos = async ({ resolveReadableFilePath, onProgress, o
         isVideo,
         edgeHash: edgeHash || null,
         cornerHash: cornerHash || null,
-        createdTs: asset.creationTime || 0,
+        createdTs: captureTs,
+        hasExifTime, // Track if we have reliable EXIF timestamp
         filename: (info && info.filename) || asset.filename || '',
       });
     }
   }
 
   console.log('DuplicateScanner: Similar hash summary', { total: all.length, hashed, photoCount, videoCount, hashFailed });
+  
+  // Debug: log first 5 items with their hashes and timestamps
+  if (items.length > 0) {
+    console.log('[SimilarScan] First 5 items with hashes:');
+    items.slice(0, 5).forEach((it, idx) => {
+      console.log(`  [${idx}] ${it.filename}: hash=${it.hash?.substring(0, 20)}..., ts=${it.createdTs}, isVideo=${it.isVideo}`);
+    });
+  }
+  
   if (onFindingMatches) onFindingMatches();
   if (onProgress) onProgress(all.length, all.length, 'Finding similar groups...');
 
@@ -1056,6 +1217,9 @@ export const scanSimilarPhotos = async ({ resolveReadableFilePath, onProgress, o
   const similarPairs = [];
   const seen = new Set();
 
+  console.log(`[SimilarScan] Starting comparison loop with ${items.length} items`);
+  let comparisonCount = 0;
+  
   for (let i = 0; i < items.length; i++) {
     // Check abort signal in comparison loop
     if (abortRef && abortRef.current) {
@@ -1065,6 +1229,7 @@ export const scanSimilarPhotos = async ({ resolveReadableFilePath, onProgress, o
     const a = items[i];
     for (let j = i + 1; j < items.length; j++) {
       const b = items[j];
+      comparisonCount++;
       
       // Videos: only match if exact same hash (both must be videos with same file hash)
       if (a.isVideo || b.isVideo) {
@@ -1096,52 +1261,50 @@ export const scanSimilarPhotos = async ({ resolveReadableFilePath, onProgress, o
       // Hamming distance between 64-bit dHash (16-char hex from native module)
       const dist = hammingDistance64(aHash, bHash);
       
-      // Edge hash comparison (5% border from all 4 sides)
-      // If edges match exactly, photos have same background/scene
-      const edgeDist = (a.edgeHash && b.edgeHash) ? hammingDistance32(a.edgeHash, b.edgeHash) : Number.MAX_SAFE_INTEGER;
-      const edgesMatch = edgeDist <= EDGE_MATCH_THRESHOLD;
-      
-      // Corner hash comparison (4 corners, grayscale)
-      // If corners match, photos have same scene framing
-      const cornerDist = (a.cornerHash && b.cornerHash) ? hammingDistance16(a.cornerHash, b.cornerHash) : Number.MAX_SAFE_INTEGER;
-      const cornersMatch = cornerDist <= CORNER_MATCH_THRESHOLD;
+      // Debug: log first 30 comparisons to see what's happening
+      if (comparisonCount <= 30) {
+        console.log(`[SimilarScan] #${comparisonCount} ${a.filename} vs ${b.filename}: dist=${dist}, dt=${Math.round(dt/1000)}s, exif=${a.hasExifTime && b.hasExifTime}`);
+      }
       
       // Determine threshold based on time proximity (scaled for 64-bit dHash)
-      // Burst shots (within 60s): allow more difference (hand shake, posture change)
-      // Longer apart: require more similarity
+      // More lenient for burst shots, stricter for photos taken far apart
+      const bothHaveExif = a.hasExifTime && b.hasExifTime;
+      
       let threshold;
-      if (dt <= 5000) {
-        // Within 5 seconds - very likely burst, allow up to 8 bits different
-        threshold = 8;
-      } else if (dt <= 30000) {
-        // Within 30 seconds - likely burst, allow up to 7 bits
-        threshold = 7;
-      } else if (dt <= 60000) {
-        // Within 1 minute - possible burst, allow up to 6 bits
-        threshold = 6;
-      } else if (dt <= 300000) {
-        // Within 5 minutes - maybe same session, allow up to 5 bits
-        threshold = 5;
+      if (bothHaveExif) {
+        // Both have reliable EXIF timestamps - use full time-based thresholds
+        if (dt <= 5000) {
+          // Within 5 seconds - burst shots
+          threshold = 20;
+        } else if (dt <= 10000) {
+          // Within 10 seconds
+          threshold = 16;
+        } else if (dt <= 30000) {
+          // Within 30 seconds
+          threshold = 12;
+        } else if (dt <= 3600000) {
+          // Within 1 hour
+          threshold = 9;
+        } else if (dt <= 21600000) {
+          // Within 6 hours
+          threshold = 6;
+        } else {
+          // More than 6 hours apart
+          threshold = 3;
+        }
       } else {
-        // More than 5 minutes apart - require very similar (4 bits)
-        threshold = 4;
+        // No EXIF - use system timestamp with stricter fallback thresholds
+        // 11 bits if within 1 hour, 3 bits otherwise
+        if (dt <= 3600000) {
+          threshold = 11;
+        } else {
+          threshold = 3;
+        }
       }
       
-      // EDGE MATCH BOOST: If edges match (same background/scene), relax threshold significantly
-      // This catches cases where subject moved but background is identical
-      if (edgesMatch) {
-        threshold = Math.max(threshold, 10); // Allow up to 10 bits different if edges match
-      }
-      
-      // CORNER MATCH BOOST: If corners match (same scene framing in B&W), relax threshold
-      // This catches cases where center changed but corners are identical
-      if (cornersMatch) {
-        threshold = Math.max(threshold, 11); // Allow up to 11 bits different if corners match
-      }
-      
-      // DOUBLE MATCH: If both edges AND corners match, very likely same scene
-      if (edgesMatch && cornersMatch) {
-        threshold = Math.max(threshold, 12); // Allow up to 12 bits different
+      // Debug: log threshold decisions for first few low-distance pairs
+      if (dist <= 15 && similarPairs.length < 20) {
+        console.log(`[SimilarScan] ${a.filename} vs ${b.filename}: dist=${dist}, threshold=${threshold}, bothExif=${bothHaveExif}, dt=${Math.round(dt/1000)}s, ${dist <= threshold ? 'MATCH' : 'SKIP'}`);
       }
       
       if (dist > threshold) continue;
@@ -1150,15 +1313,11 @@ export const scanSimilarPhotos = async ({ resolveReadableFilePath, onProgress, o
       if (seen.has(key)) continue;
       seen.add(key);
       
-      similarPairs.push({ a, b, dist, dt, edgeDist, edgesMatch, cornerDist, cornersMatch });
+      similarPairs.push({ a, b, dist, dt });
       
       if (similarPairs.length <= 5) {
         console.log('DuplicateScanner: Similar pair found', {
           dist,
-          edgeDist,
-          edgesMatch,
-          cornerDist,
-          cornersMatch,
           dt: Math.round(dt / 1000) + 's',
           threshold,
           aName: a.filename,

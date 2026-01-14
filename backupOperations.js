@@ -67,6 +67,150 @@ const getThrottleBatchCooldownMs = (fastMode) => fastMode ? 0 : 30000;
 const getThrottleChunkCooldownMs = (fastMode) => fastMode ? 0 : 300;
 
 // ============================================================================
+// ASSET COLLECTION (All Albums + iCloud/Google Cloud Download)
+// ============================================================================
+
+/**
+ * Collect all assets from device including all albums (Screenshots, Downloads, WhatsApp, etc.)
+ * Also triggers iCloud/Google Cloud download for cloud-only items before dedup
+ */
+const collectAllAssetsWithCloudDownload = async ({
+  onStatus,
+  onProgress,
+  progressStart = 0.02,
+  progressEnd = 0.08,
+  abortRef,
+}) => {
+  const mediaTypes = Platform.OS === 'ios'
+    ? [MediaLibrary.MediaType.photo, MediaLibrary.MediaType.video]
+    : ['photo', 'video'];
+  
+  const allAssets = [];
+  const seenIds = new Set();
+  let after = null;
+  
+  // Get total count first
+  let totalCount = 0;
+  try {
+    const countPage = await MediaLibrary.getAssetsAsync({ first: 1, mediaType: mediaTypes });
+    totalCount = countPage?.totalCount || 0;
+  } catch (e) {
+    totalCount = 1000;
+  }
+
+  updateStatus(onStatus, `Scanning 0 of ${totalCount} local photos...`, true);
+  // Don't update progress during scanning - keep progress bar hidden
+
+  // Phase 1: Collect from main library (paged)
+  while (true) {
+    if (abortRef?.current) return { assets: allAssets, aborted: true };
+
+    const page = await MediaLibrary.getAssetsAsync({
+      first: PAGE_SIZE,
+      after: after || undefined,
+      mediaType: mediaTypes,
+      sortBy: Platform.OS === 'ios' ? [MediaLibrary.SortBy.creationTime] : undefined,
+    });
+
+    const assets = page?.assets || [];
+    for (const asset of assets) {
+      if (!seenIds.has(asset.id)) {
+        seenIds.add(asset.id);
+        allAssets.push(asset);
+      }
+    }
+
+    // Don't update progress during scanning - keep progress bar hidden
+    updateStatus(onStatus, `Scanning ${allAssets.length} of ${totalCount} local photos...`);
+
+    after = page?.endCursor;
+    if (!page?.hasNextPage) break;
+    if (assets.length === 0) break;
+    await yieldToUi();
+  }
+
+  // Phase 2: Scan all albums to catch Screenshots, Downloads, WhatsApp, user folders, etc.
+  try {
+    const albums = await MediaLibrary.getAlbumsAsync({ includeSmartAlbums: true });
+    updateStatus(onStatus, `Scanning ${albums.length} albums...`);
+    
+    for (let i = 0; i < albums.length; i++) {
+      if (abortRef?.current) return { assets: allAssets, aborted: true };
+
+      const album = albums[i];
+      try {
+        let albumAfter = null;
+        while (true) {
+          const albumPage = await MediaLibrary.getAssetsAsync({
+            first: PAGE_SIZE,
+            after: albumAfter || undefined,
+            album: album.id,
+            mediaType: mediaTypes,
+          });
+          
+          const albumAssets = albumPage?.assets || [];
+          for (const asset of albumAssets) {
+            if (!seenIds.has(asset.id)) {
+              seenIds.add(asset.id);
+              allAssets.push(asset);
+            }
+          }
+          
+          albumAfter = albumPage?.endCursor;
+          if (!albumPage?.hasNextPage || albumAssets.length === 0) break;
+        }
+      } catch (e) {
+        // Skip failed albums
+      }
+
+      if (i % 5 === 0) {
+        await yieldToUi();
+        // Don't update progress during scanning - keep progress bar hidden
+        updateStatus(onStatus, `Scanning albums... ${allAssets.length} items found`);
+      }
+    }
+  } catch (e) {
+    console.log('[Backup] Album scan error:', e?.message);
+  }
+
+  // Phase 3: Trigger iCloud/Google Cloud download for cloud-only items (iOS mainly)
+  if (Platform.OS === 'ios') {
+    updateStatus(onStatus, `Checking ${allAssets.length} items for cloud availability...`);
+    let cloudDownloadCount = 0;
+    
+    for (let i = 0; i < allAssets.length; i++) {
+      if (abortRef?.current) return { assets: allAssets, aborted: true };
+      
+      try {
+        const asset = allAssets[i];
+        const info = await MediaLibrary.getAssetInfoAsync(asset.id);
+        
+        if (!info?.localUri && info?.uri) {
+          cloudDownloadCount++;
+        }
+      } catch (e) {
+        // Skip items that fail
+      }
+      
+      if (i % 50 === 0) {
+        await yieldToUi();
+        // Don't update progress during scanning - keep progress bar hidden
+        if (cloudDownloadCount > 0) {
+          updateStatus(onStatus, `Downloading ${cloudDownloadCount} items from iCloud...`);
+        }
+      }
+    }
+    
+    if (cloudDownloadCount > 0) {
+      console.log(`[Backup] Triggered iCloud download for ${cloudDownloadCount} items`);
+    }
+  }
+
+  // Don't update progress here - keep progress bar hidden until actual backup starts
+  return { assets: allAssets, aborted: false };
+};
+
+// ============================================================================
 // PROGRESS TRACKING (Module-level, reset per operation)
 // ============================================================================
 
@@ -98,14 +242,17 @@ const updateStatus = (onStatus, text, force = false) => {
   }
 };
 
-// Yield to UI - use requestAnimationFrame for true frame-based yielding
+// Yield to UI - use InteractionManager + setImmediate for best React Native responsiveness
 const yieldToUi = () => new Promise(resolve => {
-  // requestAnimationFrame waits for actual next frame - best for UI responsiveness
-  if (typeof requestAnimationFrame !== 'undefined') {
-    requestAnimationFrame(() => resolve());
-  } else {
-    setTimeout(resolve, 16);
-  }
+  // Use InteractionManager to wait for animations/interactions to complete
+  InteractionManager.runAfterInteractions(() => {
+    // Then use setImmediate to yield to the event loop
+    if (typeof setImmediate !== 'undefined') {
+      setImmediate(resolve);
+    } else {
+      setTimeout(resolve, 0);
+    }
+  });
 });
 
 // Longer yield for navigation - waits for animations
@@ -310,9 +457,9 @@ const checkDedupByHash = (fileHash, perceptualHash, dedupSets, sessionHashes) =>
  */
 const getAssetFileInfo = async (asset) => {
   const assetInfo = await withRetries(async () => {
-    return Platform.OS === 'android'
-      ? await MediaLibrary.getAssetInfoAsync(asset.id, { shouldDownloadFromNetwork: true })
-      : await MediaLibrary.getAssetInfoAsync(asset.id);
+    // shouldDownloadFromNetwork: true ensures iCloud photos are fully downloaded before hashing
+    // This is critical for cross-device deduplication - without it, iOS may hash a low-res placeholder
+    return await MediaLibrary.getAssetInfoAsync(asset.id, { shouldDownloadFromNetwork: true });
   }, { retries: 5, baseDelayMs: 1000, maxDelayMs: 15000, shouldRetry: () => true });
 
   const resolved = await resolveReadableFilePath({ assetId: asset.id, assetInfo });
@@ -715,62 +862,37 @@ export const stealthCloudBackupCore = async ({
   const masterKey = await getStealthCloudMasterKey();
   await yieldToUi();
 
-  // ========== PHASE 3: Scan Local Photos (0-5%) ==========
-  onStatus('Scanning local photos...');
-  updateProgress(onProgress, 0.02, true);
+  // ========== PHASE 3: Scan All Local Photos + Albums + iCloud Download (0-8%) ==========
+  // Scans main library + all albums (Screenshots, Downloads, WhatsApp, user folders)
+  // Also triggers iCloud/Google Cloud download for cloud-only items before dedup
+  const { assets: allAssets, aborted: scanAborted } = await collectAllAssetsWithCloudDownload({
+    onStatus,
+    onProgress,
+    progressStart: 0.02,
+    progressEnd: 0.08,
+    abortRef,
+  });
 
-  const mediaTypeQuery = Platform.OS === 'ios'
-    ? [MediaLibrary.MediaType.photo, MediaLibrary.MediaType.video]
-    : ['photo', 'video'];
-  const sortByQuery = Platform.OS === 'ios'
-    ? [MediaLibrary.SortBy.creationTime]
-    : undefined;
-
-  const allAssets = [];
-  let after = null;
-  let totalCount = null;
-
-  while (true) {
-    const page = await MediaLibrary.getAssetsAsync({
-      first: PAGE_SIZE,
-      after: after || undefined,
-      mediaType: mediaTypeQuery,
-      sortBy: sortByQuery,
-    });
-
-    if (totalCount === null && page?.totalCount) {
-      totalCount = page.totalCount;
-    }
-
-    const assets = page?.assets || [];
-    if (assets.length === 0) {
-      if (allAssets.length === 0) {
-        return { uploaded: 0, skipped: 0, failed: 0, noFiles: true };
-      }
-      break;
-    }
-
-    allAssets.push(...assets);
-    
-    // Progress: 2-5% during scan
-    const scanProgress = 0.02 + (allAssets.length / (totalCount || allAssets.length)) * 0.03;
-    updateProgress(onProgress, scanProgress);
-    updateStatus(onStatus, `Scanning ${allAssets.length} of ${totalCount || '?'} local photos...`);
-
-    after = page?.endCursor;
-    if (!page?.hasNextPage) break;
-    await yieldToUi();
+  if (scanAborted) {
+    return { uploaded: 0, skipped: 0, failed: 0, aborted: true };
   }
 
-  // ========== PHASE 4: Fetch Server State (5-10%) ==========
+  if (allAssets.length === 0) {
+    updateProgress(onProgress, 1.0, true);
+    onStatus('No photos found to backup');
+    return { uploaded: 0, skipped: 0, failed: 0, noFiles: true };
+  }
+
+  console.log(`[Backup] Collected ${allAssets.length} assets from all albums`);
+
+  // ========== PHASE 4: Fetch Server State ==========
+  // Progress stays at 0 during fetching (progress bar hidden)
   onStatus('Fetching server state...');
-  updateProgress(onProgress, 0.05, true);
 
   let serverManifests = [];
   try {
     serverManifests = await fetchManifestsWithMeta(SERVER_URL, config, (fetched, total) => {
-      const fetchProgress = 0.05 + (fetched / (total || fetched)) * 0.05;
-      updateProgress(onProgress, fetchProgress);
+      // Don't update progress during fetching - keep progress bar hidden
       updateStatus(onStatus, `Fetching ${fetched}${total > fetched ? ` of ${total}` : ''} server files...`);
     });
   } catch (e) {
@@ -780,14 +902,13 @@ export const stealthCloudBackupCore = async ({
 
   // ========== PHASE 5: Build Dedup Sets (instant) ==========
   onStatus('Preparing deduplication...');
-  updateProgress(onProgress, 0.10, true);
   
   const dedupSets = buildDedupSetsFromMeta(serverManifests);
   console.log(`[Backup] Server: ${serverManifests.length} files, Dedup sets: manifestIds=${dedupSets.manifestIds.size}, filenames=${dedupSets.filenames.size}, fileHashes=${dedupSets.fileHashes.size}, perceptualHashes=${dedupSets.perceptualHashes.size}`);
   
   await yieldToUi();
 
-  // ========== PHASE 6: Process Each File (10-100%) ==========
+  // ========== PHASE 6: Process Each File (0-100%) ==========
   const sessionHashes = {
     sessionFileHashes: new Set(),
     sessionPerceptualHashes: new Set(),
@@ -808,10 +929,10 @@ export const stealthCloudBackupCore = async ({
     const asset = allAssets[i];
     const fileNum = i + 1;
     
-    // Progress: 10-100%
-    const fileProgress = 0.10 + (fileNum / totalFiles) * 0.90;
+    // Progress: 0-100% (starts at beginning of file, ends after last file)
+    const fileProgress = i / totalFiles;
     updateProgress(onProgress, fileProgress);
-    updateStatus(onStatus, `Processing ${fileNum} of ${totalFiles}...`);
+    updateStatus(onStatus, `Backing up ${fileNum} of ${totalFiles}...`);
 
     // Yield every few files to keep UI responsive
     if (i % 5 === 0) await yieldToUi();

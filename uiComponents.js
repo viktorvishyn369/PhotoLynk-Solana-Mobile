@@ -59,7 +59,7 @@ export const GradientSpinner = ({ size = 80 }) => {
     outputRange: [0.9, 1.1],
   });
 
-  const colors = ['#60A5FA', '#3B82F6', '#2563EB', '#1D4ED8'];
+  const colors = ['#03E1FF', '#00FFA3', '#02C4E0', '#00CC88'];
   const petalCount = 8;
   const petals = [];
 

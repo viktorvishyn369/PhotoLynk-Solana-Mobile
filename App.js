@@ -106,6 +106,7 @@ import * as Network from 'expo-network';
 import * as Battery from 'expo-battery';
 import * as BackgroundFetch from 'expo-background-fetch';
 import * as TaskManager from 'expo-task-manager';
+import * as ImageManipulator from 'expo-image-manipulator';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { v4 as uuidv4, v5 as uuidv5 } from 'uuid';
 import { Feather } from '@expo/vector-icons';
@@ -132,6 +133,9 @@ import {
 } from './syncOperations';
 import { fetchStealthCloudPickerPage, fetchLocalRemotePickerPage } from './syncPickerOperations';
 import { SettingsScreen } from './SettingsScreen';
+import { InfoScreen } from './InfoScreen';
+import { LoginScreen } from './LoginScreen';
+import { HomeScreen } from './HomeScreen';
 import {
   validateAuthInputs,
   resolveEffectiveServerSettings,
@@ -154,6 +158,10 @@ import { stealthCloudBackupCore, stealthCloudBackupSelectedCore } from './backup
 import { localRemoteBackupCore, localRemoteBackupSelectedCore } from './uploadOperations';
 import { startSimilarShotsReviewCore, buildDefaultSimilarSelection as buildDefaultSimilarSelectionCore, startExactDuplicatesScanCore } from './cleanDuplicatesOperations';
 import { buildResultMessage, checkTierAvailability } from './uiHelpers';
+import NFTOperations, { checkStealthCloudEligibility } from './nftOperations';
+import NFTPhotoPicker from './NFTPhotoPicker';
+import NFTGallery from './NFTGallery';
+import NFTTransferModal from './NFTTransferModal';
 
 // Constants moved from inline definitions
 const APP_DISPLAY_NAME = 'PhotoLynk';
@@ -237,7 +245,7 @@ export default function App() {
   const [syncPickerLoadingMore, setSyncPickerLoadingMore] = useState(false);
   const [syncPickerSelected, setSyncPickerSelected] = useState({});
   const [syncPickerAuthHeaders, setSyncPickerAuthHeaders] = useState(null);
-  const SYNC_PICKER_PAGE_SIZE = 18; // Items per page
+  const SYNC_PICKER_PAGE_SIZE = 18; // Items per page (18 for thumbnails)
   const [cleanupModeOpen, setCleanupModeOpen] = useState(false);
   const [quickSetupOpen, setQuickSetupOpen] = useState(false);
   const [authLoadingLabel, setAuthLoadingLabel] = useState('Signing in...');
@@ -248,11 +256,15 @@ export default function App() {
   const [similarGroups, setSimilarGroups] = useState([]);
   const [similarGroupIndex, setSimilarGroupIndex] = useState(0);
   const [similarSelected, setSimilarSelected] = useState({});
+  const [similarPhotoIndex, setSimilarPhotoIndex] = useState(0); // Current photo in full-screen view
   const [customAlert, setCustomAlert] = useState(null); // { title, message, buttons }
+  const [inlineNotification, setInlineNotification] = useState(null); // { title, message, type: 'success'|'error'|'warning' }
+  const [showCompletionTick, setShowCompletionTick] = useState(false);
+  const [completionMessage, setCompletionMessage] = useState('');
   const [stealthCapacity, setStealthCapacity] = useState(null);
   const [stealthCapacityLoading, setStealthCapacityLoading] = useState(false);
   const [stealthCapacityError, setStealthCapacityError] = useState(null);
-  const [selectedStealthPlanGb, setSelectedStealthPlanGb] = useState(null);
+  const [selectedStealthPlanGb, setSelectedStealthPlanGb] = useState(100);
   const [stealthUsage, setStealthUsage] = useState(null);
   const [stealthUsageLoading, setStealthUsageLoading] = useState(false);
   const [stealthUsageError, setStealthUsageError] = useState(null);
@@ -272,6 +284,14 @@ export default function App() {
   const [wasBackgroundedDuringWork, setWasBackgroundedDuringWork] = useState(false);
   const [backgroundWarnEligible, setBackgroundWarnEligible] = useState(false);
   const [quickSetupCollapsed, setQuickSetupCollapsed] = useState(true);
+  const [quickSetupHighlightInput, setQuickSetupHighlightInput] = useState(false);
+  
+  // NFT state
+  const [nftPickerOpen, setNftPickerOpen] = useState(false);
+  const [nftGalleryOpen, setNftGalleryOpen] = useState(false);
+  const [nftTransferOpen, setNftTransferOpen] = useState(false);
+  const [nftToTransfer, setNftToTransfer] = useState(null);
+  const [nftMinting, setNftMinting] = useState(false);
 
   const backgroundWarnEligibleRef = useRef(false);
   const wasBackgroundedDuringWorkRef = useRef(false);
@@ -492,10 +512,48 @@ export default function App() {
   };
   const closeDarkAlert = () => setCustomAlert(null);
 
-  // Standardized result popup for backup/sync/cleanup operations
+  // Show completion tick - stays until user taps to dismiss
+  const showCompletionTickBriefly = (message = '') => {
+    setCompletionMessage(message);
+    setShowCompletionTick(true);
+    // No auto-hide - user must tap to dismiss
+  };
+  
+  // Dismiss completion tick on user tap
+  const dismissCompletionTick = () => {
+    setShowCompletionTick(false);
+    setCompletionMessage('');
+  };
+
+  // Standardized result for backup/sync/cleanup operations - shows tick
   const showResultAlert = (type, stats) => {
-    const { title, message } = buildResultMessage(type, stats);
-    showDarkAlert(title, message);
+    // Only show tick for success, not errors
+    if (!stats.error) {
+      let msg = '';
+      if (type === 'backup') {
+        const u = stats.uploaded || 0;
+        const s = stats.skipped || 0;
+        const total = u + s;
+        if (u > 0) {
+          msg = `${u} of ${total} uploaded`;
+        } else {
+          msg = `${s} files on server`;
+        }
+      } else if (type === 'sync') {
+        const d = stats.downloaded || 0;
+        const s = stats.skipped || 0;
+        const total = d + s;
+        if (d > 0) {
+          msg = `${d} of ${total} downloaded`;
+        } else {
+          msg = `${s} files on device`;
+        }
+      } else if (type === 'cleanup' || type === 'clean') {
+        const del = stats.deleted || 0;
+        msg = del > 0 ? `${del} files deleted` : '0 duplicates found';
+      }
+      showCompletionTickBriefly(msg);
+    }
   };
 
   const openPaywall = (tierGb) => {
@@ -1364,6 +1422,7 @@ export default function App() {
     setWasBackgroundedDuringWorkSafe(false);
     setProgress(0);
     setProgressAction('backup');
+    setStatus('Backup: Preparing...');
 
     if (Platform.OS === 'ios') {
       const ap = await getMediaLibraryAccessPrivileges(permission);
@@ -1388,7 +1447,8 @@ export default function App() {
         getAuthHeaders,
         getServerUrl,
         ensureStealthCloudUploadAllowed,
-        ensureAutoUploadPolicyAllowsWorkIfBackgrounded,
+        // Don't pass ensureAutoUploadPolicyAllowsWorkIfBackgrounded for user-initiated operations
+        // This allows the operation to pause when backgrounded and resume when foregrounded
         fastMode: fastModeEnabledRef.current,
         onStatus: (s) => setStatusSafe(opId, s),
         onProgress: (p) => setProgressSafe(opId, p),
@@ -1458,6 +1518,7 @@ export default function App() {
     setWasBackgroundedDuringWorkSafe(false);
     setProgress(0);
     setProgressAction('backup');
+    setStatus('Backup: Preparing...');
 
     // Enable background warning only after we start actual work (permission already granted inside core)
     setTimeout(() => { if (loadingRef.current) setBackgroundWarnEligibleSafe(true); }, 2000);
@@ -1468,7 +1529,7 @@ export default function App() {
         getAuthHeaders,
         getServerUrl,
         resolveReadableFilePath,
-        ensureAutoUploadPolicyAllowsWorkIfBackgrounded,
+        appStateRef, // Pass appStateRef so upload can pause when backgrounded
         onStatus: setStatus,
         onProgress: setProgress,
       });
@@ -1484,13 +1545,20 @@ export default function App() {
       }
 
       if (result.alreadyBackedUp) {
-        setStatus('Up to date');
-        showDarkAlert('Up to Date', 'All selected items are already on the server (or were excluded).');
+        const count = result.skipped || list.length;
+        setProgress(1); // Show 100% before checkmark
+        setStatus(`All ${count} files already backed up`);
+        await sleep(400); // Brief pause to show 100%
+        showCompletionTickBriefly(`${count} files on server`);
+        setProgress(0);
         return;
       }
 
+      setProgress(1); // Show 100% before checkmark
       setStatus('Backup complete');
+      await sleep(400); // Brief pause to show 100%
       showResultAlert('backup', { uploaded: result.uploaded, skipped: result.skipped, failed: result.failed });
+      setProgress(0);
     } catch (error) {
       setStatus('Backup error');
       showResultAlert('backup', { error: error && error.message ? error.message : 'Unknown error' });
@@ -1498,7 +1566,6 @@ export default function App() {
       setLoadingSafe(false);
       setBackgroundWarnEligibleSafe(false);
       setWasBackgroundedDuringWorkSafe(false);
-      setProgress(0);
     }
   };
 
@@ -1615,37 +1682,115 @@ export default function App() {
     try {
       const permission = await MediaLibrary.requestPermissionsAsync();
       if (permission.status !== 'granted') { showDarkAlert('Permission needed', 'We need access to photos to back them up.'); return; }
-      const first = 60;
+      const first = 18; // 18 files per batch for thumbnails
       const after = reset ? null : backupPickerAfter;
       const page = await MediaLibrary.getAssetsAsync({ first, after: after || undefined, mediaType: ['photo', 'video'] });
       const assets = page && Array.isArray(page.assets) ? page.assets : [];
-      // Ensure each asset has a usable thumbnail URI
-      // On Android, content:// URIs don't work with Image - need localUri (file://)
-      // On iOS, ph:// URIs work but localUri is more reliable
-      const enrichedAssets = await Promise.all(
-        assets.map(async (a) => {
-          try {
-            // Always fetch asset info to get localUri which works on all platforms
-            const info = await MediaLibrary.getAssetInfoAsync(a.id);
-            let thumbUri = info?.localUri || info?.uri || a?.uri;
-            
-            // On iOS, videos need a generated thumbnail - localUri points to video file, not an image
-            if (Platform.OS === 'ios' && a.mediaType === 'video' && info?.localUri) {
-              try {
-                const { uri: videoThumbUri } = await VideoThumbnails.getThumbnailAsync(info.localUri, { time: 0 });
-                if (videoThumbUri) thumbUri = videoThumbUri;
-              } catch (thumbErr) {
-                // Fall back to original URI if thumbnail generation fails
-              }
-            }
-            
-            return { ...a, thumbUri: thumbUri || null };
-          } catch (e) {
-            return { ...a, thumbUri: a.uri || null };
+      // Use a.uri for thumbnails - works on Android for both photos and videos
+      const basicAssets = assets.map(a => ({ ...a, thumbUri: a.uri || null }));
+      setBackupPickerAssets(prev => reset ? basicAssets : prev.concat(basicAssets));
+      
+      // Only enrich iOS formats (HEIC, HEIF) on Android - other formats work with a.uri
+      // This makes loading much faster while still supporting iOS photo formats
+      const enrichThumbnail = async (asset, index) => {
+        try {
+          const ext = (asset.filename || '').split('.').pop()?.toLowerCase();
+          const isVideo = asset.mediaType === 'video' || ['mov', 'mp4', 'avi', 'mkv', 'm4v', '3gp', 'webm'].includes(ext);
+          
+          // Skip videos - a.uri works fine
+          if (isVideo) {
+            return;
           }
-        })
-      );
-      setBackupPickerAssets(prev => reset ? enrichedAssets : prev.concat(enrichedAssets));
+          
+          // Only enrich iOS formats that may not display on Android
+          const iosFormats = ['heic', 'heif', 'avif'];
+          if (!iosFormats.includes(ext)) {
+            return; // Skip common formats - a.uri works fine
+          }
+          
+          const info = await MediaLibrary.getAssetInfoAsync(asset.id, { shouldDownloadFromNetwork: true });
+          let thumbUri = info?.localUri || info?.uri || asset?.uri;
+          
+          if (false) { // Disabled - videos handled above
+            // For videos on Android, try to generate thumbnail
+            // If that fails, use localUri (file://) which can display on Android
+            let videoThumbUri = null;
+            try {
+              // Try multiple URIs for video thumbnails - localUri is preferred
+              const videoUriCandidates = [info?.localUri, info?.uri, asset?.uri].filter(Boolean);
+              for (const videoUri of videoUriCandidates) {
+                if (videoThumbUri) break;
+                try {
+                  // Try time=0 first (works for all videos), then time=1000 as fallback
+                  let result = await VideoThumbnails.getThumbnailAsync(videoUri, { time: 0 });
+                  if (!result?.uri) {
+                    result = await VideoThumbnails.getThumbnailAsync(videoUri, { time: 1000 });
+                  }
+                  if (result?.uri) {
+                    videoThumbUri = result.uri;
+                  }
+                } catch (innerErr) {
+                  // Try next URI candidate
+                  console.log('[VideoThumb] Failed for', videoUri?.substring(0, 50), innerErr?.message);
+                }
+              }
+            } catch (thumbErr) {
+              console.log('[VideoThumb] Outer error', thumbErr?.message);
+            }
+            // Use generated thumbnail, or fall back to localUri (file://) which works on Android
+            if (videoThumbUri) {
+              thumbUri = videoThumbUri;
+              console.log('[VideoThumb] SUCCESS:', asset.filename, thumbUri?.substring(0, 50));
+            } else if (info?.localUri && info.localUri.startsWith('file://')) {
+              // On Android, file:// URIs can display - use as fallback
+              thumbUri = info.localUri;
+              console.log('[VideoThumb] FALLBACK to localUri:', asset.filename, thumbUri?.substring(0, 50));
+            } else {
+              // No displayable URI available - thumbUri stays null, won't update state
+              thumbUri = null;
+              console.log('[VideoThumb] NO VALID URI:', asset.filename, 'localUri:', info?.localUri?.substring(0, 50));
+            }
+          }
+          
+          // On Android, HEIC photos need conversion
+          if (Platform.OS === 'android' && asset.mediaType === 'photo' && (ext === 'heic' || ext === 'heif')) {
+            try {
+              const sourceUri = info?.localUri || info?.uri || asset?.uri;
+              if (sourceUri) {
+                const manipResult = await ImageManipulator.manipulateAsync(
+                  sourceUri,
+                  [{ resize: { width: 200 } }],
+                  { compress: 0.7, format: ImageManipulator.SaveFormat.JPEG }
+                );
+                if (manipResult?.uri) thumbUri = manipResult.uri;
+              }
+            } catch (heicErr) {
+              // Keep original URI
+            }
+          }
+          
+          // Only update if we have a valid thumbUri - don't overwrite with null/undefined
+          if (thumbUri) {
+            setBackupPickerAssets(prev => {
+              const updated = [...prev];
+              const targetIndex = reset ? index : prev.length - assets.length + index;
+              if (updated[targetIndex] && updated[targetIndex].id === asset.id) {
+                updated[targetIndex] = { ...updated[targetIndex], thumbUri };
+              }
+              return updated;
+            });
+          }
+        } catch (e) {
+          // Keep original URI on error
+        }
+      };
+      
+      // Process thumbnails in small batches to avoid blocking
+      const BATCH_SIZE = 4;
+      for (let i = 0; i < assets.length; i += BATCH_SIZE) {
+        const batch = assets.slice(i, i + BATCH_SIZE);
+        await Promise.all(batch.map((a, batchIdx) => enrichThumbnail(a, i + batchIdx)));
+      }
       setBackupPickerAfter(page && page.endCursor ? page.endCursor : null);
       setBackupPickerHasNext(!!(page && page.hasNextPage));
     } catch (e) {} finally { setBackupPickerLoading(false); }
@@ -1671,7 +1816,7 @@ export default function App() {
   const closeSyncModeChooser = () => setSyncModeOpen(false);
   const openCleanupModeChooser = () => { if (loadingRef.current) return; setCleanupModeOpen(true); };
   const closeCleanupModeChooser = () => setCleanupModeOpen(false);
-  const closeSimilarReview = () => { setSimilarReviewOpen(false); setSimilarGroups([]); setSimilarGroupIndex(0); setSimilarSelected({}); };
+  const closeSimilarReview = () => { setSimilarReviewOpen(false); setSimilarGroups([]); setSimilarGroupIndex(0); setSimilarSelected({}); setSimilarPhotoIndex(0); };
 
   const buildDefaultSimilarSelection = (group) => {
     const items = Array.isArray(group) ? group : [];
@@ -1683,7 +1828,7 @@ export default function App() {
   const openSimilarGroup = ({ groups, index }) => {
     const g = Array.isArray(groups) ? groups : [];
     const i = typeof index === 'number' ? index : 0;
-    setSimilarGroups(g); setSimilarGroupIndex(i); setSimilarSelected(buildDefaultSimilarSelection(g[i] || [])); setSimilarReviewOpen(true);
+    setSimilarGroups(g); setSimilarGroupIndex(i); setSimilarSelected(buildDefaultSimilarSelection(g[i] || [])); setSimilarPhotoIndex(0); setSimilarReviewOpen(true);
   };
 
   const toggleSimilarSelected = (assetId) => {
@@ -1700,8 +1845,131 @@ export default function App() {
   const advanceSimilarGroup = ({ groups, nextIndex }) => {
     const g = Array.isArray(groups) ? groups : [];
     const i = typeof nextIndex === 'number' ? nextIndex : 0;
-    if (i >= g.length) { closeSimilarReview(); setStatus('Cleanup complete'); showDarkAlert('Similar Photos', 'Review complete.'); return; }
+    if (i >= g.length) { closeSimilarReview(); setStatus('Cleanup complete'); showCompletionTickBriefly('Cleanup done'); return; }
     openSimilarGroup({ groups: g, index: i });
+  };
+
+  // ============================================================================
+  // NFT FUNCTIONS
+  // ============================================================================
+  
+  const openNftPicker = () => {
+    if (loadingRef.current) return;
+    setNftPickerOpen(true);
+  };
+  
+  const closeNftPicker = () => {
+    setNftPickerOpen(false);
+  };
+  
+  const openNftGallery = () => {
+    setNftGalleryOpen(true);
+  };
+  
+  const closeNftGallery = () => {
+    setNftGalleryOpen(false);
+  };
+  
+  const handleNftTransfer = (nft) => {
+    setNftToTransfer(nft);
+    setNftTransferOpen(true);
+  };
+  
+  const closeNftTransfer = () => {
+    setNftTransferOpen(false);
+    setNftToTransfer(null);
+  };
+  
+  const handleNftTransferComplete = async (result) => {
+    closeNftTransfer();
+    showCompletionTickBriefly('NFT transferred');
+    // Refresh gallery if open
+    if (nftGalleryOpen) {
+      // Gallery will refresh on its own
+    }
+  };
+  
+  const handleMintNFT = async ({ asset, filePath, name, description, stripExif, storageOption, serverConfig }) => {
+    if (!asset || !filePath) {
+      showDarkAlert('Error', 'No photo selected');
+      return;
+    }
+    
+    setNftMinting(true);
+    setLoadingSafe(true);
+    setStatus('NFT: Preparing...');
+    setProgress(0);
+    setProgressAction('nft');
+    
+    try {
+      // Initialize NFT module
+      await NFTOperations.initializeNFT();
+      
+      // Estimate cost first
+      const fileInfo = await FileSystem.getInfoAsync(filePath);
+      const costEstimate = await NFTOperations.estimateNFTMintCost(fileInfo.size || 100000);
+      
+      // Determine commission based on storage option
+      const useCloud = storageOption === 'cloud';
+      const commissionUsd = useCloud 
+        ? NFTOperations.NFT_FEES.APP_COMMISSION_CLOUD_USD 
+        : NFTOperations.NFT_FEES.APP_COMMISSION_IPFS_USD;
+      const storageLabel = useCloud ? 'StealthCloud' : 'IPFS';
+      
+      // Show cost confirmation
+      const confirmMint = await new Promise((resolve) => {
+        setCustomAlert({
+          title: 'Confirm NFT Minting',
+          message: `Estimated cost: ${costEstimate.total.solFormatted} SOL (${costEstimate.total.usdFormatted})\n\nThis includes:\n• ${storageLabel} storage\n• Solana rent\n• App commission: $${commissionUsd.toFixed(2)}\n\nProceed with minting?`,
+          buttons: [
+            { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
+            { text: 'Mint NFT', onPress: () => resolve(true) },
+          ],
+        });
+      });
+      
+      if (!confirmMint) {
+        setNftMinting(false);
+        setLoadingSafe(false);
+        setStatus('Idle');
+        setProgress(0);
+        return;
+      }
+      
+      // Mint the NFT
+      const result = await NFTOperations.mintPhotoNFT({
+        asset,
+        filePath,
+        name,
+        description,
+        stripExif,
+        storageOption,
+        serverConfig,
+        onProgress: (p) => setProgress(p),
+        onStatus: (s) => setStatus(`NFT: ${s}`),
+      });
+      
+      if (result.success) {
+        setStatus('NFT minted successfully!');
+        await sleep(400);
+        showCompletionTickBriefly('NFT minted!');
+        
+        // Show success with explorer link
+        showDarkAlert(
+          'NFT Created!',
+          `Your photo NFT "${name}" has been minted on Solana.\n\nMint Address:\n${result.mintAddress?.slice(0, 20)}...\n\nView in your NFT Gallery or check on Solana Explorer.`
+        );
+      } else {
+        showDarkAlert('Minting Failed', result.error || 'Unknown error');
+      }
+    } catch (e) {
+      console.error('[NFT] Mint error:', e);
+      showDarkAlert('Error', e.message || 'Failed to mint NFT');
+    } finally {
+      setNftMinting(false);
+      setLoadingSafe(false);
+      setProgress(0);
+    }
   };
 
   const startSimilarShotsReview = async () => {
@@ -1710,6 +1978,7 @@ export default function App() {
     setBackgroundWarnEligibleSafe(false); setWasBackgroundedDuringWorkSafe(false); setLoadingSafe(true); // Don't warn during permission prompts
     setProgress(0);
     setProgressAction('cleanup');
+    setStatus('Comparing: Preparing...');
     
     // Enable background warning only after we start actual work (permission already granted inside core)
     setTimeout(() => { if (loadingRef.current) setBackgroundWarnEligibleSafe(true); }, 2000);
@@ -1734,7 +2003,8 @@ export default function App() {
 
     if (result.noGroups) {
       setStatus('No similar photos found');
-      showDarkAlert('Similar Photos', 'No similar photo groups found.');
+      await sleep(400); // Let user see 100% before checkmark
+      showCompletionTickBriefly('0 similar photos');
       setLoadingSafe(false);
       return;
     }
@@ -1940,6 +2210,7 @@ export default function App() {
         backgroundedAtMsRef.current = Date.now();
         wasBackgroundedDuringWorkRef.current = true;
         setWasBackgroundedDuringWorkSafe(true);
+        setShowCompletionTick(false); // Hide checkmark when going to background during work
         return;
       }
 
@@ -1970,11 +2241,12 @@ export default function App() {
       }
 
       if (nextState === 'active' && wasBackgroundedDuringWorkRef.current) {
+        setShowCompletionTick(false); // Hide checkmark when returning to foreground after being backgrounded during work
         const backgroundForMs = backgroundedAtMsRef.current ? (Date.now() - backgroundedAtMsRef.current) : 0;
         const stillWorking = !!loadingRef.current;
         backgroundedAtMsRef.current = 0;
 
-        // Clear refs to prevent re-triggering
+        // Clear refs
         wasBackgroundedDuringWorkRef.current = false;
         backgroundWarnEligibleRef.current = false;
         setWasBackgroundedDuringWorkSafe(false);
@@ -2054,8 +2326,11 @@ export default function App() {
       setStealthCapacity(null);
       setStealthCapacityError(null);
       setStealthCapacityLoading(false);
-      setSelectedStealthPlanGb(null);
       return;
+    }
+    // Reset to default 100GB when switching to stealthcloud
+    if (!selectedStealthPlanGb) {
+      setSelectedStealthPlanGb(100);
     }
 
     if (view !== 'auth') return;
@@ -2121,9 +2396,26 @@ export default function App() {
    * Checks capacity data to determine if tier can be created.
    * @platform Both
    * @param {number} tierGb - Tier size in GB (100, 200, 400, 1000)
-   * @returns {{canCreate: boolean, message: string|null}} Tier status
+   * @returns {{canCreate: boolean, message: string|null, usageBlocked: boolean}} Tier status
    */
-  const getStealthCloudTierStatus = (tierGb) => checkTierAvailability(tierGb, stealthCapacity);
+  const getStealthCloudTierStatus = (tierGb) => {
+    const capacityStatus = checkTierAvailability(tierGb, stealthCapacity);
+    
+    // Check if user's current storage usage exceeds this tier's capacity (downgrade protection)
+    const usedBytes = stealthUsage?.usedBytes || 0;
+    const tierBytes = Number(tierGb) * 1_000_000_000;
+    const usageExceedsTier = usedBytes >= tierBytes;
+    
+    if (usageExceedsTier) {
+      return {
+        canCreate: false,
+        message: 'Storage usage exceeds this plan',
+        usageBlocked: true,
+      };
+    }
+    
+    return { ...capacityStatus, usageBlocked: false };
+  };
 
   /**
    * Yields to the UI thread to prevent blocking during long operations.
@@ -2291,7 +2583,8 @@ export default function App() {
         getAuthHeaders,
         getServerUrl,
         ensureStealthCloudUploadAllowed,
-        ensureAutoUploadPolicyAllowsWorkIfBackgrounded,
+        // Don't pass ensureAutoUploadPolicyAllowsWorkIfBackgrounded for user-initiated operations
+        // This allows the operation to pause when backgrounded and resume when foregrounded
         appStateRef,
         fastMode: fastModeEnabledRef.current,
         onStatus: (s) => setStatusSafe(opId, s),
@@ -2369,7 +2662,7 @@ export default function App() {
     setWasBackgroundedDuringWorkSafe(false);
     setProgress(0);
     setProgressAction('sync');
-    setStatus('Preparing sync...');
+    setStatus('Sync: Preparing...');
 
     const permission = await MediaLibrary.requestPermissionsAsync();
     if (permission.status !== 'granted') {
@@ -2380,7 +2673,7 @@ export default function App() {
       return;
     }
     if (Platform.OS === 'ios' && permission.accessPrivileges && permission.accessPrivileges !== 'all') {
-      setStatus('Limited photo access. Please allow full access to sync from cloud.');
+      setStatus('Sync: Limited photo access');
       showDarkAlert('Limited Photos Access', 'Sync needs Full Access to your Photos library.');
       setLoadingSafe(false);
       setBackgroundWarnEligibleSafe(false);
@@ -2416,7 +2709,7 @@ export default function App() {
 
       if (result.noBackups) {
         setProgress(1);
-        setStatus('No files to sync');
+        setStatus('Sync: No files to sync');
         await sleep(800);
         showDarkAlert('No Backups', 'No StealthCloud backups found for this account.');
         await sleep(500);
@@ -2426,11 +2719,11 @@ export default function App() {
 
       setProgress(1);
       await sleep(300);
-      setStatus('Sync complete');
+      setStatus('Sync: Complete');
       showResultAlert('sync', { downloaded: result.restored, skipped: result.skipped, failed: result.failed });
     } catch (e) {
       console.error('StealthCloud restore error:', e);
-      setStatus('Sync error');
+      setStatus('Sync: Error');
       showResultAlert('sync', { error: e && e.message ? e.message : 'Unknown error' });
     } finally {
       setLoadingSafe(false);
@@ -2627,6 +2920,31 @@ export default function App() {
         showDarkAlert('Error', 'Passwords do not match');
         return;
       }
+      // For Local/Remote registration, require server address and show Quick Setup if missing
+      if (serverType === 'local' && !localHost) {
+        setQuickSetupCollapsed(false);
+        setQuickSetupHighlightInput(true);
+        return;
+      }
+      if (serverType === 'remote' && !remoteHost) {
+        setQuickSetupCollapsed(false);
+        setQuickSetupHighlightInput(true);
+        return;
+      }
+    }
+
+    // For login, also require server address for Local/Remote
+    if (type === 'login') {
+      if (serverType === 'local' && !localHost) {
+        setQuickSetupCollapsed(false);
+        setQuickSetupHighlightInput(true);
+        return;
+      }
+      if (serverType === 'remote' && !remoteHost) {
+        setQuickSetupCollapsed(false);
+        setQuickSetupHighlightInput(true);
+        return;
+      }
     }
 
     Keyboard.dismiss();
@@ -2693,9 +3011,25 @@ export default function App() {
         platform: Platform.OS,
       });
 
+      // iOS Local Network Permission: Pre-trigger permission before actual auth request
+      // This prevents the auth request from failing while the permission popup is shown
+      if (Platform.OS === 'ios' && (effectiveType === 'local' || effectiveType === 'remote')) {
+        setAuthLoadingLabel('Checking network access...');
+        try {
+          // Small HEAD request to trigger iOS Local Network permission popup
+          // Use a short timeout - we don't care if it succeeds, just need to trigger the popup
+          await axios.head(authBaseUrl + '/api/health', { timeout: 3000 }).catch(() => {});
+          // Give user time to respond to the permission popup
+          await new Promise(resolve => setTimeout(resolve, 1500));
+        } catch (e) {
+          // Ignore errors - the permission popup may have been shown
+          console.log('[Auth] Network pre-check completed (permission may have been requested)');
+        }
+      }
+
       // Step 2: Generating token / Authenticating with retry for StealthCloud
       setAuthLoadingLabel(type === 'register' ? 'Generating token...' : 'Authenticating...');
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      await new Promise(resolve => setTimeout(resolve, 500));
 
       // StealthCloud retry logic with rotating status messages (server may be rebooting ~2-3 min)
       const STEALTHCLOUD_MAX_RETRIES = 20; // ~3+ minutes of retries
@@ -2859,8 +3193,14 @@ export default function App() {
         const status = error.response.status;
         console.error('Auth Error:', status, error.response.data);
         
+        // 429 - Rate limited
+        if (status === 429) {
+          showDarkAlert(
+            'Too Many Attempts',
+            'You\'ve made too many login attempts. Please wait 2-3 minutes before trying again.'
+          );
         // 5xx errors after retries exhausted - server is down
-        if (status >= 500 && status < 600 && serverType === 'stealthcloud') {
+        } else if (status >= 500 && status < 600 && serverType === 'stealthcloud') {
           showDarkAlert(
             'Server Temporarily Unavailable',
             'StealthCloud is currently undergoing maintenance. Please try again in a few minutes.'
@@ -2947,6 +3287,7 @@ export default function App() {
     setLoadingSafe(true);
     setProgress(0);
     setProgressAction('cleanup');
+    setStatus('Comparing: Preparing...');
 
     // Enable background warning only after we start actual work (permission already granted inside core)
     setTimeout(() => { if (loadingRef.current) setBackgroundWarnEligibleSafe(true); }, 2000);
@@ -2980,8 +3321,9 @@ export default function App() {
       }
 
       if (result.noDuplicates) {
-        setStatus('No best matches found');
-        showDarkAlert('Best Matches', 'No best matches found.' + (result.note || ''));
+        setStatus('No identical photos or videos found');
+        await sleep(400); // Let user see 100% before checkmark
+        showCompletionTickBriefly('0 identical files');
         return;
       }
 
@@ -2995,7 +3337,7 @@ export default function App() {
         groups: result.groups
       });
 
-      setStatus(`Found ${result.totalDuplicates} best photo matches in ${result.groups.length} group${result.groups.length !== 1 ? 's' : ''}`);
+      setStatus(`Found ${result.totalDuplicates} identical photos/videos in ${result.groups.length} group${result.groups.length !== 1 ? 's' : ''}`);
     } catch (error) {
       console.error('Clean duplicates error:', error);
       setStatus('Error during duplicate cleanup: ' + error.message);
@@ -3147,7 +3489,7 @@ export default function App() {
         getAuthHeaders,
         getServerUrl,
         resolveReadableFilePath,
-        ensureAutoUploadPolicyAllowsWorkIfBackgrounded,
+        appStateRef, // Pass appStateRef so upload can pause when backgrounded
         fastMode: fastModeEnabledRef.current,
         onStatus: (s) => setStatusSafe(opId, s),
         onProgress: (p) => setProgressSafe(opId, p),
@@ -3184,13 +3526,18 @@ export default function App() {
       }
 
       if (result.alreadyBackedUp) {
-        setStatus(`All ${result.checkedCount} files already backed up.`);
-        showDarkAlert('Up to Date', `All ${result.checkedCount} photos & videos are already on the server.`);
+        setProgress(1); // Show 100% before checkmark
+        setStatus(`All ${result.checkedCount} files already backed up`);
+        await sleep(400); // Brief pause to show 100%
+        showCompletionTickBriefly(`${result.checkedCount} files on server`);
+        setProgress(0);
         return;
       }
 
       const { uploaded, skipped, failed } = result;
+      setProgress(1); // Show 100% before checkmark
       setStatus('Backup complete');
+      await sleep(400); // Brief pause to show 100%
       showResultAlert('backup', { uploaded, skipped, failed });
       setProgress(0);
     } catch (error) {
@@ -3225,7 +3572,7 @@ export default function App() {
 
     await cancelInFlightOperations();
     const opId = currentOperationIdRef.current;
-    setStatus('Preparing sync...');
+    setStatus('Sync: Preparing...');
     setProgress(0);
     setProgressAction('sync');
     setLoadingSafe(true);
@@ -3244,7 +3591,7 @@ export default function App() {
     }
 
     if (Platform.OS === 'ios' && permission.accessPrivileges && permission.accessPrivileges !== 'all') {
-      setStatus('Limited photo access. Please allow full access to sync from cloud.');
+      setStatus('Sync: Limited photo access');
       showDarkAlert(
         'Limited Photos Access',
         `Sync from Cloud needs Full Access to your Photos library.\n\nGo to Settings → ${APP_DISPLAY_NAME} → Photos → Full Access.`
@@ -3267,16 +3614,18 @@ export default function App() {
       const result = await localRemoteRestoreCore({
         config,
         SERVER_URL,
+        resolveReadableFilePath,
         onlyFilenames: opts?.onlyFilenames || null,
         fastMode: fastModeEnabledRef.current,
         onStatus: (s) => setStatusSafe(opId, s),
         onProgress: (p) => setProgressSafe(opId, p),
         abortRef: abortOperationsRef,
+        appStateRef, // Pass appStateRef so sync can pause when backgrounded
       });
 
       if (result.noFiles) {
         setProgress(1);
-        setStatus('No files to sync');
+        setStatus('Sync: No files to sync');
         await sleep(800);
         showDarkAlert('No Files', 'There are no files on the server to download.');
         await sleep(500);
@@ -3286,22 +3635,22 @@ export default function App() {
 
       if (result.allSynced) {
         setProgress(1);
-        setStatus(`All ${result.serverTotal} files already synced.`);
+        setStatus(`Sync: All ${result.serverTotal} files already synced`);
         await sleep(800);
-        showDarkAlert('Up to Date', `All ${result.serverTotal} server files are already on your device.`);
+        showCompletionTickBriefly(`${result.serverTotal} files on device`);
         await sleep(500);
         setProgress(0);
         return;
       }
 
-      setStatus('Sync complete');
+      setStatus('Sync: Complete');
       setProgress(0);
       showResultAlert('sync', { downloaded: result.restored, skipped: result.skipped, failed: result.failed });
       resetSyncPickerState();
 
     } catch (error) {
       console.error('Restore error:', error);
-      setStatus('Sync failed');
+      setStatus('Sync: Failed');
       setProgress(0);
       showResultAlert('sync', { error: error.message });
     } finally {
@@ -3322,404 +3671,56 @@ export default function App() {
     return (
       <SafeAreaView style={styles.container}>
         <StatusBar barStyle="light-content" backgroundColor="#0A0A0A" />
-        <KeyboardAvoidingView
-          style={{ flex: 1 }}
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-          keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}>
-          <ScrollView
-            contentContainerStyle={{ flexGrow: 1, justifyContent: 'center', alignItems: 'center', paddingVertical: 20 }}
-            style={{ flex: 1 }}
-            showsVerticalScrollIndicator={false}
-            keyboardShouldPersistTaps="handled"
-            bounces={true}
-            alwaysBounceVertical={true}
-            centerContent={true}>
-            <View style={styles.authHeader}>
-              <Image
-                source={require('./assets/splash-icon.png')}
-                style={styles.appIcon}
-              />
-              <Text style={styles.title}>{APP_DISPLAY_NAME}</Text>
-              <Text style={styles.subtitle}>Secure Cloud Backup for Your Memories</Text>
-            </View>
+        <LoginScreen
+          appDisplayName={APP_DISPLAY_NAME}
+          appIcon={require('./assets/splash-icon.png')}
+          serverType={serverType}
+          setServerType={setServerType}
+          authMode={authMode}
+          setAuthMode={setAuthMode}
+          email={email}
+          setEmail={setEmail}
+          password={password}
+          setPassword={setPassword}
+          confirmPassword={confirmPassword}
+          setConfirmPassword={setConfirmPassword}
+          newPassword={newPassword}
+          setNewPassword={setNewPassword}
+          localHost={localHost}
+          setLocalHost={setLocalHost}
+          remoteHost={remoteHost}
+          setRemoteHost={setRemoteHost}
+          termsAccepted={termsAccepted}
+          setTermsAccepted={setTermsAccepted}
+          selectedStealthPlanGb={selectedStealthPlanGb}
+          setSelectedStealthPlanGb={setSelectedStealthPlanGb}
+          loading={loading}
+          authLoadingLabel={authLoadingLabel}
+          handleAuth={handleAuth}
+          handleResetPassword={handleResetPassword}
+          normalizeHostInput={normalizeHostInput}
+          openQrScanner={async () => {
+            if (!cameraPermission?.granted) {
+              const result = await requestCameraPermission();
+              if (!result.granted) {
+                showDarkAlert('Camera Permission', 'Camera access is needed to scan QR codes.');
+                return;
+              }
+            }
+            setQrScannerOpen(true);
+          }}
+          openQuickSetupGuide={() => setQuickSetupCollapsed(false)}
+          STEALTH_PLAN_TIERS={STEALTH_PLAN_TIERS}
+          availablePlans={availablePlans}
+          getStealthCloudTierStatus={getStealthCloudTierStatus}
+          stealthCapacityLoading={stealthCapacityLoading}
+          stealthCapacityError={stealthCapacityError}
+          stealthCapacity={stealthCapacity}
+          plansLoading={plansLoading}
+          purchaseLoading={purchaseLoading}
+        />
 
-            <View style={styles.form}>
-          <View style={styles.serverConfig}>
-            <Text style={styles.serverLabel}>Server Type</Text>
-            <View style={styles.serverToggle}>
-              <TouchableOpacity
-                style={[styles.toggleBtn, serverType === 'local' && styles.toggleBtnActive]}
-                onPress={() => setServerType('local')}>
-                <Text numberOfLines={1} ellipsizeMode="tail" style={[styles.toggleText, serverType === 'local' && styles.toggleTextActive]}>
-                  Local Network
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.toggleBtn, serverType === 'remote' && styles.toggleBtnActive]}
-                onPress={() => setServerType('remote')}>
-                <Text numberOfLines={1} ellipsizeMode="tail" style={[styles.toggleText, serverType === 'remote' && styles.toggleTextActive]}>
-                  Remote Server
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.toggleBtn, serverType === 'stealthcloud' && styles.toggleBtnActive, { position: 'relative' }]}
-                onPress={() => setServerType('stealthcloud')}>
-                <Text numberOfLines={1} ellipsizeMode="tail" style={[styles.toggleText, serverType === 'stealthcloud' && styles.toggleTextActive]}>
-                  StealthCloud
-                </Text>
-                <View style={{ position: 'absolute', top: -8, right: -8, backgroundColor: '#22c55e', paddingHorizontal: 6, paddingVertical: 3, borderRadius: 4, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.2, shadowRadius: 2, elevation: 2 }}>
-                  <Text style={{ color: '#fff', fontSize: 9, fontWeight: '700', letterSpacing: 0.3 }}>7 DAYS FREE</Text>
-                </View>
-              </TouchableOpacity>
-            </View>
-
-            {serverType === 'remote' && (
-              <>
-                <TextInput
-                  style={[styles.input, {marginTop: 12}]}
-                  placeholder="Enter remote domain (recommended)"
-                  placeholderTextColor="#666666"
-                  value={remoteHost}
-                  onChangeText={(t) => setRemoteHost(normalizeHostInput(t))}
-                  autoCapitalize="none"
-                />
-                <Text style={styles.inputHint}>Use your HTTPS domain (e.g. remote.example.com).</Text>
-              </>
-            )}
-
-            {serverType === 'stealthcloud' && (
-              <>
-                <Text style={styles.inputHint}>StealthCloud is a zero-knowledge encrypted cloud. The server can store your backups but cannot view them.</Text>
-
-                {authMode === 'register' && (
-                  <View style={styles.stealthPlanBox}>
-                    <View style={styles.stealthPlanHeader}>
-                      <Text style={styles.stealthPlanTitle}>Choose a plan</Text>
-                      {(stealthCapacityLoading || plansLoading) && (
-                        <ActivityIndicator size="small" color={THEME.secondary} />
-                      )}
-                    </View>
-
-                    {!!stealthCapacityError && (
-                      <Text style={styles.stealthPlanHint}>Capacity check unavailable. You can still choose a plan.</Text>
-                    )}
-
-                    {!!(stealthCapacity && stealthCapacity.message) && (
-                      <Text style={styles.stealthPlanHint}>{String(stealthCapacity.message)}</Text>
-                    )}
-
-                    <Text style={styles.stealthPlanHint}>7-day free trial • Cancel anytime</Text>
-
-                    <View style={styles.stealthPlanGrid}>
-                      {STEALTH_PLAN_TIERS.map((gb) => {
-                        const st = getStealthCloudTierStatus(gb);
-                        const disabled = st.canCreate === false || purchaseLoading;
-                        const selected = selectedStealthPlanGb === gb;
-                        const plan = availablePlans.find(p => p.tierGb === gb);
-                        const priceStr = plan ? plan.priceString : null;
-                        return (
-                          <TouchableOpacity
-                            key={String(gb)}
-                            activeOpacity={0.85}
-                            style={[
-                              styles.stealthPlanCard,
-                              selected && styles.stealthPlanCardSelected,
-                              disabled && styles.stealthPlanCardDisabled,
-                            ]}
-                            onPress={() => {
-                              if (disabled) return;
-                              setSelectedStealthPlanGb(gb);
-                            }}>
-                            <Text style={styles.stealthPlanGb}>{gb === 1000 ? '1 TB' : `${gb} GB`}</Text>
-                            <Text style={styles.stealthPlanPrice}>{priceStr || '—'}</Text>
-                            <Text style={styles.stealthPlanMeta}>per month</Text>
-                            {disabled && st.canCreate === false && (
-                              <View style={{ position: 'absolute', top: 6, right: 6, backgroundColor: '#D4A017', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
-                                <Text style={{ color: '#000', fontSize: scale(9), fontWeight: '700' }}>SOLD OUT</Text>
-                              </View>
-                            )}
-                          </TouchableOpacity>
-                        );
-                      })}
-                    </View>
-
-                    {!stealthCapacityLoading && !stealthCapacityError && (
-                      <Text style={styles.stealthPlanHint}>Plans may be temporarily unavailable when capacity is full.</Text>
-                    )}
-
-                    {false && (
-                      <TouchableOpacity
-                        style={styles.restorePurchasesBtn}
-                        onPress={handleRestorePurchases}
-                        disabled={purchaseLoading}>
-                        <Text style={styles.restorePurchasesText}>Restore Purchases</Text>
-                      </TouchableOpacity>
-                    )}
-                  </View>
-                )}
-              </>
-            )}
-
-            {serverType === 'local' && (
-              <>
-                <View style={{flexDirection: 'row', alignItems: 'center', marginTop: 12}}>
-                  <TextInput
-                    style={[styles.input, {flex: 1, marginTop: 0, marginRight: 8}]}
-                    placeholder="Enter local server IP"
-                    placeholderTextColor="#666666"
-                    value={localHost}
-                    onChangeText={(t) => setLocalHost(normalizeHostInput(t))}
-                    autoCapitalize="none"
-                  />
-                  <TouchableOpacity
-                    style={{
-                      width: 44,
-                      height: 44,
-                      borderRadius: 12,
-                      backgroundColor: '#101010',
-                      borderWidth: 1,
-                      borderColor: '#2f2f2f',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                    }}
-                    onPress={async () => {
-                      if (!cameraPermission?.granted) {
-                        const result = await requestCameraPermission();
-                        if (!result.granted) {
-                          showDarkAlert('Camera Permission', 'Camera access is needed to scan QR codes.');
-                          return;
-                        }
-                      }
-                      setQrScannerOpen(true);
-                    }}
-                  >
-                    <View style={{width: 22, height: 22}}>
-                      <View style={{position: 'absolute', top: 0, left: 0, width: 10, height: 10, borderWidth: 2, borderColor: '#fff', borderRadius: 2}} />
-                      <View style={{position: 'absolute', top: 0, right: 0, width: 10, height: 10, borderWidth: 2, borderColor: '#fff', borderRadius: 2}} />
-                      <View style={{position: 'absolute', bottom: 0, left: 0, width: 10, height: 10, borderWidth: 2, borderColor: '#fff', borderRadius: 2}} />
-                      <View style={{position: 'absolute', bottom: 0, right: 0, width: 10, height: 10, borderWidth: 2, borderColor: '#fff', borderRadius: 2}} />
-                      <View style={{position: 'absolute', top: 8, left: 8, width: 6, height: 6, backgroundColor: '#fff', borderRadius: 1}} />
-                    </View>
-                  </TouchableOpacity>
-                </View>
-                <Text style={styles.inputHint}>Enter IP manually or scan QR code from server tray app</Text>
-              </>
-            )}
-
-            {serverType === 'stealthcloud' && (
-              <Text style={styles.serverHint}>
-              Using StealthCloud (https://stealthlynk.io)
-              </Text>
-            )}
-          </View>
-
-          <TouchableOpacity
-            style={{ alignSelf: 'flex-start', marginBottom: 12 }}
-            onPress={() => setQuickSetupCollapsed(false)}
-            activeOpacity={0.8}
-          >
-            <Text style={{ color: '#6495ED', fontSize: scale(14), fontWeight: '600' }}>📋 Quick Setup Guide</Text>
-          </TouchableOpacity>
-
-          <TextInput
-            style={styles.input}
-            placeholder="Email (part of encryption key)"
-            placeholderTextColor="#888888"
-            value={email}
-            onChangeText={setEmail}
-            autoCapitalize="none"
-            keyboardType="email-address"
-            autoComplete="email"
-            textContentType="username"
-          />
-          {(authMode === 'login' || authMode === 'register') && (
-            <TextInput
-              style={styles.input}
-              placeholder="Password (reset on this device only)"
-              placeholderTextColor="#888888"
-              value={password}
-              onChangeText={setPassword}
-              secureTextEntry
-              autoComplete="password"
-              textContentType="password"
-            />
-          )}
-
-          {authMode === 'register' && (
-            <TextInput
-              style={styles.input}
-              placeholder="Confirm Password"
-              placeholderTextColor="#888888"
-              value={confirmPassword}
-              onChangeText={setConfirmPassword}
-              secureTextEntry
-              autoComplete="password"
-              textContentType="password"
-            />
-          )}
-
-          {authMode === 'login' && (
-            <>
-              <TouchableOpacity style={[styles.btnPrimary, loading && { opacity: 0.7 }]} onPress={() => handleAuth('login')} disabled={loading}>
-                {loading ? (
-                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
-                    <ActivityIndicator size="small" color="#fff" style={{ marginRight: 8 }} />
-                    <Text style={styles.btnText}>{authLoadingLabel}</Text>
-                  </View>
-                ) : (
-                  <Text style={styles.btnText}>Login</Text>
-                )}
-              </TouchableOpacity>
-
-              <View style={{
-                flexDirection: 'row',
-                justifyContent: serverType === 'stealthcloud' ? 'space-between' : 'center',
-                alignItems: 'center',
-                marginTop: 12
-              }}>
-                <TouchableOpacity
-                  onPress={() => {
-                    setAuthMode('register');
-                    setConfirmPassword('');
-                    setTermsAccepted(false);
-                  }}
-                  disabled={loading}
-                >
-                  <Text style={{ color: '#4A9FE8', fontSize: scale(14) }}>Create Account</Text>
-                </TouchableOpacity>
-
-                {serverType === 'stealthcloud' && (
-                  <TouchableOpacity
-                    onPress={() => setAuthMode('forgot')}
-                    disabled={loading}
-                  >
-                    <Text style={{ color: '#888', fontSize: scale(14) }}>Forgot Password?</Text>
-                  </TouchableOpacity>
-                )}
-              </View>
-            </>
-          )}
-
-          {authMode === 'register' && (
-            <>
-              <View style={{ flexDirection: 'row', alignItems: 'flex-start', marginBottom: scaleSpacing(16), paddingHorizontal: scaleSpacing(4) }}>
-                <TouchableOpacity
-                  onPress={() => setTermsAccepted(!termsAccepted)}
-                  style={{ marginRight: scaleSpacing(10), marginTop: scaleSpacing(2) }}
-                  activeOpacity={0.7}
-                >
-                  <View style={{
-                    width: isTablet ? 28 : 22,
-                    height: isTablet ? 28 : 22,
-                    borderRadius: scaleSpacing(4),
-                    borderWidth: 2,
-                    borderColor: termsAccepted ? '#4A9FE8' : '#555',
-                    backgroundColor: termsAccepted ? '#4A9FE8' : 'transparent',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                  }}>
-                    {termsAccepted && (
-                      <Text style={{ color: '#fff', fontSize: scale(14), fontWeight: '700' }}>✓</Text>
-                    )}
-                  </View>
-                </TouchableOpacity>
-                <View style={{ flex: 1 }}>
-                  <Text style={{ color: '#AAA', fontSize: scale(13), lineHeight: scale(18) }}>
-                    I agree to the{' '}
-                    <Text
-                      style={{ color: '#4A9FE8', textDecorationLine: 'underline' }}
-                      onPress={() => Linking.openURL('https://viktorvishyn369.github.io/PhotoLynk/terms.html')}
-                    >
-                      Terms of Service
-                    </Text>
-                    {' '}and{' '}
-                    <Text
-                      style={{ color: '#4A9FE8', textDecorationLine: 'underline' }}
-                      onPress={() => Linking.openURL('https://viktorvishyn369.github.io/PhotoLynk/privacy-policy.html')}
-                    >
-                      Privacy Policy
-                    </Text>
-                  </Text>
-                </View>
-              </View>
-
-              <TouchableOpacity
-                style={[styles.btnPrimary, (loading || !termsAccepted) && { opacity: 0.5 }]}
-                onPress={() => handleAuth('register')}
-                disabled={loading || !termsAccepted}
-              >
-                {loading ? (
-                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
-                    <ActivityIndicator size="small" color="#fff" style={{ marginRight: 8 }} />
-                    <Text style={styles.btnText}>Creating account...</Text>
-                  </View>
-                ) : (
-                  <Text style={styles.btnText}>Create Account</Text>
-                )}
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.btnSecondary}
-                onPress={() => {
-                  setAuthMode('login');
-                  setConfirmPassword('');
-                  setTermsAccepted(false);
-                }}
-                disabled={loading}
-              >
-                <Text style={styles.btnTextSec}>Back to Login</Text>
-              </TouchableOpacity>
-            </>
-          )}
-
-          {authMode === 'forgot' && (
-            <>
-              <Text style={{ color: '#CCC', fontSize: scale(14), textAlign: 'center', marginBottom: scaleSpacing(16), lineHeight: scale(20) }}>
-                If you created your account on this device, you can reset your password below.
-              </Text>
-
-              <TextInput
-                style={styles.input}
-                placeholder="New Password (min 6 characters)"
-                placeholderTextColor="#888888"
-                value={newPassword}
-                onChangeText={setNewPassword}
-                secureTextEntry
-                autoComplete="new-password"
-                textContentType="newPassword"
-              />
-
-              <TouchableOpacity style={[styles.btnPrimary, loading && { opacity: 0.7 }]} onPress={handleResetPassword} disabled={loading}>
-                {loading ? (
-                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
-                    <ActivityIndicator size="small" color="#fff" style={{ marginRight: 8 }} />
-                    <Text style={styles.btnText}>{authLoadingLabel}</Text>
-                  </View>
-                ) : (
-                  <Text style={styles.btnText}>Reset Password</Text>
-                )}
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.btnSecondary}
-                onPress={() => {
-                  setAuthMode('login');
-                  setNewPassword('');
-                }}
-                disabled={loading}
-              >
-                <Text style={styles.btnTextSec}>Back to Login</Text>
-              </TouchableOpacity>
-            </>
-          )}
-        </View>
-
-            <View style={styles.authFooter}>
-              <Text style={styles.footerText}>🔒 End-to-end encrypted • Device-bound security</Text>
-            </View>
-          </ScrollView>
-        </KeyboardAvoidingView>
-
+        {/* Keep overlays for loading, alerts, QR scanner, and quick setup guide */}
         {loading && (
         <View style={[styles.overlay, { backgroundColor: '#000' }]}>
           <View style={{ alignItems: 'center', justifyContent: 'center' }}>
@@ -3731,15 +3732,15 @@ export default function App() {
       )}
 
       {customAlert && (
-        <View style={[styles.overlay, glassModeEnabled && styles.overlayGlass]}>
-          <View style={[styles.overlayCard, glassModeEnabled && styles.overlayCardGlass, { backgroundColor: glassModeEnabled ? 'rgba(42, 42, 42, 0.9)' : '#2A2A2A', maxWidth: isTablet ? 450 : 320 }]}>
+        <View style={[styles.overlay, { backgroundColor: 'rgba(0,0,0,0.97)' }]}>
+          <View style={[styles.overlayCard, { backgroundColor: '#000000', maxWidth: isTablet ? 450 : 320 }]}>
             <Text style={[styles.overlayTitle, { fontSize: scale(18), marginBottom: scaleSpacing(8) }]}>{customAlert.title}</Text>
-            <Text style={{ color: '#CCC', fontSize: scale(14), textAlign: 'center', marginBottom: scaleSpacing(20), lineHeight: scale(20) }}>{customAlert.message}</Text>
+            <Text style={{ color: '#FFFFFF', fontSize: scale(14), textAlign: 'center', marginBottom: scaleSpacing(20), lineHeight: scale(20) }}>{customAlert.message}</Text>
             <View style={{ flexDirection: 'row', justifyContent: 'center', gap: scaleSpacing(12) }}>
               {(customAlert.buttons || []).map((btn, idx) => (
                 <TouchableOpacity
                   key={idx}
-                  style={[styles.overlayBtnPrimary, glassModeEnabled && styles.overlayBtnPrimaryGlass, { paddingVertical: scaleSpacing(10), paddingHorizontal: scaleSpacing(24), minWidth: isTablet ? 100 : 80 }]}
+                  style={[styles.overlayBtnPrimary, { paddingVertical: scaleSpacing(10), paddingHorizontal: scaleSpacing(24), minWidth: isTablet ? 100 : 80 }]}
                   onPress={() => { closeDarkAlert(); if (btn.onPress) btn.onPress(); }}>
                   <Text style={styles.overlayBtnPrimaryText}>{btn.text}</Text>
                 </TouchableOpacity>
@@ -3753,7 +3754,7 @@ export default function App() {
         <View style={[styles.overlay, {backgroundColor: 'rgba(0,0,0,0.95)'}]}>
           <View style={{flex: 1, width: '100%', justifyContent: 'center', alignItems: 'center'}}>
             <Text style={{color: '#fff', fontSize: scale(20), fontWeight: '600', marginBottom: scaleSpacing(8)}}>
-              📷 Scan QR Code
+              Scan QR Code
             </Text>
             <Text style={{color: '#aaa', fontSize: scale(14), marginBottom: scaleSpacing(20), textAlign: 'center', paddingHorizontal: scaleSpacing(40)}}>
               Point your camera at the QR code shown in the PhotoLynk Server tray app
@@ -3779,7 +3780,7 @@ export default function App() {
                     Camera permission required
                   </Text>
                   <TouchableOpacity
-                    style={{backgroundColor: '#4a90d9', paddingHorizontal: scaleSpacing(20), paddingVertical: scaleSpacing(10), borderRadius: scaleSpacing(8)}}
+                    style={{backgroundColor: THEME.primary, paddingHorizontal: scaleSpacing(20), paddingVertical: scaleSpacing(10), borderRadius: scaleSpacing(8)}}
                     onPress={requestCameraPermission}>
                     <Text style={{color: '#fff', fontWeight: '600', fontSize: scale(14)}}>Grant Permission</Text>
                   </TouchableOpacity>
@@ -3797,103 +3798,223 @@ export default function App() {
       )}
 
       {!quickSetupCollapsed && (
-        <View style={[styles.overlay, glassModeEnabled && styles.overlayGlass]}>
-          <View style={[styles.overlayCard, glassModeEnabled && styles.overlayCardGlass, { maxWidth: 400, width: '92%' }]}>
-            <Text style={[styles.overlayTitle, { marginBottom: 16 }]}>
-              {serverType === 'local' ? '🖥️ Local Server Setup' : serverType === 'remote' ? '🌐 Remote Server Setup' : '☁️ StealthCloud Setup'}
-            </Text>
+        <View style={[styles.overlay, { backgroundColor: 'rgba(0,0,0,0.97)' }]}>
+          <View style={[styles.overlayCard, { backgroundColor: '#000000', maxWidth: 420, width: '94%', padding: scaleSpacing(20) }]}>
+            {/* Header with icon */}
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: scaleSpacing(16) }}>
+              <View style={{ width: scale(40), height: scale(40), borderRadius: scale(12), backgroundColor: serverType === 'local' ? 'rgba(59, 130, 246, 0.15)' : serverType === 'remote' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(139, 92, 246, 0.15)', alignItems: 'center', justifyContent: 'center', marginRight: scaleSpacing(12) }}>
+                <Feather name={serverType === 'local' ? 'wifi' : serverType === 'remote' ? 'globe' : 'cloud'} size={scale(20)} color={serverType === 'local' ? THEME.primary : serverType === 'remote' ? '#10B981' : '#8B5CF6'} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={{ color: '#FFFFFF', fontSize: scale(18), fontWeight: '700' }}>
+                  {serverType === 'local' ? 'Local Server Setup' : serverType === 'remote' ? 'Remote Server Setup' : 'StealthCloud Setup'}
+                </Text>
+                <Text style={{ color: '#888888', fontSize: scale(12), marginTop: 2 }}>
+                  {serverType === 'local' ? 'Connect to your home network' : serverType === 'remote' ? 'Self-hosted on your VPS' : 'Zero-knowledge encrypted cloud'}
+                </Text>
+              </View>
+            </View>
 
             {serverType === 'local' && (
               <>
-                <View style={{ backgroundColor: 'rgba(100,149,237,0.1)', borderRadius: 8, padding: 12, marginBottom: 12 }}>
-                  <Text style={{ color: '#6495ED', fontSize: scale(13), fontWeight: '700', marginBottom: 8 }}>ON YOUR COMPUTER</Text>
-                  <Text style={{ color: '#ccc', fontSize: scale(13), marginBottom: 6 }}>
-                    <Text style={{ color: '#fff', fontWeight: '600' }}>1.</Text>  Download PhotoLynk Server:
-                  </Text>
-                  <TouchableOpacity
-                    style={{ marginBottom: 8, marginLeft: 16 }}
-                    onPress={() => { Clipboard.setString(GITHUB_RELEASES_LATEST_URL); showDarkAlert('Copied', 'Link copied to clipboard.'); }}
-                    onLongPress={() => openLink(GITHUB_RELEASES_LATEST_URL)}>
-                    <Text style={[styles.codeLine, { fontSize: scale(11) }]} numberOfLines={1} ellipsizeMode="middle">{GITHUB_RELEASES_LATEST_URL}</Text>
-                    <Text style={[styles.codeHint, { fontSize: scale(10) }]}>Tap to copy • Long-press to open</Text>
-                  </TouchableOpacity>
-                  <Text style={{ color: '#ccc', fontSize: scale(13), marginBottom: 4 }}>
-                    <Text style={{ color: '#fff', fontWeight: '600' }}>2.</Text>  Install and run it
-                  </Text>
-                  <Text style={{ color: '#ccc', fontSize: scale(13) }}>
-                    <Text style={{ color: '#fff', fontWeight: '600' }}>3.</Text>  Tray → Local Server → Pair Mobile (QR)
-                  </Text>
+                {/* Step 1: Computer */}
+                <View style={{ backgroundColor: '#111111', borderRadius: scale(12), padding: scaleSpacing(14), marginBottom: scaleSpacing(16), borderWidth: 1, borderColor: '#333333' }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: scaleSpacing(10) }}>
+                    <Feather name="monitor" size={scale(16)} color={THEME.primary} />
+                    <Text style={{ color: THEME.primary, fontSize: scale(13), fontWeight: '600', marginLeft: scaleSpacing(8) }}>ON YOUR COMPUTER</Text>
+                  </View>
+                  <View style={{ flexDirection: 'row', alignItems: 'flex-start', marginBottom: scaleSpacing(8) }}>
+                    <View style={{ width: scale(20), height: scale(20), borderRadius: scale(10), backgroundColor: THEME.primary, alignItems: 'center', justifyContent: 'center', marginRight: scaleSpacing(10) }}>
+                      <Text style={{ color: '#fff', fontSize: scale(11), fontWeight: '700' }}>1</Text>
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ color: '#FFFFFF', fontSize: scale(13) }}>Download PhotoLynk Server</Text>
+                      <TouchableOpacity
+                        style={{ marginTop: scaleSpacing(6), backgroundColor: '#0A0A0A', borderRadius: scale(8), padding: scaleSpacing(8), borderWidth: 1, borderColor: '#333' }}
+                        onPress={() => { Clipboard.setString(GITHUB_RELEASES_LATEST_URL); showDarkAlert('Copied', 'Link copied to clipboard.'); }}
+                        onLongPress={() => openLink(GITHUB_RELEASES_LATEST_URL)}>
+                        <Text style={{ color: '#888', fontSize: scale(10) }} numberOfLines={1} ellipsizeMode="middle">{GITHUB_RELEASES_LATEST_URL}</Text>
+                        <Text style={{ color: '#666', fontSize: scale(9), marginTop: 2 }}>Tap to copy • Long-press to open</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: scaleSpacing(6) }}>
+                    <View style={{ width: scale(20), height: scale(20), borderRadius: scale(10), backgroundColor: THEME.primary, alignItems: 'center', justifyContent: 'center', marginRight: scaleSpacing(10) }}>
+                      <Text style={{ color: '#fff', fontSize: scale(11), fontWeight: '700' }}>2</Text>
+                    </View>
+                    <Text style={{ color: '#FFFFFF', fontSize: scale(13) }}>Install and run it</Text>
+                  </View>
+                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <View style={{ width: scale(20), height: scale(20), borderRadius: scale(10), backgroundColor: THEME.primary, alignItems: 'center', justifyContent: 'center', marginRight: scaleSpacing(10) }}>
+                      <Text style={{ color: '#fff', fontSize: scale(11), fontWeight: '700' }}>3</Text>
+                    </View>
+                    <Text style={{ color: '#FFFFFF', fontSize: scale(13) }}>Tray → Local Server → Pair Mobile</Text>
+                  </View>
                 </View>
-                <View style={{ backgroundColor: 'rgba(50,205,50,0.1)', borderRadius: 8, padding: 12 }}>
-                  <Text style={{ color: '#32CD32', fontSize: scale(13), fontWeight: '700', marginBottom: 8 }}>ON YOUR PHONE</Text>
-                  <Text style={{ color: '#ccc', fontSize: scale(13), marginBottom: 4 }}>
-                    <Text style={{ color: '#fff', fontWeight: '600' }}>4.</Text>  Scan QR code (or paste IP)
-                  </Text>
-                  <Text style={{ color: '#ccc', fontSize: scale(13), marginBottom: 4 }}>
-                    <Text style={{ color: '#fff', fontWeight: '600' }}>5.</Text>  Create account & log in
-                  </Text>
-                  <Text style={{ color: '#ccc', fontSize: scale(13) }}>
-                    <Text style={{ color: '#fff', fontWeight: '600' }}>6.</Text>  Start backing up!
-                  </Text>
+
+                {/* Step 2: Phone */}
+                <View style={{ backgroundColor: '#111111', borderRadius: scale(12), padding: scaleSpacing(14), borderWidth: 1, borderColor: '#333333' }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: scaleSpacing(10) }}>
+                    <Feather name="smartphone" size={scale(16)} color="#10B981" />
+                    <Text style={{ color: '#10B981', fontSize: scale(13), fontWeight: '600', marginLeft: scaleSpacing(8) }}>ON YOUR PHONE</Text>
+                  </View>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: scaleSpacing(6) }}>
+                    <View style={{ width: scale(20), height: scale(20), borderRadius: scale(10), backgroundColor: '#10B981', alignItems: 'center', justifyContent: 'center', marginRight: scaleSpacing(10) }}>
+                      <Text style={{ color: '#fff', fontSize: scale(11), fontWeight: '700' }}>4</Text>
+                    </View>
+                    <Text style={{ color: '#FFFFFF', fontSize: scale(13) }}>Scan QR code or enter IP below:</Text>
+                  </View>
+                  {/* IP Input with red highlight if required */}
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: scaleSpacing(10), marginLeft: scale(30) }}>
+                    <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: '#0A0A0A', borderRadius: scale(8), borderWidth: 2, borderColor: quickSetupHighlightInput && !localHost ? '#EF4444' : '#333', paddingHorizontal: scaleSpacing(10) }}>
+                      <Feather name="wifi" size={scale(16)} color={quickSetupHighlightInput && !localHost ? '#EF4444' : '#666'} />
+                      <TextInput
+                        style={{ flex: 1, color: '#FFFFFF', fontSize: scale(13), paddingVertical: scaleSpacing(10), marginLeft: scaleSpacing(8) }}
+                        placeholder="192.168.1.xxx"
+                        placeholderTextColor="#666"
+                        value={localHost}
+                        onChangeText={(t) => setLocalHost(normalizeHostInput(t))}
+                        autoCapitalize="none"
+                        keyboardType="numeric"
+                      />
+                    </View>
+                    <TouchableOpacity 
+                      style={{ marginLeft: scaleSpacing(8), backgroundColor: THEME.primary, borderRadius: scale(8), padding: scaleSpacing(10) }} 
+                      onPress={() => { setQuickSetupCollapsed(true); setQuickSetupHighlightInput(false); setQrScannerOpen(true); }}>
+                      <Feather name="maximize" size={scale(18)} color="#FFFFFF" />
+                    </TouchableOpacity>
+                  </View>
+                  {quickSetupHighlightInput && !localHost && (
+                    <Text style={{ color: '#EF4444', fontSize: scale(11), marginLeft: scale(30), marginBottom: scaleSpacing(6) }}>⚠ Enter server IP to register</Text>
+                  )}
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: scaleSpacing(6) }}>
+                    <View style={{ width: scale(20), height: scale(20), borderRadius: scale(10), backgroundColor: '#10B981', alignItems: 'center', justifyContent: 'center', marginRight: scaleSpacing(10) }}>
+                      <Text style={{ color: '#fff', fontSize: scale(11), fontWeight: '700' }}>5</Text>
+                    </View>
+                    <Text style={{ color: '#FFFFFF', fontSize: scale(13) }}>Create account & log in</Text>
+                  </View>
+                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <View style={{ width: scale(20), height: scale(20), borderRadius: scale(10), backgroundColor: '#10B981', alignItems: 'center', justifyContent: 'center', marginRight: scaleSpacing(10) }}>
+                      <Text style={{ color: '#fff', fontSize: scale(11), fontWeight: '700' }}>6</Text>
+                    </View>
+                    <Text style={{ color: '#FFFFFF', fontSize: scale(13) }}>Start backing up!</Text>
+                  </View>
                 </View>
               </>
             )}
 
             {serverType === 'remote' && (
               <>
-                <View style={{ backgroundColor: 'rgba(100,149,237,0.1)', borderRadius: 8, padding: 12, marginBottom: 12 }}>
-                  <Text style={{ color: '#6495ED', fontSize: scale(13), fontWeight: '700', marginBottom: 8 }}>ON YOUR SERVER (SSH)</Text>
-                  <Text style={{ color: '#ccc', fontSize: scale(13), marginBottom: 6 }}>
-                    <Text style={{ color: '#fff', fontWeight: '600' }}>1.</Text>  Run the install script:
-                  </Text>
-                  <TouchableOpacity
-                    style={{ marginBottom: 8, marginLeft: 16 }}
-                    onPress={() => { Clipboard.setString('sudo curl -fsSL https://raw.githubusercontent.com/viktorvishyn369/PhotoLynk/main/install-server.sh | bash'); showDarkAlert('Copied', 'Command copied to clipboard.'); }}
-                    onLongPress={() => openLink('https://github.com/viktorvishyn369/PhotoLynk/blob/main/install-server.sh')}>
-                    <Text style={[styles.codeLine, { fontSize: scale(10) }]} numberOfLines={2}>sudo curl -fsSL https://...install-server.sh | bash</Text>
-                    <Text style={[styles.codeHint, { fontSize: scale(10) }]}>Tap to copy • Long-press to view</Text>
-                  </TouchableOpacity>
-                  <Text style={{ color: '#ccc', fontSize: scale(13) }}>
-                    <Text style={{ color: '#fff', fontWeight: '600' }}>2.</Text>  Follow on-screen instructions
-                  </Text>
+                {/* Step 1: Server */}
+                <View style={{ backgroundColor: '#1A1A1A', borderRadius: scale(12), padding: scaleSpacing(14), marginBottom: scaleSpacing(10), borderWidth: 1, borderColor: '#2A2A2A' }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: scaleSpacing(10) }}>
+                    <Feather name="terminal" size={scale(16)} color="#10B981" />
+                    <Text style={{ color: '#10B981', fontSize: scale(13), fontWeight: '600', marginLeft: scaleSpacing(8) }}>ON YOUR SERVER (SSH)</Text>
+                  </View>
+                  <View style={{ flexDirection: 'row', alignItems: 'flex-start', marginBottom: scaleSpacing(8) }}>
+                    <View style={{ width: scale(20), height: scale(20), borderRadius: scale(10), backgroundColor: '#10B981', alignItems: 'center', justifyContent: 'center', marginRight: scaleSpacing(10), marginTop: 2 }}>
+                      <Text style={{ color: '#fff', fontSize: scale(11), fontWeight: '700' }}>1</Text>
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ color: '#FFFFFF', fontSize: scale(13) }}>Run the install script</Text>
+                      <TouchableOpacity
+                        style={{ marginTop: scaleSpacing(6), backgroundColor: '#0A0A0A', borderRadius: scale(8), padding: scaleSpacing(8), borderWidth: 1, borderColor: '#333' }}
+                        onPress={() => { Clipboard.setString('sudo curl -fsSL https://raw.githubusercontent.com/viktorvishyn369/PhotoLynk/main/install-server.sh | bash'); showDarkAlert('Copied', 'Command copied to clipboard.'); }}
+                        onLongPress={() => openLink('https://github.com/viktorvishyn369/PhotoLynk/blob/main/install-server.sh')}>
+                        <Text style={{ color: '#888', fontSize: scale(10) }} numberOfLines={2}>sudo curl -fsSL https://...install-server.sh | bash</Text>
+                        <Text style={{ color: '#666', fontSize: scale(9), marginTop: 2 }}>Tap to copy • Long-press to view</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <View style={{ width: scale(20), height: scale(20), borderRadius: scale(10), backgroundColor: '#10B981', alignItems: 'center', justifyContent: 'center', marginRight: scaleSpacing(10) }}>
+                      <Text style={{ color: '#fff', fontSize: scale(11), fontWeight: '700' }}>2</Text>
+                    </View>
+                    <Text style={{ color: '#FFFFFF', fontSize: scale(13) }}>Follow on-screen instructions</Text>
+                  </View>
                 </View>
-                <View style={{ backgroundColor: 'rgba(50,205,50,0.1)', borderRadius: 8, padding: 12 }}>
-                  <Text style={{ color: '#32CD32', fontSize: scale(13), fontWeight: '700', marginBottom: 8 }}>ON YOUR PHONE</Text>
-                  <Text style={{ color: '#ccc', fontSize: scale(13), marginBottom: 4 }}>
-                    <Text style={{ color: '#fff', fontWeight: '600' }}>3.</Text>  Enter domain (e.g. backup.example.com)
-                  </Text>
-                  <Text style={{ color: '#ccc', fontSize: scale(13), marginBottom: 4 }}>
-                    <Text style={{ color: '#fff', fontWeight: '600' }}>4.</Text>  Create account & log in
-                  </Text>
-                  <Text style={{ color: '#ccc', fontSize: scale(13) }}>
-                    <Text style={{ color: '#fff', fontWeight: '600' }}>5.</Text>  Start backing up!
-                  </Text>
+
+                {/* Step 2: Phone */}
+                <View style={{ backgroundColor: '#1A1A1A', borderRadius: scale(12), padding: scaleSpacing(14), borderWidth: 1, borderColor: '#2A2A2A' }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: scaleSpacing(10) }}>
+                    <Feather name="smartphone" size={scale(16)} color={THEME.primary} />
+                    <Text style={{ color: THEME.primary, fontSize: scale(13), fontWeight: '600', marginLeft: scaleSpacing(8) }}>ON YOUR PHONE</Text>
+                  </View>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: scaleSpacing(6) }}>
+                    <View style={{ width: scale(20), height: scale(20), borderRadius: scale(10), backgroundColor: THEME.primary, alignItems: 'center', justifyContent: 'center', marginRight: scaleSpacing(10) }}>
+                      <Text style={{ color: '#fff', fontSize: scale(11), fontWeight: '700' }}>3</Text>
+                    </View>
+                    <Text style={{ color: '#FFFFFF', fontSize: scale(13) }}>Enter your domain below:</Text>
+                  </View>
+                  {/* Domain Input with red highlight if required */}
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: scaleSpacing(10), marginLeft: scale(30) }}>
+                    <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: '#0A0A0A', borderRadius: scale(8), borderWidth: 2, borderColor: quickSetupHighlightInput && !remoteHost ? '#EF4444' : '#333', paddingHorizontal: scaleSpacing(10) }}>
+                      <Feather name="globe" size={scale(16)} color={quickSetupHighlightInput && !remoteHost ? '#EF4444' : '#666'} />
+                      <TextInput
+                        style={{ flex: 1, color: '#FFFFFF', fontSize: scale(13), paddingVertical: scaleSpacing(10), marginLeft: scaleSpacing(8) }}
+                        placeholder="backup.example.com"
+                        placeholderTextColor="#666"
+                        value={remoteHost}
+                        onChangeText={(t) => setRemoteHost(normalizeHostInput(t))}
+                        autoCapitalize="none"
+                        keyboardType="url"
+                      />
+                    </View>
+                  </View>
+                  {quickSetupHighlightInput && !remoteHost && (
+                    <Text style={{ color: '#EF4444', fontSize: scale(11), marginLeft: scale(30), marginBottom: scaleSpacing(6) }}>⚠ Enter server domain to register</Text>
+                  )}
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: scaleSpacing(6) }}>
+                    <View style={{ width: scale(20), height: scale(20), borderRadius: scale(10), backgroundColor: THEME.primary, alignItems: 'center', justifyContent: 'center', marginRight: scaleSpacing(10) }}>
+                      <Text style={{ color: '#fff', fontSize: scale(11), fontWeight: '700' }}>4</Text>
+                    </View>
+                    <Text style={{ color: '#FFFFFF', fontSize: scale(13) }}>Create account & log in</Text>
+                  </View>
+                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <View style={{ width: scale(20), height: scale(20), borderRadius: scale(10), backgroundColor: THEME.primary, alignItems: 'center', justifyContent: 'center', marginRight: scaleSpacing(10) }}>
+                      <Text style={{ color: '#fff', fontSize: scale(11), fontWeight: '700' }}>5</Text>
+                    </View>
+                    <Text style={{ color: '#FFFFFF', fontSize: scale(13) }}>Start backing up!</Text>
+                  </View>
                 </View>
               </>
             )}
 
             {serverType === 'stealthcloud' && (
-              <View style={{ backgroundColor: 'rgba(138,43,226,0.1)', borderRadius: 8, padding: 12 }}>
-                <Text style={{ color: '#9370DB', fontSize: scale(13), fontWeight: '700', marginBottom: 8 }}>GETTING STARTED</Text>
-                <Text style={{ color: '#ccc', fontSize: scale(13), marginBottom: 4 }}>
-                  <Text style={{ color: '#fff', fontWeight: '600' }}>1.</Text>  Create account & log in
-                </Text>
-                <Text style={{ color: '#ccc', fontSize: scale(13), marginBottom: 4 }}>
-                  <Text style={{ color: '#fff', fontWeight: '600' }}>2.</Text>  Start backing up (7-day free trial)
-                </Text>
-                <Text style={{ color: '#ccc', fontSize: scale(13), marginBottom: 8 }}>
-                  <Text style={{ color: '#fff', fontWeight: '600' }}>3.</Text>  Pick a plan when ready
-                </Text>
-                <Text style={{ color: '#888', fontSize: scale(11), fontStyle: 'italic' }}>
-                  Zero-knowledge encryption: only your device can decrypt your data.
-                </Text>
+              <View style={{ backgroundColor: '#1A1A1A', borderRadius: scale(12), padding: scaleSpacing(14), borderWidth: 1, borderColor: '#2A2A2A' }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: scaleSpacing(10) }}>
+                  <Feather name="zap" size={scale(16)} color="#8B5CF6" />
+                  <Text style={{ color: '#8B5CF6', fontSize: scale(13), fontWeight: '600', marginLeft: scaleSpacing(8) }}>GETTING STARTED</Text>
+                </View>
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: scaleSpacing(6) }}>
+                  <View style={{ width: scale(20), height: scale(20), borderRadius: scale(10), backgroundColor: '#8B5CF6', alignItems: 'center', justifyContent: 'center', marginRight: scaleSpacing(10) }}>
+                    <Text style={{ color: '#fff', fontSize: scale(11), fontWeight: '700' }}>1</Text>
+                  </View>
+                  <Text style={{ color: '#FFFFFF', fontSize: scale(13) }}>Create account & log in</Text>
+                </View>
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: scaleSpacing(6) }}>
+                  <View style={{ width: scale(20), height: scale(20), borderRadius: scale(10), backgroundColor: '#8B5CF6', alignItems: 'center', justifyContent: 'center', marginRight: scaleSpacing(10) }}>
+                    <Text style={{ color: '#fff', fontSize: scale(11), fontWeight: '700' }}>2</Text>
+                  </View>
+                  <Text style={{ color: '#FFFFFF', fontSize: scale(13) }}>Start backing up (7-day free trial)</Text>
+                </View>
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: scaleSpacing(10) }}>
+                  <View style={{ width: scale(20), height: scale(20), borderRadius: scale(10), backgroundColor: '#8B5CF6', alignItems: 'center', justifyContent: 'center', marginRight: scaleSpacing(10) }}>
+                    <Text style={{ color: '#fff', fontSize: scale(11), fontWeight: '700' }}>3</Text>
+                  </View>
+                  <Text style={{ color: '#FFFFFF', fontSize: scale(13) }}>Pick a plan when ready</Text>
+                </View>
+                <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(139, 92, 246, 0.1)', borderRadius: scale(8), padding: scaleSpacing(10) }}>
+                  <Feather name="shield" size={scale(14)} color="#8B5CF6" />
+                  <Text style={{ color: '#888', fontSize: scale(11), marginLeft: scaleSpacing(8), flex: 1 }}>Zero-knowledge encryption: only your device can decrypt your data.</Text>
+                </View>
               </View>
             )}
 
             <TouchableOpacity 
-              style={[styles.overlayBtnSecondary, glassModeEnabled && styles.overlayBtnSecondaryGlass, { marginTop: 16 }]} 
-              onPress={() => setQuickSetupCollapsed(true)}>
-              <Text style={styles.overlayBtnSecondaryText}>Close</Text>
+              style={{ marginTop: scaleSpacing(16), backgroundColor: '#1A1A1A', borderRadius: scale(12), paddingVertical: scaleSpacing(14), alignItems: 'center', borderWidth: 1, borderColor: '#2A2A2A' }} 
+              onPress={() => { setQuickSetupCollapsed(true); setQuickSetupHighlightInput(false); }}>
+              <Text style={{ color: '#FFFFFF', fontSize: scale(15), fontWeight: '600' }}>Close</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -3985,15 +4106,15 @@ export default function App() {
         )}
 
         {customAlert && (
-          <View style={[styles.overlay, glassModeEnabled && styles.overlayGlass]}>
-            <View style={[styles.overlayCard, glassModeEnabled && styles.overlayCardGlass, { backgroundColor: glassModeEnabled ? 'rgba(42, 42, 42, 0.9)' : '#2A2A2A', maxWidth: isTablet ? 450 : 320 }]}>
+          <View style={[styles.overlay, { backgroundColor: 'rgba(0,0,0,0.97)' }]}>
+            <View style={[styles.overlayCard, { backgroundColor: '#000000', maxWidth: isTablet ? 450 : 320 }]}>
               <Text style={[styles.overlayTitle, { fontSize: scale(18), marginBottom: scaleSpacing(8) }]}>{customAlert.title}</Text>
-              <Text style={{ color: '#CCC', fontSize: scale(14), textAlign: 'center', marginBottom: scaleSpacing(20), lineHeight: scale(20) }}>{customAlert.message}</Text>
+              <Text style={{ color: '#FFFFFF', fontSize: scale(14), textAlign: 'center', marginBottom: scaleSpacing(20), lineHeight: scale(20) }}>{customAlert.message}</Text>
               <View style={{ flexDirection: 'row', justifyContent: 'center', gap: scaleSpacing(12) }}>
                 {(customAlert.buttons || []).map((btn, idx) => (
                   <TouchableOpacity
                     key={idx}
-                    style={[styles.overlayBtnPrimary, glassModeEnabled && styles.overlayBtnPrimaryGlass, { paddingVertical: scaleSpacing(10), paddingHorizontal: scaleSpacing(24), minWidth: isTablet ? 100 : 80 }]}
+                    style={[styles.overlayBtnPrimary, { paddingVertical: scaleSpacing(10), paddingHorizontal: scaleSpacing(24), minWidth: isTablet ? 100 : 80 }]}
                     onPress={() => {
                       closeDarkAlert();
                       if (btn.onPress) btn.onPress();
@@ -4011,231 +4132,34 @@ export default function App() {
 
   if (view === 'info') {
     return (
-      <View style={styles.container}>
-        <View style={styles.header}>
-          <TouchableOpacity onPress={() => setView('home')} style={styles.backBtn}>
-            <Text style={styles.backText}>Back</Text>
-          </TouchableOpacity>
-          <Text style={styles.headerTitle}>Info</Text>
-          <View style={{width: 60}} />
-        </View>
-
-        <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingHorizontal: Math.max(16, SCREEN_WIDTH * 0.04), paddingTop: 16, paddingBottom: 40 }}>
-          <View style={[styles.settingsCard, glassModeEnabled && styles.glassCard]}>
-            <Text style={styles.settingsTitle}>{APP_DISPLAY_NAME}</Text>
-            {deviceUuid && (
-              <TouchableOpacity
-                style={styles.uuidBox}
-                onPress={() => {
-                  Clipboard.setString(deviceUuid);
-                  showDarkAlert('Copied!', 'Device ID copied to clipboard');
-                }}>
-                <Text style={styles.uuidLabel}>Device ID (tap to copy):</Text>
-                <Text style={styles.uuidText}>{deviceUuid}</Text>
-              </TouchableOpacity>
-            )}
-          </View>
-
-          {serverType === 'stealthcloud' && (
-            <View style={[styles.settingsCard, glassModeEnabled && styles.glassCard]}>
-              <Text style={styles.settingsTitle}>StealthCloud Storage</Text>
-              <Text style={styles.settingsDescription}>Your encrypted cloud usage</Text>
-
-              {stealthUsageLoading && (
-                <View style={{ paddingVertical: 6 }}>
-                  <ActivityIndicator size="small" color={THEME.secondary} />
-                </View>
-              )}
-
-              {!!stealthUsageError && (
-                <Text style={styles.inputHint}>{stealthUsageError}</Text>
-              )}
-
-              {!!stealthUsage && (
-                <View>
-                  {(() => {
-                    const quotaBytes = Number(stealthUsage.quotaBytes ?? stealthUsage.quota_bytes ?? stealthUsage.quota ?? 0) || 0;
-                    const usedBytes = Number(stealthUsage.usedBytes ?? stealthUsage.used_bytes ?? stealthUsage.used ?? 0) || 0;
-                    const remainingBytes = Number(
-                      (stealthUsage.remainingBytes ?? stealthUsage.remaining_bytes ?? stealthUsage.remaining) ??
-                      (quotaBytes ? (quotaBytes - usedBytes) : 0)
-                    ) || 0;
-                    const sub = stealthUsage.subscription || {};
-                    const subStatus = sub.status || 'none';
-                    const isGrace = subStatus === 'grace' || subStatus === 'grace_expired';
-                    const isExpired = subStatus === 'trial_expired' || subStatus === 'grace_expired';
-
-                    return (
-                      <>
-                        <View style={styles.usageGrid}>
-                          <View style={styles.usageItem}>
-                            <Text style={styles.serverInfoLabel}>Plan</Text>
-                            <Text style={styles.serverInfoText}>
-                              {stealthUsage.planGb ? `${stealthUsage.planGb} GB` : (stealthUsage.plan_gb ? `${stealthUsage.plan_gb} GB` : '—')}
-                            </Text>
-                          </View>
-
-                          <View style={styles.usageItem}>
-                            <Text style={styles.serverInfoLabel}>Status</Text>
-                            <Text style={[styles.serverInfoText, isExpired && { color: '#FF6B6B' }, isGrace && !isExpired && { color: '#FFB347' }]}>
-                              {subStatus === 'active' ? (sub.expiresAt ? `✓ Exp ${new Date(sub.expiresAt).toLocaleDateString()}` : '✓ Active') :
-                               subStatus === 'trial' ? '🎁 Free 7 Days Trial' :
-                               subStatus === 'grace' ? `⚠️ Expired (${GRACE_PERIOD_DAYS} days to sync)` :
-                               subStatus === 'grace_expired' ? '❌ Grace Period Ended' :
-                               subStatus === 'trial_expired' ? '❌ Trial Expired' : '—'}
-                            </Text>
-                          </View>
-
-                          <View style={styles.usageItem}>
-                            <Text style={styles.serverInfoLabel}>Used</Text>
-                            <Text style={styles.serverInfoText}>
-                              {formatBytesHumanDecimal(usedBytes)}
-                            </Text>
-                          </View>
-
-                          <View style={styles.usageItem}>
-                            <Text style={styles.serverInfoLabel}>Remaining</Text>
-                            <Text style={styles.serverInfoText}>
-                              {formatBytesHumanDecimal(remainingBytes)}
-                            </Text>
-                          </View>
-                        </View>
-
-                        {(isGrace || isExpired) && (
-                          <View style={{ marginTop: 12 }}>
-                            <Text style={[styles.inputHint, { color: '#FFB347', marginBottom: 8 }]}>
-                              {isGrace && !isExpired
-                                ? `Your subscription expired. You have ${GRACE_PERIOD_DAYS} days to sync your data before access is locked.`
-                                : 'Your subscription has expired. Renew to continue backups.'}
-                            </Text>
-                          </View>
-                        )}
-
-                        {/* Cross-platform payment notice */}
-                        {(() => {
-                          const serverPaymentType = stealthUsage?.subscription?.paymentType;
-                          const currentAppPaymentType = 'solana';
-                          const hasPlan = stealthUsage?.planGb || stealthUsage?.plan_gb;
-                          const isActive = subStatus === 'active' || subStatus === 'trial';
-                          
-                          if (serverPaymentType && serverPaymentType !== currentAppPaymentType && hasPlan && isActive) {
-                            const paymentLabel = serverPaymentType === 'apple' ? 'Apple App Store' : 
-                                                 serverPaymentType === 'google' ? 'Google Play Store' : serverPaymentType;
-                            return (
-                              <View style={{ marginTop: 12, backgroundColor: 'rgba(100, 149, 237, 0.15)', padding: 12, borderRadius: 8 }}>
-                                <Text style={[styles.inputHint, { color: '#6495ED', marginBottom: 0 }]}>
-                                  ℹ️ Subscription via {paymentLabel}. To switch to SOL, let it expire first.
-                                </Text>
-                              </View>
-                            );
-                          }
-                          return null;
-                        })()}
-                      </>
-                    );
-                  })()}
-                </View>
-              )}
-
-              {/* Subscription Management */}
-              <View style={{ marginTop: 16, borderTopWidth: 1, borderTopColor: '#333', paddingTop: 16 }}>
-                <Text style={styles.serverInfoLabel}>Manage Subscription</Text>
-                <View style={styles.stealthPlanGrid}>
-                  {STEALTH_PLAN_TIERS.map((gb) => {
-                    const plan = availablePlans.find(p => p.tierGb === gb);
-                    const priceStr = plan ? plan.priceString : '—';
-                    const currentPlan = stealthUsage?.planGb || stealthUsage?.plan_gb;
-                    const isCurrent = currentPlan === gb;
-
-                    return (
-                      <TouchableOpacity
-                        key={String(gb)}
-                        activeOpacity={0.85}
-                        style={[
-                          styles.stealthPlanCard,
-                          isCurrent && styles.stealthPlanCardSelected,
-                          purchaseLoading && styles.stealthPlanCardDisabled,
-                        ]}
-                        onPress={() => {
-                          if (purchaseLoading) return;
-                          if (isCurrent) {
-                            showDarkAlert('Current Plan', 'This is your current plan.');
-                            return;
-                          }
-                          openPaywall(gb);
-                        }}>
-                        <Text style={styles.stealthPlanGb}>{gb === 1000 ? '1 TB' : `${gb} GB`}</Text>
-                        <Text style={styles.stealthPlanPrice}>{priceStr}</Text>
-                        <Text style={styles.stealthPlanMeta}>{isCurrent ? 'Current' : 'per month'}</Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
-
-                {false && (
-                  <TouchableOpacity
-                    style={styles.restorePurchasesBtn}
-                    onPress={handleRestorePurchases}
-                    disabled={purchaseLoading}>
-                    <Text style={styles.restorePurchasesText}>Restore Purchases</Text>
-                  </TouchableOpacity>
-                )}
-              </View>
-            </View>
-          )}
-
-          <View style={[styles.settingsCard, glassModeEnabled && styles.glassCard]}>
-            <Text style={styles.settingsTitle}>Resources</Text>
-
-            <TouchableOpacity
-              style={styles.resourceBtn}
-              onPress={() => {
-                const githubUrl = 'https://github.com/viktorvishyn369/PhotoLynk';
-                Linking.openURL(githubUrl).catch(err => {
-                  showDarkAlert('Error', 'Could not open link');
-                });
-              }}>
-              <Text style={styles.resourceIcon}>📦</Text>
-              <View style={styles.resourceContent}>
-                <Text style={styles.resourceTitle}>GitHub</Text>
-                <Text style={styles.resourceDesc}>Download server & docs</Text>
-              </View>
-              <Text style={styles.resourceArrow}>→</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.resourceBtn}
-              onPress={() => {
-                const deleteAccountUrl = 'https://viktorvishyn369.github.io/PhotoLynk/delete-account.html';
-                Linking.openURL(deleteAccountUrl).catch(err => {
-                  showDarkAlert('Error', 'Could not open link');
-                });
-              }}>
-              <Text style={styles.resourceIcon}>🗑️</Text>
-              <View style={styles.resourceContent}>
-                <Text style={styles.resourceTitle}>Delete Account</Text>
-                <Text style={styles.resourceDesc}>Request account & data deletion</Text>
-              </View>
-              <Text style={styles.resourceArrow}>→</Text>
-            </TouchableOpacity>
-
-          </View>
-
-          <View style={styles.settingsFooter}>
-            <Text style={styles.footerVersion}>{APP_DISPLAY_NAME} v1.2.1</Text>
-          </View>
-        </ScrollView>
+      <>
+        <InfoScreen
+          onBack={() => setView('home')}
+          appDisplayName={APP_DISPLAY_NAME}
+          appVersion="1.4.0"
+          deviceUuid={deviceUuid}
+          serverType={serverType}
+          stealthUsage={stealthUsage}
+          stealthUsageLoading={stealthUsageLoading}
+          stealthUsageError={stealthUsageError}
+          availablePlans={availablePlans}
+          purchaseLoading={purchaseLoading}
+          glassModeEnabled={glassModeEnabled}
+          showDarkAlert={showDarkAlert}
+          openPaywall={openPaywall}
+          STEALTH_PLAN_TIERS={STEALTH_PLAN_TIERS}
+        />
 
         {customAlert && (
-          <View style={[styles.overlay, glassModeEnabled && styles.overlayGlass]}>
-            <View style={[styles.overlayCard, glassModeEnabled && styles.overlayCardGlass, { backgroundColor: glassModeEnabled ? 'rgba(42, 42, 42, 0.9)' : '#2A2A2A', maxWidth: isTablet ? 450 : 320 }]}>
+          <View style={[styles.overlay, { backgroundColor: 'rgba(0,0,0,0.97)' }]}>
+            <View style={[styles.overlayCard, { backgroundColor: '#000000', maxWidth: isTablet ? 450 : 320 }]}>
               <Text style={[styles.overlayTitle, { fontSize: scale(18), marginBottom: scaleSpacing(8) }]}>{customAlert.title}</Text>
-              <Text style={{ color: '#CCC', fontSize: scale(14), textAlign: 'center', marginBottom: scaleSpacing(20), lineHeight: scale(20) }}>{customAlert.message}</Text>
+              <Text style={{ color: '#FFFFFF', fontSize: scale(14), textAlign: 'center', marginBottom: scaleSpacing(20), lineHeight: scale(20) }}>{customAlert.message}</Text>
               <View style={{ flexDirection: 'row', justifyContent: 'center', gap: scaleSpacing(12), flexWrap: 'wrap' }}>
                 {(customAlert.buttons || []).map((btn, idx) => (
                   <TouchableOpacity
                     key={idx}
-                    style={[styles.overlayBtnPrimary, glassModeEnabled && styles.overlayBtnPrimaryGlass, { paddingVertical: scaleSpacing(10), paddingHorizontal: scaleSpacing(24), minWidth: isTablet ? 100 : 80 }]}
+                    style={[styles.overlayBtnPrimary, { paddingVertical: scaleSpacing(10), paddingHorizontal: scaleSpacing(24), minWidth: isTablet ? 100 : 80 }]}
                     onPress={() => {
                       closeDarkAlert();
                       if (btn.onPress) btn.onPress();
@@ -4306,114 +4230,41 @@ export default function App() {
             </View>
           </View>
         )}
-      </View>
+      </>
     );
   }
 
   return (
     <View style={styles.container}>
-      <View style={styles.header}>
-        <View>
-          <Text style={styles.headerTitle}>PhotoLynk</Text>
-          <Text style={styles.headerSubtitle}>Your Secure Backup</Text>
-        </View>
-        <View style={styles.headerButtons}>
-          <TouchableOpacity onPress={() => setView('info')} style={styles.infoBtn}>
-            <FontAwesome5 name="info-circle" size={18} color="#FFFFFF" />
-          </TouchableOpacity>
-          <TouchableOpacity onPress={() => setView('settings')} style={styles.settingsBtn}>
-            <FontAwesome5 name="cog" size={18} color="#FFFFFF" />
-          </TouchableOpacity>
-          <TouchableOpacity
-            onPress={() => logout()}
-            onLongPress={() => logout({ forgetCredentials: true })}
-            style={styles.logoutBtn}>
-            <FontAwesome5 name="sign-out-alt" size={18} color="#FFFFFF" />
-          </TouchableOpacity>
-        </View>
-      </View>
-
-      <ScrollView style={styles.content} contentContainerStyle={styles.contentContainer}>
-        <View style={[styles.statusCard, glassModeEnabled && styles.statusCardGlass]}>
-          <View style={styles.statusHeader}>
-            <Text style={styles.statusLabel}>STATUS</Text>
-          </View>
-          <Text style={styles.statusText} numberOfLines={1} ellipsizeMode="tail">
-
-            {status.startsWith('Idle • ') ? (
-
-              <>
-
-                Idle • <Text onPress={() => setView('settings')} style={{color: '#888888'}}>{status.split(' • ')[1]}</Text>
-
-              </>
-
-            ) : (
-
-              status
-
-            )}
-
-          </Text>
-          <View style={styles.progressBar}>
-            <Animated.View 
-              style={[
-                styles.progressFill, 
-                { width: `${Math.min(Math.max(progress, 0), 1) * 100}%` },
-                progressAction === 'cleanup' && { backgroundColor: '#6366F1' },
-                progressAction === 'backup' && { backgroundColor: '#2196F3' },
-                progressAction === 'sync' && { backgroundColor: THEME.secondary },
-              ]} 
-            />
-          </View>
-        </View>
-
-        <View style={styles.actionsContainer}>
-          <TouchableOpacity
-            onPress={openCleanupModeChooser}
-            disabled={loading}
-            style={[styles.actionCard, styles.cleanupCard, glassModeEnabled && styles.cleanupCardGlass, loading && styles.disabledCard]}>
-            <View style={styles.cardIcon}>
-              <FontAwesome5 name="broom" size={22} color="#FFFFFF" />
-            </View>
-            <Text style={styles.cardTitle}>Clean Duplicates</Text>
-            <Text style={styles.cardDescription}>Remove Duplicate Photos & Videos</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            onPress={openBackupModeChooser}
-            disabled={loading}
-            style={[styles.actionCard, styles.backupCard, glassModeEnabled && styles.backupCardGlass, loading && styles.disabledCard]}>
-            <View style={styles.cardIcon}>
-              <FontAwesome5 name="cloud-upload-alt" size={24} color="#FFFFFF" />
-            </View>
-            <Text style={styles.cardTitle}>Backup to Cloud</Text>
-            <Text style={styles.cardDescription}>Upload Photos & Videos to {serverType === 'stealthcloud' ? 'StealthCloud' : serverType === 'remote' ? 'Remote' : 'Local'}</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            onPress={openSyncModeChooser}
-            onLongPress={async () => {
-              await SecureStore.deleteItemAsync('downloaded_files');
-              await clearRestoreHistory();
-              showDarkAlert('Reset', 'Download history cleared. All files will be re-downloaded on next sync.');
-            }}
-            disabled={loading}
-            style={[styles.actionCard, styles.syncCard, glassModeEnabled && styles.syncCardGlass, loading && styles.disabledCard]}>
-            <View style={styles.cardIcon}>
-              <FontAwesome5 name="cloud-download-alt" size={24} color="#FFFFFF" />
-            </View>
-            <Text style={styles.cardTitle}>Sync from Cloud</Text>
-            <Text style={styles.cardDescription}>Download backed up Photos & Videos</Text>
-          </TouchableOpacity>
-        </View>
-      </ScrollView>
+      <HomeScreen
+        appDisplayName={APP_DISPLAY_NAME}
+        serverType={serverType}
+        status={status}
+        progress={progress}
+        progressAction={progressAction}
+        loading={loading}
+        glassModeEnabled={glassModeEnabled}
+        onOpenInfo={() => setView('info')}
+        onOpenSettings={() => setView('settings')}
+        onLogout={() => logout()}
+        onCleanBestMatches={async () => { await cleanDeviceDuplicates(); }}
+        onCleanSimilar={async () => { await startSimilarShotsReview(); }}
+        onBackupAll={async () => { await backupPhotos(); }}
+        onBackupSelected={() => { openBackupPicker(); }}
+        onSyncAll={async () => { await restorePhotos(); }}
+        onSyncSelected={() => { openSyncPicker(); }}
+        showCompletionTick={showCompletionTick}
+        completionMessage={completionMessage}
+        onDismissCompletionTick={dismissCompletionTick}
+        onMintNFT={openNftPicker}
+        onViewNFTs={openNftGallery}
+      />
 
       {cleanupModeOpen && (
         <View style={[styles.overlay, glassModeEnabled && styles.overlayGlass]}>
           <View style={[styles.overlayCard, glassModeEnabled && styles.overlayCardGlass]}>
             <Text style={styles.overlayTitle}>Clean Up Duplicates</Text>
-            <Text style={styles.overlaySubtitle}>Remove best photo matches & similar photos.{"\n"}Nothing is deleted without your confirmation.</Text>
+            <Text style={styles.overlaySubtitle}>Remove identical photos/videos & similar photos.{"\n"}Nothing is deleted without your confirmation.</Text>
 
             <TouchableOpacity
               style={[styles.overlayBtnPrimary, glassModeEnabled && styles.overlayBtnPrimaryGlass]}
@@ -4421,7 +4272,7 @@ export default function App() {
                 closeCleanupModeChooser();
                 await cleanDeviceDuplicates();
               }}>
-              <Text style={styles.overlayBtnPrimaryText}>Review Best Photo Matches & Delete</Text>
+              <Text style={styles.overlayBtnPrimaryText}>Identical Photos & Videos</Text>
             </TouchableOpacity>
 
             <TouchableOpacity
@@ -4430,7 +4281,7 @@ export default function App() {
                 closeCleanupModeChooser();
                 await startSimilarShotsReview();
               }}>
-              <Text style={styles.overlayBtnSecondaryText}>Review Similar Photos & Delete</Text>
+              <Text style={styles.overlayBtnSecondaryText}>Similar Photos</Text>
             </TouchableOpacity>
 
             <TouchableOpacity
@@ -4442,44 +4293,121 @@ export default function App() {
         </View>
       )}
 
-      {similarReviewOpen && (
-        <View style={[styles.overlay, glassModeEnabled && styles.overlayGlass]}>
-          <View style={[styles.pickerCard, glassModeEnabled && styles.pickerCardGlass]}>
-            <View style={styles.pickerHeader}>
-              <TouchableOpacity onPress={closeSimilarReview} style={styles.pickerHeaderBtn}>
-                <Text style={styles.pickerHeaderBtnText}>Cancel</Text>
-              </TouchableOpacity>
-              <View style={{ flex: 1, alignItems: 'center' }}>
-                <Text style={styles.pickerHeaderTitle}>Similar Photos</Text>
-                <Text style={styles.pickerHeaderSubtitle}>Set {Math.min(similarGroupIndex + 1, (similarGroups || []).length)}/{(similarGroups || []).length}</Text>
+      {similarReviewOpen && (() => {
+        const currentGroup = (similarGroups || [])[similarGroupIndex] || [];
+        const currentPhoto = currentGroup[similarPhotoIndex] || null;
+        const currentPhotoId = currentPhoto && currentPhoto.id ? String(currentPhoto.id) : '';
+        const isSelected = !!(similarSelected && similarSelected[currentPhotoId]);
+        const totalInGroup = currentGroup.length || 0;
+        const totalGroups = (similarGroups || []).length || 0;
+        const selectedCount = getSimilarSelectedIds().length || 0;
+        
+        // Safety check - close if no valid data
+        if (!currentGroup.length || !currentPhoto) {
+          return null;
+        }
+        
+        return (
+          <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: '#000' }}>
+            {/* Header */}
+            <View style={{ paddingTop: Platform.OS === 'ios' ? 50 : 30, paddingHorizontal: 16, paddingBottom: 12, backgroundColor: 'rgba(0,0,0,0.8)' }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                <TouchableOpacity onPress={closeSimilarReview} style={{ padding: 8 }}>
+                  <Text style={{ color: THEME.secondary, fontSize: scale(16), fontWeight: '600' }}>Cancel</Text>
+                </TouchableOpacity>
+                <View style={{ alignItems: 'center' }}>
+                  <Text style={{ color: '#FFF', fontSize: scale(16), fontWeight: '700' }}>Similar Photos</Text>
+                  <Text style={{ color: '#888', fontSize: scale(12) }}>Set {similarGroupIndex + 1}/{totalGroups} • Photo {similarPhotoIndex + 1}/{totalInGroup}</Text>
+                </View>
+                <View style={{ width: 60 }} />
               </View>
-              <View style={{ width: 60 }} />
             </View>
 
-            <ScrollView contentContainerStyle={styles.pickerGrid}>
-              {((similarGroups || [])[similarGroupIndex] || []).map((a) => {
-                const selected = !!(similarSelected && similarSelected[String(a && a.id ? a.id : '')]);
-                return (
-                  <TouchableOpacity
-                    key={String(a.id)}
-                    style={[styles.pickerItem, selected && styles.pickerItemSelected]}
-                    onPress={() => toggleSimilarSelected(a.id)}>
-                    <Image source={{ uri: a.uri }} style={styles.pickerThumb} />
-                    {selected && (
-                      <View style={styles.pickerCheck}>
-                        <Text style={styles.pickerCheckText}>✓</Text>
-                      </View>
-                    )}
-                  </TouchableOpacity>
-                );
-              })}
+            {/* Full-screen photo */}
+            <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+              {currentPhoto && (
+                <Image
+                  source={{ uri: currentPhoto.uri }}
+                  style={{ width: '100%', height: '100%' }}
+                  resizeMode="contain"
+                />
+              )}
+              
+              {/* Selection overlay badge */}
+              {isSelected && (
+                <View style={{ position: 'absolute', top: 20, right: 20, backgroundColor: 'rgba(255,59,48,0.9)', paddingHorizontal: 16, paddingVertical: 8, borderRadius: 20 }}>
+                  <Text style={{ color: '#FFF', fontSize: scale(14), fontWeight: '700' }}>MARKED FOR DELETION</Text>
+                </View>
+              )}
+              
+              {/* Photo info */}
+              {currentPhoto && (
+                <View style={{ position: 'absolute', bottom: 20, left: 20, right: 20, backgroundColor: 'rgba(0,0,0,0.7)', padding: 12, borderRadius: 12 }}>
+                  <Text style={{ color: '#FFF', fontSize: scale(13), fontWeight: '600' }}>{currentPhoto.filename || 'Unknown'}</Text>
+                  {(currentPhoto.created > 0 || currentPhoto.creationTime > 0) ? (
+                    <Text style={{ color: '#AAA', fontSize: scale(11), marginTop: 4 }}>
+                      {new Date(currentPhoto.created || currentPhoto.creationTime).toLocaleString()}
+                    </Text>
+                  ) : null}
+                </View>
+              )}
 
-              <View style={{ width: '100%', paddingVertical: 12 }}>
-                <Text style={styles.overlaySubtitle}>Select photo(s) to remove.{'\n'}The remaining photo(s) will be kept.</Text>
-
+              {/* Left/Right navigation arrows */}
+              {similarPhotoIndex > 0 && (
                 <TouchableOpacity
-                  disabled={getSimilarSelectedIds().length === 0 || loading}
-                  style={[styles.overlayBtnPrimary, glassModeEnabled && styles.overlayBtnPrimaryGlass]}
+                  style={{ position: 'absolute', left: 10, top: '50%', marginTop: -30, backgroundColor: 'rgba(255,255,255,0.2)', width: 50, height: 60, borderRadius: 8, justifyContent: 'center', alignItems: 'center' }}
+                  onPress={() => setSimilarPhotoIndex(prev => Math.max(0, prev - 1))}>
+                  <Text style={{ color: '#FFF', fontSize: 28, fontWeight: '300' }}>‹</Text>
+                </TouchableOpacity>
+              )}
+              {similarPhotoIndex < totalInGroup - 1 && (
+                <TouchableOpacity
+                  style={{ position: 'absolute', right: 10, top: '50%', marginTop: -30, backgroundColor: 'rgba(255,255,255,0.2)', width: 50, height: 60, borderRadius: 8, justifyContent: 'center', alignItems: 'center' }}
+                  onPress={() => setSimilarPhotoIndex(prev => Math.min(totalInGroup - 1, prev + 1))}>
+                  <Text style={{ color: '#FFF', fontSize: 28, fontWeight: '300' }}>›</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+
+            {/* Thumbnail strip */}
+            <View style={{ backgroundColor: 'rgba(0,0,0,0.9)', paddingVertical: 8 }}>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 12 }}>
+                {currentGroup.map((a, idx) => {
+                  const thumbSelected = !!(similarSelected && similarSelected[String(a && a.id ? a.id : '')]);
+                  const isCurrent = idx === similarPhotoIndex;
+                  return (
+                    <TouchableOpacity
+                      key={String(a.id)}
+                      style={{ width: 70, height: 70, marginRight: 8, borderRadius: 8, overflow: 'hidden', borderWidth: isCurrent ? 3 : 2, borderColor: isCurrent ? THEME.secondary : (thumbSelected ? '#FF3B30' : '#333') }}
+                      onPress={() => setSimilarPhotoIndex(idx)}>
+                      <Image source={{ uri: a.uri }} style={{ width: '100%', height: '100%' }} />
+                      {thumbSelected && (
+                        <View style={{ position: 'absolute', top: 4, right: 4, width: 20, height: 20, borderRadius: 10, backgroundColor: '#FF3B30', justifyContent: 'center', alignItems: 'center' }}>
+                          <Text style={{ color: '#FFF', fontSize: 12, fontWeight: '900' }}>✓</Text>
+                        </View>
+                      )}
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            </View>
+
+            {/* Bottom action bar */}
+            <View style={{ backgroundColor: 'rgba(0,0,0,0.95)', paddingBottom: Platform.OS === 'ios' ? 34 : 20, paddingTop: 12, paddingHorizontal: 16 }}>
+              {/* Toggle selection button */}
+              <TouchableOpacity
+                style={{ backgroundColor: isSelected ? '#333' : '#FF3B30', paddingVertical: 14, borderRadius: 12, marginBottom: 10, alignItems: 'center' }}
+                onPress={() => toggleSimilarSelected(currentPhotoId)}>
+                <Text style={{ color: '#FFF', fontSize: scale(15), fontWeight: '700' }}>
+                  {isSelected ? 'Keep This Photo' : 'Mark for Deletion'}
+                </Text>
+              </TouchableOpacity>
+
+              <View style={{ flexDirection: 'row' }}>
+                {/* Delete selected */}
+                <TouchableOpacity
+                  disabled={selectedCount === 0 || loading}
+                  style={{ flex: 1, marginRight: 5, backgroundColor: selectedCount > 0 ? THEME.secondary : '#333', paddingVertical: 14, borderRadius: 12, alignItems: 'center', opacity: selectedCount === 0 ? 0.5 : 1 }}
                   onPress={async () => {
                     const ids = getSimilarSelectedIds();
                     if (ids.length === 0) return;
@@ -4488,37 +4416,36 @@ export default function App() {
                     let didDelete = false;
 
                     try {
-                      // Use native MediaDelete module on Android for proper scoped storage handling
-                      if (Platform.OS === 'android' && MediaDelete && typeof MediaDelete.deleteAssets === 'function') {
+                      if (MediaDelete && typeof MediaDelete.deleteAssets === 'function') {
                         console.log('Similar Photos: Using native MediaDelete for', ids.length, 'items');
                         const result = await MediaDelete.deleteAssets(ids);
                         if (result === true) {
                           didDelete = true;
                           setStatus(`Deleted ${ids.length} item${ids.length !== 1 ? 's' : ''}`);
+                          showCompletionTickBriefly(`${ids.length} files deleted`);
                         } else {
                           setStatus('Deletion cancelled');
                         }
                       } else {
-                        // iOS or fallback
+                        console.log('Similar Photos: Using MediaLibrary.deleteAssetsAsync fallback for', ids.length, 'items');
                         const result = await MediaLibrary.deleteAssetsAsync(ids);
-                        if (result === true || typeof result === 'undefined') {
+                        if (result === true) {
                           didDelete = true;
                           setStatus(`Deleted ${ids.length} item${ids.length !== 1 ? 's' : ''}`);
+                          showCompletionTickBriefly(`${ids.length} files deleted`);
                         } else {
                           setStatus('Deletion cancelled or partial');
                         }
                       }
                     } catch (e) {
                       console.log('Similar Photos: Delete error', e?.message || e);
-                      showDarkAlert('Delete Failed', e?.message || 'Could not delete items.');
                       setStatus('Delete failed');
+                      showDarkAlert('Delete Failed', e?.message || 'Could not delete items.');
                     }
 
                     setLoadingSafe(false);
 
-                    if (!didDelete) {
-                      return;
-                    }
+                    if (!didDelete) return;
 
                     const prevGroups = Array.isArray(similarGroups) ? similarGroups : [];
                     const nextGroups = prevGroups
@@ -4528,7 +4455,7 @@ export default function App() {
                     if (nextGroups.length === 0) {
                       closeSimilarReview();
                       setStatus('Cleanup complete');
-                      showDarkAlert('Similar Photos', 'Review complete.');
+                      showCompletionTickBriefly('Cleanup done');
                       return;
                     }
 
@@ -4536,22 +4463,28 @@ export default function App() {
                     setSimilarGroups(nextGroups);
                     setSimilarGroupIndex(nextIndex);
                     setSimilarSelected(buildDefaultSimilarSelection(nextGroups[nextIndex] || []));
+                    setSimilarPhotoIndex(0);
                   }}>
-                  <Text style={styles.overlayBtnPrimaryText}>Move Selected to Trash</Text>
+                  <Text style={{ color: selectedCount > 0 ? '#000' : '#888', fontSize: scale(14), fontWeight: '700' }}>
+                    Delete {selectedCount > 0 ? `(${selectedCount})` : ''}
+                  </Text>
                 </TouchableOpacity>
 
+                {/* Keep all / Next set */}
                 <TouchableOpacity
-                  style={[styles.overlayBtnSecondary, glassModeEnabled && styles.overlayBtnSecondaryGlass]}
+                  style={{ flex: 1, marginLeft: 5, backgroundColor: '#222', paddingVertical: 14, borderRadius: 12, alignItems: 'center', borderWidth: 1, borderColor: '#444' }}
                   onPress={() => {
                     advanceSimilarGroup({ groups: similarGroups, nextIndex: similarGroupIndex + 1 });
                   }}>
-                  <Text style={styles.overlayBtnSecondaryText}>Keep All</Text>
+                  <Text style={{ color: '#FFF', fontSize: scale(14), fontWeight: '600' }}>
+                    {similarGroupIndex < totalGroups - 1 ? 'Keep All → Next' : 'Keep All & Done'}
+                  </Text>
                 </TouchableOpacity>
               </View>
-            </ScrollView>
+            </View>
           </View>
-        </View>
-      )}
+        );
+      })()}
 
       {backupModeOpen && (
         <View style={[styles.overlay, glassModeEnabled && styles.overlayGlass]}>
@@ -4609,12 +4542,19 @@ export default function App() {
               </TouchableOpacity>
             </View>
 
+            {/* Info about missing thumbnails */}
+            <View style={{ paddingHorizontal: scaleSpacing(12), paddingVertical: scaleSpacing(6), backgroundColor: '#1a1a1a' }}>
+              <Text style={{ color: '#666', fontSize: scale(11), textAlign: 'center' }}>
+                Some previews may not load if files were modified externally
+              </Text>
+            </View>
+
             <ScrollView contentContainerStyle={styles.pickerGrid}>
-              {(backupPickerAssets || []).map((a) => {
+              {(backupPickerAssets || []).map((a, idx) => {
                 const selected = !!(backupPickerSelected && backupPickerSelected[a.id]);
                 return (
                   <TouchableOpacity
-                    key={a.id}
+                    key={`${a.id}-${idx}`}
                     style={[styles.pickerItem, selected && styles.pickerItemSelected]}
                     onPress={() => toggleBackupPickerSelected(a.id)}>
                     <View style={[styles.pickerThumb, { backgroundColor: '#1a1a1a', justifyContent: 'center', alignItems: 'center' }]}>
@@ -4640,15 +4580,15 @@ export default function App() {
                 );
               })}
 
-              <View style={{ width: '100%', paddingVertical: 12 }}>
+              <View style={{ width: '100%', paddingVertical: 12, paddingHorizontal: scaleSpacing(12) }}>
                 {backupPickerLoading ? (
-                  <ActivityIndicator size="small" color={THEME.secondary} />
+                  <ActivityIndicator size="small" color={THEME.accent} />
                 ) : (
                   backupPickerHasNext && (
                     <TouchableOpacity
-                      style={[styles.overlayBtnSecondary, glassModeEnabled && styles.overlayBtnSecondaryGlass]}
+                      style={{ backgroundColor: '#000000', borderWidth: 1.5, borderColor: '#FFFFFF', borderRadius: scaleSpacing(10), paddingVertical: scaleSpacing(14), alignItems: 'center' }}
                       onPress={() => loadBackupPickerPage({ reset: false })}>
-                      <Text style={styles.overlayBtnSecondaryText}>Load more</Text>
+                      <Text style={{ color: '#FFFFFF', fontWeight: '600', fontSize: scale(15) }}>Load More</Text>
                     </TouchableOpacity>
                   )
                 )}
@@ -4728,6 +4668,9 @@ export default function App() {
                 <>
                   {/* StealthCloud: list view with icons (encrypted, no thumbnails) */}
                   <View style={{ paddingHorizontal: scaleSpacing(12), paddingVertical: scaleSpacing(8), borderBottomWidth: 1, borderBottomColor: '#222' }}>
+                    <Text style={{ color: '#666', fontSize: scale(11), textAlign: 'center', marginBottom: scaleSpacing(4) }}>
+                      Files are encrypted — previews unavailable for security
+                    </Text>
                     <Text style={{ color: '#888', fontSize: scale(12) }}>
                       Showing {syncPickerItems.length}{syncPickerTotal > 0 ? ` of ${syncPickerTotal}` : ''} files
                     </Text>
@@ -4768,14 +4711,14 @@ export default function App() {
 
                   {syncPickerHasMore && (
                     <TouchableOpacity
-                      style={{ marginVertical: scaleSpacing(16), marginHorizontal: scaleSpacing(12), paddingVertical: scaleSpacing(14), backgroundColor: THEME.secondary, borderRadius: scaleSpacing(10), alignItems: 'center' }}
+                      style={{ marginVertical: scaleSpacing(16), marginHorizontal: scaleSpacing(12), paddingVertical: scaleSpacing(14), backgroundColor: '#000000', borderWidth: 1.5, borderColor: '#FFFFFF', borderRadius: scaleSpacing(10), alignItems: 'center' }}
                       onPress={loadMoreSyncPickerItems}
                       disabled={syncPickerLoadingMore}>
                       {syncPickerLoadingMore ? (
-                        <ActivityIndicator size={isTablet ? 'large' : 'small'} color="#000" />
+                        <ActivityIndicator size={isTablet ? 'large' : 'small'} color={THEME.accent} />
                       ) : (
-                        <Text style={{ color: '#000', fontWeight: '600', fontSize: scale(15) }}>
-                          Load More ({Math.max(0, (syncPickerTotal || 0) - (syncPickerOffset || 0))} remaining)
+                        <Text style={{ color: '#FFFFFF', fontWeight: '600', fontSize: scale(15) }}>
+                          Load More ({Math.max(0, (syncPickerTotal || 0) - (syncPickerItems?.length || 0))} remaining)
                         </Text>
                       )}
                     </TouchableOpacity>
@@ -4784,6 +4727,11 @@ export default function App() {
               ) : (
                 <>
                   {/* Local/Remote: grid view with real thumbnails */}
+                  <View style={{ width: '100%', paddingHorizontal: scaleSpacing(12), paddingVertical: scaleSpacing(6), backgroundColor: '#1a1a1a' }}>
+                    <Text style={{ color: '#666', fontSize: scale(11), textAlign: 'center' }}>
+                      Some previews may not load if files were modified externally
+                    </Text>
+                  </View>
                   {(syncPickerItems || []).map((it) => {
                     const key = String(it && it.filename ? it.filename : '');
                     if (!key) return null;
@@ -4803,7 +4751,7 @@ export default function App() {
                               style={[styles.pickerThumb, { position: 'absolute', top: 0, left: 0 }]} 
                             />
                           )}
-                          <Text style={{ fontSize: 24, color: '#555' }}>{isVideo ? '🎬' : '📷'}</Text>
+                          <Text style={{ fontSize: 10, color: '#444', textAlign: 'center' }}>{isVideo ? '🎬' : '📷'}</Text>
                         </View>
                         {isVideo && (
                           <View style={styles.pickerBadge}>
@@ -4819,15 +4767,15 @@ export default function App() {
                     );
                   })}
 
-                  <View style={{ width: '100%', paddingVertical: 12 }}>
+                  <View style={{ width: '100%', paddingVertical: 12, paddingHorizontal: scaleSpacing(12) }}>
                     {syncPickerLoadingMore ? (
-                      <ActivityIndicator size="small" color={THEME.secondary} />
+                      <ActivityIndicator size="small" color={THEME.accent} />
                     ) : (
                       syncPickerHasMore && (
                         <TouchableOpacity
-                          style={[styles.overlayBtnSecondary, glassModeEnabled && styles.overlayBtnSecondaryGlass]}
+                          style={{ backgroundColor: '#000000', borderWidth: 1.5, borderColor: '#FFFFFF', borderRadius: scaleSpacing(10), paddingVertical: scaleSpacing(14), alignItems: 'center' }}
                           onPress={loadMoreSyncPickerItems}>
-                          <Text style={styles.overlayBtnSecondaryText}>Load more</Text>
+                          <Text style={{ color: '#FFFFFF', fontWeight: '600', fontSize: scale(15) }}>Load More ({Math.max(0, (syncPickerTotal || 0) - (syncPickerItems?.length || 0))} remaining)</Text>
                         </TouchableOpacity>
                       )
                     )}
@@ -4891,7 +4839,7 @@ export default function App() {
                           {new Date(item.created).toLocaleString()} {item.size ? `· ${item.size} bytes` : ''}
                         </Text>
                       </View>
-                      {idx === 0 && <Text style={{ color: '#03DAC6', fontSize: 12 }}>Keep oldest</Text>}
+                      {idx === 0 && <Text style={{ color: THEME.secondary, fontSize: 12 }}>Keep oldest</Text>}
                     </TouchableOpacity>
                   ))}
                 </View>
@@ -4913,14 +4861,15 @@ export default function App() {
                       g.items.forEach(it => { if (it.delete) idsToDelete.push(it.id); });
                     });
                     if (idsToDelete.length === 0) {
-                      setStatus('Nothing to delete');
+                      setStatus('All items kept');
                       setDuplicateReview(null);
+                      showCompletionTickBriefly('All files kept');
                       return;
                     }
                     setStatus(`Deleting ${idsToDelete.length} item${idsToDelete.length !== 1 ? 's' : ''}...`);
 
-                    // Use native MediaDelete module on Android for proper scoped storage handling
-                    if (Platform.OS === 'android' && MediaDelete && typeof MediaDelete.deleteAssets === 'function') {
+                    // Use native MediaDelete module on both iOS and Android
+                    if (MediaDelete && typeof MediaDelete.deleteAssets === 'function') {
                       console.log('Clean Duplicates: Using native MediaDelete for', idsToDelete.length, 'items');
                       const result = await MediaDelete.deleteAssets(idsToDelete);
                       if (result === true) {
@@ -4930,7 +4879,8 @@ export default function App() {
                         setStatus('Deletion cancelled');
                       }
                     } else {
-                      // iOS or fallback
+                      // Fallback to expo-media-library
+                      console.log('Clean Duplicates: Using MediaLibrary.deleteAssetsAsync fallback for', idsToDelete.length, 'items');
                       const result = await MediaLibrary.deleteAssetsAsync(idsToDelete);
                       if (result === true) {
                         showResultAlert('clean', { deleted: idsToDelete.length });
@@ -4940,8 +4890,9 @@ export default function App() {
                       }
                     }
                   } catch (err) {
-                    showResultAlert('clean', { error: err.message || 'Could not delete items.' });
+                    console.log('Exact Duplicates: Delete error', err?.message || err);
                     setStatus('Delete failed');
+                    showDarkAlert('Delete Failed', err?.message || 'Could not delete items.');
                   } finally {
                     setDuplicateReview(null);
                     setLoadingSafe(false);
@@ -4958,15 +4909,15 @@ export default function App() {
       )}
 
       {customAlert && (
-        <View style={[styles.overlay, glassModeEnabled && styles.overlayGlass]}>
-          <View style={[styles.overlayCard, glassModeEnabled && styles.overlayCardGlass, { backgroundColor: glassModeEnabled ? 'rgba(42, 42, 42, 0.9)' : '#2A2A2A', maxWidth: isTablet ? 450 : 320 }]}>
+        <View style={[styles.overlay, { backgroundColor: 'rgba(0,0,0,0.97)' }]}>
+          <View style={[styles.overlayCard, { backgroundColor: '#000000', maxWidth: isTablet ? 450 : 320 }]}>
             <Text style={[styles.overlayTitle, { fontSize: scale(18), marginBottom: scaleSpacing(8) }]}>{customAlert.title}</Text>
-            <Text style={{ color: '#CCC', fontSize: scale(14), textAlign: 'center', marginBottom: scaleSpacing(20), lineHeight: scale(20) }}>{customAlert.message}</Text>
+            <Text style={{ color: '#FFFFFF', fontSize: scale(14), textAlign: 'center', marginBottom: scaleSpacing(20), lineHeight: scale(20) }}>{customAlert.message}</Text>
             <View style={{ flexDirection: 'row', justifyContent: 'center', gap: scaleSpacing(12) }}>
               {(customAlert.buttons || []).map((btn, idx) => (
                 <TouchableOpacity
                   key={idx}
-                  style={[styles.overlayBtnPrimary, glassModeEnabled && styles.overlayBtnPrimaryGlass, { paddingVertical: scaleSpacing(10), paddingHorizontal: scaleSpacing(24), minWidth: isTablet ? 100 : 80 }]}
+                  style={[styles.overlayBtnPrimary, { paddingVertical: scaleSpacing(10), paddingHorizontal: scaleSpacing(24), minWidth: isTablet ? 100 : 80 }]}
                   onPress={() => {
                     closeDarkAlert();
                     if (btn.onPress) btn.onPress();
@@ -4978,6 +4929,34 @@ export default function App() {
           </View>
         </View>
       )}
+
+      {/* NFT Photo Picker */}
+      <NFTPhotoPicker
+        visible={nftPickerOpen}
+        onClose={closeNftPicker}
+        onSelectPhoto={handleMintNFT}
+        resolveReadableFilePath={resolveReadableFilePath}
+        serverConfig={{ baseUrl: getServerUrl(), getAuthHeaders }}
+        checkCloudEligibility={(fileSize) => checkStealthCloudEligibility({ baseUrl: getServerUrl(), getAuthHeaders }, fileSize)}
+      />
+
+      {/* NFT Gallery */}
+      <NFTGallery
+        visible={nftGalleryOpen}
+        onClose={closeNftGallery}
+        onTransferNFT={handleNftTransfer}
+        serverUrl={getServerUrl()}
+        getAuthHeaders={getAuthHeaders}
+      />
+
+      {/* NFT Transfer Modal */}
+      <NFTTransferModal
+        visible={nftTransferOpen}
+        nft={nftToTransfer}
+        onClose={closeNftTransfer}
+        onTransferComplete={handleNftTransferComplete}
+        authToken={token}
+      />
 
     </View>
   );

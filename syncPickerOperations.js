@@ -135,18 +135,27 @@ export const fetchStealthCloudPickerPage = async ({
  * @returns {Promise<string|null>} - Base64 data URI or null on failure
  */
 export const fetchThumbnailBase64 = async (filename, config, SERVER_URL) => {
+  if (!filename) {
+    console.log('Thumbnail fetch skipped: no filename');
+    return null;
+  }
   try {
     const url = `${SERVER_URL}/api/files/${encodeURIComponent(filename)}/thumb`;
     const response = await axios.get(url, {
       ...config,
       responseType: 'arraybuffer',
-      timeout: 15000,
+      timeout: 8000,
     });
+    // Check we got actual data
+    if (!response.data || response.data.byteLength < 100) {
+      console.log('[THUMB] Too small:', filename, response.data?.byteLength || 0);
+      return null;
+    }
     const base64 = Buffer.from(response.data, 'binary').toString('base64');
-    // Server returns JPEG thumbnails
+    console.log('[THUMB] OK:', filename, 'size:', response.data.byteLength);
     return `data:image/jpeg;base64,${base64}`;
   } catch (e) {
-    console.log('Thumbnail fetch failed for', filename, e.message);
+    console.log('[THUMB] FAIL:', filename, e?.message || 'unknown');
     return null;
   }
 };
@@ -175,19 +184,31 @@ export const fetchLocalRemotePickerPage = async ({
   const serverFiles = res?.data?.files || [];
   const total = typeof res?.data?.total === 'number' ? res.data.total : serverFiles.length;
 
-  // Fetch thumbnails for images and videos in parallel
-  let items = serverFiles;
+  // Fetch thumbnails sequentially in small batches to avoid memory pressure
+  let items = serverFiles.map(f => ({ ...f, thumbUri: null }));
   if (fetchThumbnails && serverFiles.length > 0) {
-    items = await Promise.all(serverFiles.map(async (file) => {
-      const ext = (file.filename || '').split('.').pop()?.toLowerCase() || '';
-      const isImage = ['jpg', 'jpeg', 'png', 'heic', 'heif', 'webp', 'gif', 'bmp', 'tiff'].includes(ext);
-      const isVideo = ['mp4', 'mov', 'avi', 'mkv', 'm4v', '3gp', 'webm'].includes(ext);
-      if (isImage || isVideo) {
-        const thumbUri = await fetchThumbnailBase64(file.filename, config, SERVER_URL);
-        return { ...file, thumbUri };
+    const BATCH_SIZE = 4; // Process 4 at a time to limit memory
+    for (let i = 0; i < serverFiles.length; i += BATCH_SIZE) {
+      const batch = serverFiles.slice(i, i + BATCH_SIZE);
+      const batchResults = await Promise.all(batch.map(async (file, batchIdx) => {
+        const ext = (file.filename || '').split('.').pop()?.toLowerCase() || '';
+        const isImage = ['jpg', 'jpeg', 'png', 'heic', 'heif', 'webp', 'gif', 'bmp', 'tiff'].includes(ext);
+        const isVideo = ['mp4', 'mov', 'avi', 'mkv', 'm4v', '3gp', 'webm'].includes(ext);
+        if (isImage || isVideo) {
+          const thumbUri = await fetchThumbnailBase64(file.filename, config, SERVER_URL);
+          return { index: i + batchIdx, thumbUri };
+        }
+        return { index: i + batchIdx, thumbUri: null };
+      }));
+      // Update items with batch results
+      for (const r of batchResults) {
+        items[r.index] = { ...items[r.index], thumbUri: r.thumbUri };
       }
-      return { ...file, thumbUri: null };
-    }));
+      // Small delay between batches to let memory settle
+      if (i + BATCH_SIZE < serverFiles.length) {
+        await new Promise(resolve => setTimeout(resolve, 50));
+      }
+    }
   }
 
   const nextOffset = offset + serverFiles.length;

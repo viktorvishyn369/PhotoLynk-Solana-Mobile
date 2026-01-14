@@ -1269,6 +1269,61 @@ open_firewall_if_present() {
   fi
 }
 
+configure_cloudflared() {
+  log "[9/9] Configuring Cloudflare Tunnel (cloudflared)..."
+  
+  # Check if cloudflared is installed
+  if ! command -v cloudflared >/dev/null 2>&1; then
+    warn "⚠ cloudflared not installed. Skipping tunnel configuration."
+    echo -e "  Install with: ${YELLOW}curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o /usr/local/bin/cloudflared && chmod +x /usr/local/bin/cloudflared${NC}"
+    return
+  fi
+  
+  # Check if config exists
+  CLOUDFLARED_CONFIG="/root/.cloudflared/config.yml"
+  if [ ! -f "$CLOUDFLARED_CONFIG" ]; then
+    # Check alternate location
+    CLOUDFLARED_CONFIG="/etc/cloudflared/config.yml"
+  fi
+  
+  if [ ! -f "$CLOUDFLARED_CONFIG" ]; then
+    warn "⚠ cloudflared config not found. Please configure tunnel manually."
+    echo -e "  Expected config at: ${YELLOW}/root/.cloudflared/config.yml${NC} or ${YELLOW}/etc/cloudflared/config.yml${NC}"
+    echo ""
+    echo -e "  Example config:"
+    echo -e "  ${YELLOW}tunnel: YOUR_TUNNEL_ID${NC}"
+    echo -e "  ${YELLOW}credentials-file: /root/.cloudflared/YOUR_TUNNEL_ID.json${NC}"
+    echo -e "  ${YELLOW}ingress:${NC}"
+    echo -e "  ${YELLOW}  - hostname: stealthlynk.io${NC}"
+    echo -e "  ${YELLOW}    service: http://localhost:3000${NC}"
+    echo -e "  ${YELLOW}  - hostname: nft.stealthlynk.io${NC}"
+    echo -e "  ${YELLOW}    service: http://localhost:3000${NC}"
+    echo -e "  ${YELLOW}  - service: http_status:404${NC}"
+    return
+  fi
+  
+  # Check if nft.stealthlynk.io is already configured
+  if grep -q "nft.stealthlynk.io" "$CLOUDFLARED_CONFIG" 2>/dev/null; then
+    echo -e "${GREEN}✓${NC} nft.stealthlynk.io already configured in cloudflared"
+  else
+    warn "⚠ nft.stealthlynk.io not found in cloudflared config"
+    echo -e "  Please add the following to ${YELLOW}$CLOUDFLARED_CONFIG${NC}:"
+    echo ""
+    echo -e "  ${YELLOW}  - hostname: nft.stealthlynk.io${NC}"
+    echo -e "  ${YELLOW}    service: http://localhost:3000${NC}"
+    echo ""
+    echo -e "  Then restart cloudflared: ${YELLOW}sudo systemctl restart cloudflared${NC}"
+  fi
+  
+  # Check if cloudflared service is running
+  if systemctl is-active --quiet cloudflared 2>/dev/null; then
+    echo -e "${GREEN}✓${NC} cloudflared service is running"
+  else
+    warn "⚠ cloudflared service not running"
+    echo -e "  Start with: ${YELLOW}sudo systemctl start cloudflared${NC}"
+  fi
+}
+
 # --- Run ---
 install_git_if_missing
 install_node_if_missing
@@ -1281,6 +1336,7 @@ write_systemd_unit
 install_admin_tools
 install_nginx
 open_firewall_if_present
+configure_cloudflared
 
 echo ""
 echo -e "${GREEN}═══════════════════════════════════════════════════${NC}"
@@ -1306,4 +1362,11 @@ echo -e "${BLUE}Admin tools:${NC}"
 echo -e "  Snapshot report: ${YELLOW}sudo /root/ADMIN_PHOTOLYNK/photolynk-admin.sh snapshot${NC}"
 echo -e "  Live FS watch:   ${YELLOW}sudo /root/ADMIN_PHOTOLYNK/photolynk-admin.sh watch${NC}"
 echo ""
-echo -e "${BLUE}Note:${NC} Nginx/Cloudflare tunnel should proxy https://stealthlynk.io/api/* to this service on :3000."
+echo -e "${BLUE}Cloudflare Tunnel:${NC}"
+echo -e "  Config:   ${YELLOW}/root/.cloudflared/config.yml${NC}"
+echo -e "  Status:   ${YELLOW}sudo systemctl status cloudflared${NC}"
+echo -e "  Restart:  ${YELLOW}sudo systemctl restart cloudflared${NC}"
+echo ""
+echo -e "${BLUE}Required hostnames in cloudflared config:${NC}"
+echo -e "  - ${YELLOW}stealthlynk.io${NC} → http://localhost:3000"
+echo -e "  - ${YELLOW}nft.stealthlynk.io${NC} → http://localhost:3000 (for NFT images)"

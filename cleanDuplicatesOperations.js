@@ -24,6 +24,7 @@ export const startSimilarShotsReviewCore = async ({
   onProgress,
   abortRef,
 }) => {
+  // Scanner handles all progress updates internally (0-100%)
   onStatus('Preparing...');
   onProgress(0);
   
@@ -43,17 +44,12 @@ export const startSimilarShotsReviewCore = async ({
     const result = await DuplicateScanner.scanSimilarPhotos({
       resolveReadableFilePath,
       abortRef,
-      includeVideos: true,
+      includeVideos: false,
       onStatus,
       onProgress,
-      onCollecting: () => {
-        onStatus('Collecting photos & videos...');
-        onProgress(0);
-      },
-      onFindingMatches: () => {
-        onStatus('Finding matches...');
-        onProgress(0.95);
-      }
+      // Let scanner handle progress internally - no resets
+      onCollecting: null,
+      onFindingMatches: null,
     });
 
     // Check if scan was aborted
@@ -61,7 +57,7 @@ export const startSimilarShotsReviewCore = async ({
       return { aborted: true };
     }
 
-    onProgress(1);
+    // Scanner already set progress to 1
     
     const groups = result.groups || [];
     if (!groups || groups.length === 0) {
@@ -152,6 +148,7 @@ export const startExactDuplicatesScanCore = async ({
   onProgress,
   abortRef,
 }) => {
+  // Scanner handles all progress updates internally (0-100%)
   onStatus('Preparing...');
   onProgress(0);
   
@@ -183,7 +180,7 @@ export const startExactDuplicatesScanCore = async ({
     }
 
     if (!duplicateGroups || duplicateGroups.length === 0) {
-      onProgress(1);
+      // Scanner already set progress to 1
       const note = DuplicateScanner.buildNoResultsNote(stats);
       return { noDuplicates: true, note, stats };
     }
@@ -192,7 +189,7 @@ export const startExactDuplicatesScanCore = async ({
     const reviewGroups = DuplicateScanner.formatDuplicateGroupsForReview(duplicateGroups);
     const totalDuplicates = DuplicateScanner.countDuplicates(duplicateGroups);
 
-    onProgress(1);
+    // Scanner already set progress to 1
     
     return {
       groups: reviewGroups,

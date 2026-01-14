@@ -25,16 +25,16 @@ const { PixelHash, MediaDelete } = NativeModules;
 // CONSTANTS
 // ============================================================================
 
-const PAGE_SIZE = 250; // Assets per page for collection
-const PROGRESS_THROTTLE_MS = 150; // Throttle progress updates
-const YIELD_EVERY_N_FILES = 3; // Yield to UI every N files
-const YIELD_EVERY_N_COMPARISONS = 500; // Yield during O(n²) comparison
-const THERMAL_COOLDOWN_MS = 50; // Cooldown after heavy batches
+const PAGE_SIZE = 500; // Assets per page for collection (larger = fewer API calls)
+const PROGRESS_THROTTLE_MS = 300; // Throttle progress updates (less frequent = faster)
+const YIELD_EVERY_N_FILES = 25; // Yield to UI every N files (higher = faster, less responsive)
+const YIELD_EVERY_N_COMPARISONS = 2000; // Yield during O(n²) comparison (higher = faster)
+const THERMAL_COOLDOWN_MS = 10; // Cooldown after heavy batches (shorter = faster)
 const MAX_SIMILAR_SCAN = 5000; // Max files for similar scan (O(n²) is expensive)
 
 // Hash thresholds
 const SIMILAR_THRESHOLD = 24;
-const CROSS_PLATFORM_DHASH_THRESHOLD = 6;
+const CROSS_PLATFORM_DHASH_THRESHOLD = 0; // Identical: exact match only
 const EDGE_MATCH_THRESHOLD = 4;
 const CORNER_MATCH_THRESHOLD = 3;
 
@@ -342,6 +342,7 @@ const collectAssetsPaged = async ({
   progressStart = 0,
   progressEnd = 0.1,
   abortRef,
+  statusPrefix = 'Comparing',
 }) => {
   const mediaTypes = includeVideos ? ['photo', 'video'] : ['photo'];
   const allAssets = [];
@@ -357,7 +358,7 @@ const collectAssetsPaged = async ({
     totalCount = 1000;
   }
 
-  updateStatus(onStatus, `Collecting 0 of ${totalCount} items...`, true);
+  updateStatus(onStatus, `${statusPrefix}: Collecting 0 of ${totalCount} items...`, true);
   updateProgress(onProgress, progressStart, true);
 
   while (true) {
@@ -380,7 +381,7 @@ const collectAssetsPaged = async ({
     // Update progress
     const progress = progressStart + (allAssets.length / Math.max(totalCount, 1)) * (progressEnd - progressStart);
     updateProgress(onProgress, Math.min(progress, progressEnd));
-    updateStatus(onStatus, `Collecting ${allAssets.length} of ${totalCount} items...`);
+    updateStatus(onStatus, `${statusPrefix}: Collecting ${allAssets.length} of ${totalCount} items...`);
 
     await yieldToUi();
 
@@ -417,7 +418,7 @@ const collectAssetsPaged = async ({
       // Yield every few albums
       if (i % 5 === 0) {
         await yieldToUi();
-        updateStatus(onStatus, `Scanning albums... ${allAssets.length} items found`);
+        updateStatus(onStatus, `${statusPrefix}: Scanning albums... ${allAssets.length} items found`);
       }
     }
   } catch (e) {
@@ -460,7 +461,7 @@ export const scanExactDuplicates = async ({
   lastStatusUpdate = 0;
 
   // ========== PHASE 1: Collect Assets (0-10%) ==========
-  updateStatus(onStatus, 'Collecting photos & videos...', true);
+  updateStatus(onStatus, 'Scanning: Collecting photos & videos...', true);
   updateProgress(onProgress, 0, true);
 
   const { assets: allAssets, aborted: collectAborted } = await collectAssetsPaged({
@@ -470,6 +471,7 @@ export const scanExactDuplicates = async ({
     progressStart: 0,
     progressEnd: 0.10,
     abortRef,
+    statusPrefix: 'Scanning',
   });
 
   if (collectAborted) {
@@ -485,10 +487,10 @@ export const scanExactDuplicates = async ({
   }
 
   // ========== PHASE 2: Hash Files (10-90%) ==========
-  updateStatus(onStatus, `Analyzing 1 of ${totalAssets} items...`, true);
+  updateStatus(onStatus, `Scanning: Analyzing ${totalAssets} items...`, true);
   updateProgress(onProgress, 0.10, true);
 
-  const hashGroups = {};
+  const allHashedItems = []; // Collect all items with hashes for Union-Find clustering
   let hashedCount = 0;
   let hashSkipped = 0;
   let hashFailed = 0;
@@ -503,15 +505,14 @@ export const scanExactDuplicates = async ({
 
     const asset = allAssets[i];
 
-    // Yield every N files
-    if (i % YIELD_EVERY_N_FILES === 0) {
-      await yieldToUi();
+    // Update progress every 5 files, yield every 25 (fast but responsive)
+    // Progress: 10% to 90% during hashing
+    if (i % 5 === 0) {
+      const fileProgress = 0.10 + (i / totalAssets) * 0.80;
+      updateProgress(onProgress, fileProgress);
+      updateStatus(onStatus, `Scanning: Analyzing ${i + 1} of ${totalAssets}...`);
+      if (i % 25 === 0) await yieldToUi();
     }
-
-    // Update progress
-    const fileProgress = 0.10 + (i / totalAssets) * 0.80;
-    updateProgress(onProgress, fileProgress);
-    updateStatus(onStatus, `Analyzing ${i + 1} of ${totalAssets}: ${asset.filename || 'file'}...`);
 
     // Get asset info
     let info;
@@ -523,8 +524,6 @@ export const scanExactDuplicates = async ({
       inspectFailed++;
       continue;
     }
-
-    await quickYield();
 
     const isVideo = isVideoAsset(info, asset);
     const isImage = isImageAsset(info, asset);
@@ -556,51 +555,70 @@ export const scanExactDuplicates = async ({
       continue;
     }
 
-    await quickYield();
-
     try {
-      let hashHex = null;
+      let fileHashHex = null;
+      let dHashHex = null;
 
       if (isVideo) {
-        hashHex = await computeExactFileHash(hashTarget);
-        if (hashHex) {
-          hashHex = 'video:' + hashHex;
+        // Videos: use exact file hash (SHA-256) only
+        fileHashHex = await computeExactFileHash(hashTarget);
+        if (fileHashHex) {
+          fileHashHex = 'video:' + fileHashHex;
           videoCount++;
           // Debug log for first few videos
           if (videoCount <= 3) {
             console.log('[DupScanner] Video hash computed:', {
               filename: info?.filename || asset.filename,
-              hashStart: hashHex.substring(0, 24) + '...',
+              hashStart: fileHashHex.substring(0, 24) + '...',
             });
           }
         }
       } else {
-        hashHex = await PixelHash.hashImagePixels(hashTarget);
-        if (hashHex) {
-          hashHex = 'image:' + hashHex;
-          photoCount++;
-          // Debug log for first few photos
-          if (photoCount <= 3) {
-            console.log('[DupScanner] Image hash computed:', {
-              filename: info?.filename || asset.filename,
-              hashStart: hashHex.substring(0, 24) + '...',
-            });
+        // Images: use perceptual dHash only (catches visually identical photos)
+        // dHash is resistant to compression, re-encoding, and minor edits
+        if (hasPixelHash) {
+          try {
+            const dHash = await PixelHash.hashImagePixels(hashTarget);
+            if (dHash) {
+              dHashHex = 'dhash:' + dHash;
+              photoCount++;
+              // Debug log for first few photos
+              if (photoCount <= 3) {
+                console.log('[DupScanner] Image dHash computed:', {
+                  filename: info?.filename || asset.filename,
+                  dHash: dHashHex,
+                });
+              }
+            }
+          } catch (e) {
+            // dHash failed
           }
         }
       }
 
-      await quickYield();
-
-      if (hashHex) {
-        hashedCount++;
-        if (!hashGroups[hashHex]) hashGroups[hashHex] = [];
-        hashGroups[hashHex].push({ asset, info });
-      } else {
+      // Group by BOTH hashes - an image can be in multiple groups
+      // This allows matching by either file hash OR perceptual hash
+      if (!fileHashHex && !dHashHex) {
         hashFailed++;
         // Debug log for hash failures
         if (hashFailed <= 5) {
           console.log('[DupScanner] Hash failed for:', info?.filename || asset.filename, isVideo ? '(video)' : '(image)');
         }
+      } else {
+        hashedCount++;
+        
+        // Store item with both hashes for later grouping
+        const rawDHash = dHashHex ? dHashHex.substring(6) : null;
+        const rawFileHash = fileHashHex ? fileHashHex.substring(fileHashHex.indexOf(':') + 1) : null;
+        
+        allHashedItems.push({
+          asset,
+          info,
+          fileHashHex,
+          rawFileHash,
+          rawDHash,
+          isVideo: fileHashHex && fileHashHex.startsWith('video:'),
+        });
       }
     } catch (e) {
       hashFailed++;
@@ -611,28 +629,96 @@ export const scanExactDuplicates = async ({
       }
     }
 
-    // Thermal cooldown every 50 files
-    if (i > 0 && i % 50 === 0) {
+    // Thermal cooldown every 100 files
+    if (i > 0 && i % 100 === 0) {
       await thermalCooldown();
     }
   }
 
-  // ========== PHASE 3: Group Duplicates (90-95%) ==========
-  updateStatus(onStatus, 'Finding duplicate groups...', true);
+  // ========== PHASE 3: Group Duplicates using Union-Find (90-95%) ==========
+  updateStatus(onStatus, 'Scanning: Finding duplicate groups...', true);
   updateProgress(onProgress, 0.90, true);
   await yieldToUi();
 
-  const duplicateGroups = [];
-  const hashKeys = Object.keys(hashGroups);
+  // Union-Find for proper transitive grouping
+  const parent = new Map();
+  const rank = new Map();
   
-  // Debug: log hash group statistics
-  let singletons = 0;
-  let duplicateHashes = 0;
+  const find = (x) => {
+    if (!parent.has(x)) { parent.set(x, x); rank.set(x, 0); }
+    if (parent.get(x) !== x) { parent.set(x, find(parent.get(x))); }
+    return parent.get(x);
+  };
   
-  for (let i = 0; i < hashKeys.length; i++) {
-    const group = hashGroups[hashKeys[i]];
+  const union = (x, y) => {
+    const px = find(x);
+    const py = find(y);
+    if (px === py) return;
+    const rx = rank.get(px) || 0;
+    const ry = rank.get(py) || 0;
+    if (rx < ry) { parent.set(px, py); }
+    else if (rx > ry) { parent.set(py, px); }
+    else { parent.set(py, px); rank.set(px, rx + 1); }
+  };
+
+  // Group by exact file hash first (O(n) - fast)
+  const fileHashGroups = {};
+  for (const item of allHashedItems) {
+    if (item.fileHashHex) {
+      if (!fileHashGroups[item.fileHashHex]) fileHashGroups[item.fileHashHex] = [];
+      fileHashGroups[item.fileHashHex].push(item);
+    }
+  }
+  
+  // Union items with same file hash
+  for (const group of Object.values(fileHashGroups)) {
     if (group.length > 1) {
-      duplicateHashes++;
+      for (let i = 1; i < group.length; i++) {
+        union(group[0].asset.id, group[i].asset.id);
+      }
+    }
+  }
+
+  await quickYield();
+
+  // Fuzzy dHash comparison (O(n²) but only for images with dHash)
+  const itemsWithDHash = allHashedItems.filter(item => item.rawDHash && !item.isVideo);
+  let comparisons = 0;
+  
+  for (let i = 0; i < itemsWithDHash.length; i++) {
+    for (let j = i + 1; j < itemsWithDHash.length; j++) {
+      const dist = hammingDistance64(itemsWithDHash[i].rawDHash, itemsWithDHash[j].rawDHash);
+      if (dist <= CROSS_PLATFORM_DHASH_THRESHOLD) {
+        union(itemsWithDHash[i].asset.id, itemsWithDHash[j].asset.id);
+      }
+      comparisons++;
+      if (comparisons % YIELD_EVERY_N_COMPARISONS === 0) {
+        await quickYield();
+      }
+      // Thermal cooldown every 5000 comparisons
+      if (comparisons % 5000 === 0) {
+        await thermalCooldown();
+      }
+    }
+  }
+
+  // Build groups from Union-Find
+  const groupMap = new Map();
+  const itemMap = new Map();
+  for (const item of allHashedItems) {
+    itemMap.set(item.asset.id, item);
+  }
+  
+  for (const item of allHashedItems) {
+    const root = find(item.asset.id);
+    if (!groupMap.has(root)) groupMap.set(root, []);
+    groupMap.get(root).push(item);
+  }
+
+  // Convert to duplicate groups (only groups with >1 item)
+  const duplicateGroups = [];
+  for (const group of groupMap.values()) {
+    if (group.length > 1) {
       // Sort by creation time (oldest first)
       group.sort((a, b) => {
         const aTime = a.info?.creationTime || a.asset.creationTime || 0;
@@ -644,20 +730,21 @@ export const scanExactDuplicates = async ({
       // Debug: log first few duplicate groups found
       if (duplicateGroups.length <= 3) {
         console.log('[DupScanner] Duplicate group found:', {
-          hash: hashKeys[i].substring(0, 30) + '...',
           count: group.length,
           files: group.map(g => g.info?.filename || g.asset.filename).join(', '),
         });
       }
-    } else {
-      singletons++;
     }
-
-    if (i % 100 === 0) await quickYield();
   }
 
   // ========== PHASE 4: Finalize (95-100%) ==========
-  updateStatus(onStatus, `Found ${duplicateGroups.length} duplicate groups`, true);
+  updateProgress(onProgress, 0.95, true);
+  await yieldToUi();
+  
+  // Small delay before final result for smooth UX
+  await new Promise(r => setTimeout(r, 200));
+  
+  updateStatus(onStatus, duplicateGroups.length > 0 ? `Scanning: Found ${duplicateGroups.length} duplicate groups` : 'Scanning: No duplicates found', true);
   updateProgress(onProgress, 1, true);
 
   console.log('[DupScanner] Exact scan complete:', {
@@ -667,9 +754,8 @@ export const scanExactDuplicates = async ({
     videoCount,
     hashSkipped,
     hashFailed,
-    uniqueHashes: hashKeys.length,
-    singletons,
-    duplicateHashes,
+    itemsWithDHash: itemsWithDHash.length,
+    comparisons,
     duplicateGroups: duplicateGroups.length,
   });
 
@@ -723,7 +809,7 @@ export const scanSimilarPhotos = async ({
 
   // ========== PHASE 1: Collect Assets (0-10%) ==========
   if (onCollecting) onCollecting();
-  updateStatus(onStatus, 'Collecting photos & videos...', true);
+  updateStatus(onStatus, 'Scanning: Collecting photos & videos...', true);
   updateProgress(onProgress, 0, true);
 
   const { assets: allAssets, aborted: collectAborted } = await collectAssetsPaged({
@@ -733,6 +819,7 @@ export const scanSimilarPhotos = async ({
     progressStart: 0,
     progressEnd: 0.10,
     abortRef,
+    statusPrefix: 'Scanning',
   });
 
   if (collectAborted) {
@@ -760,7 +847,7 @@ export const scanSimilarPhotos = async ({
   }
 
   // ========== PHASE 2: Hash Files (10-60%) ==========
-  updateStatus(onStatus, `Analyzing 1 of ${totalAssets} items...`, true);
+  updateStatus(onStatus, `Scanning: Analyzing ${totalAssets} items...`, true);
   updateProgress(onProgress, 0.10, true);
 
   const items = [];
@@ -774,15 +861,14 @@ export const scanSimilarPhotos = async ({
 
     const asset = assets[i];
 
-    // Yield every N files
-    if (i % YIELD_EVERY_N_FILES === 0) {
-      await yieldToUi();
+    // Update progress every 5 files, yield every 25 (fast but responsive)
+    // Progress: 10% to 60% during hashing
+    if (i % 5 === 0) {
+      const fileProgress = 0.10 + (i / totalAssets) * 0.50;
+      updateProgress(onProgress, fileProgress);
+      updateStatus(onStatus, `Scanning: Analyzing ${i + 1} of ${totalAssets}...`);
+      if (i % 25 === 0) await yieldToUi();
     }
-
-    // Update progress (10-60%)
-    const fileProgress = 0.10 + (i / totalAssets) * 0.50;
-    updateProgress(onProgress, fileProgress);
-    updateStatus(onStatus, `Analyzing ${i + 1} of ${totalAssets}: ${asset.filename || 'file'}...`);
 
     let info = null;
     let hash = null;
@@ -795,8 +881,6 @@ export const scanSimilarPhotos = async ({
         asset.id,
         Platform.OS === 'ios' ? { shouldDownloadFromNetwork: true } : undefined
       );
-
-      await quickYield();
 
       isVideo = isVideoAsset(info, asset);
       const isImage = isImageAsset(info, asset);
@@ -811,8 +895,6 @@ export const scanSimilarPhotos = async ({
       });
 
       if (hashTarget) {
-        await quickYield();
-
         try {
           if (isVideo) {
             hash = await computeExactFileHash(hashTarget);
@@ -826,20 +908,7 @@ export const scanSimilarPhotos = async ({
               hash = 'image:' + hash;
               hashed++;
             }
-
-            // Edge hash (optional)
-            if (PixelHash.hashImageEdges) {
-              try {
-                edgeHash = await PixelHash.hashImageEdges(hashTarget);
-              } catch (e) {}
-            }
-
-            // Corner hash (optional)
-            if (PixelHash.hashImageCorners) {
-              try {
-                cornerHash = await PixelHash.hashImageCorners(hashTarget);
-              } catch (e) {}
-            }
+            // Skip edge/corner hash for similar scan - not needed, saves time
           }
         } catch (e) {
           hashFailed++;
@@ -854,6 +923,60 @@ export const scanSimilarPhotos = async ({
     }
 
     if (hash) {
+      // Try to get EXIF DateTimeOriginal for accurate capture time
+      // Falls back to asset.creationTime (OS file time) if EXIF not available
+      let createdTs = 0;
+      let hasExifTime = false; // Only true if we found actual EXIF date fields
+      const exif = info?.exif;
+      if (exif) {
+        // Try various EXIF date fields (different naming conventions on iOS/Android)
+        const exifDate = exif.DateTimeOriginal || exif.DateTimeDigitized || exif.DateTime ||
+                         exif.dateTimeOriginal || exif.dateTimeDigitized || exif.dateTime ||
+                         exif['{Exif}']?.DateTimeOriginal || exif['{Exif}']?.DateTimeDigitized ||
+                         exif.CreateDate || exif.createDate;
+        if (exifDate && typeof exifDate === 'string') {
+          // EXIF format: "2024:01:15 14:30:00" or "2024-01-15T14:30:00"
+          try {
+            const parsed = new Date(exifDate.replace(/^(\d{4}):(\d{2}):(\d{2})/, '$1-$2-$3'));
+            if (!isNaN(parsed.getTime())) {
+              createdTs = parsed.getTime();
+              hasExifTime = true; // Only set true when actual EXIF date found
+            }
+          } catch (e) {}
+        }
+      }
+      // Fallback to info.creationTime (NOT reliable EXIF - just file system time)
+      if (!createdTs && info?.creationTime) {
+        const ct = typeof info.creationTime === 'number' ? info.creationTime : 
+                   (info.creationTime ? new Date(info.creationTime).getTime() : 0);
+        if (ct > 0) createdTs = ct;
+        // hasExifTime stays false - this is file system time, not EXIF
+      }
+      
+      // Helper to parse timestamp from various formats (ms, seconds, Date string)
+      const parseTs = (val) => {
+        if (!val) return 0;
+        if (typeof val === 'number') {
+          // Android MediaStore uses seconds, JS uses milliseconds
+          // If value is less than year 2000 in ms, it's probably seconds
+          if (val > 0 && val < 946684800000) return val * 1000; // Convert seconds to ms
+          return val > 0 ? val : 0;
+        }
+        const parsed = new Date(val).getTime();
+        return (!isNaN(parsed) && parsed > 0) ? parsed : 0;
+      };
+      
+      // Try multiple timestamp sources (different Android manufacturers use different fields)
+      // Priority: asset.creationTime -> info.modificationTime -> asset.modificationTime
+      if (!createdTs) createdTs = parseTs(asset.creationTime);
+      if (!createdTs) createdTs = parseTs(info?.modificationTime);
+      if (!createdTs) createdTs = parseTs(asset.modificationTime);
+      
+      // Debug log first few items to verify timestamp detection
+      if (hashed <= 3) {
+        console.log(`[DupScanner] Time debug for ${info?.filename || asset.filename}: hasExifTime=${hasExifTime}, createdTs=${createdTs}, asset.creationTime=${asset.creationTime}, asset.modificationTime=${asset.modificationTime}`);
+      }
+      
       items.push({
         asset,
         info,
@@ -861,13 +984,14 @@ export const scanSimilarPhotos = async ({
         isVideo,
         edgeHash: edgeHash || null,
         cornerHash: cornerHash || null,
-        createdTs: asset.creationTime || 0,
+        createdTs,
+        hasExifTime, // Track if we have reliable EXIF timestamp
         filename: info?.filename || asset.filename || '',
       });
     }
 
-    // Thermal cooldown every 50 files
-    if (i > 0 && i % 50 === 0) {
+    // Thermal cooldown every 100 files
+    if (i > 0 && i % 100 === 0) {
       await thermalCooldown();
     }
   }
@@ -876,7 +1000,7 @@ export const scanSimilarPhotos = async ({
 
   // ========== PHASE 3: Compare Hashes (60-90%) ==========
   if (onFindingMatches) onFindingMatches();
-  updateStatus(onStatus, 'Comparing for similar items...', true);
+  updateStatus(onStatus, 'Scanning: Comparing for similar items...', true);
   updateProgress(onProgress, 0.60, true);
 
   const similarPairs = [];
@@ -901,7 +1025,7 @@ export const scanSimilarPhotos = async ({
         // Update progress (60-90%)
         const compareProgress = 0.60 + (comparisonsDone / totalComparisons) * 0.30;
         updateProgress(onProgress, compareProgress);
-        updateStatus(onStatus, `Comparing ${Math.round(comparisonsDone / 1000)}k of ${Math.round(totalComparisons / 1000)}k pairs...`);
+        updateStatus(onStatus, `Scanning: Comparing ${Math.round(comparisonsDone / 1000)}k of ${Math.round(totalComparisons / 1000)}k pairs...`);
       }
 
       const b = items[j];
@@ -925,24 +1049,30 @@ export const scanSimilarPhotos = async ({
       const dt = Math.abs((b.createdTs || 0) - (a.createdTs || 0));
       const dist = hammingDistance64(aHash, bHash);
 
-      // Edge and corner comparison
-      const edgeDist = (a.edgeHash && b.edgeHash) ? hammingDistance32(a.edgeHash, b.edgeHash) : Number.MAX_SAFE_INTEGER;
-      const edgesMatch = edgeDist <= EDGE_MATCH_THRESHOLD;
-      const cornerDist = (a.cornerHash && b.cornerHash) ? hammingDistance16(a.cornerHash, b.cornerHash) : Number.MAX_SAFE_INTEGER;
-      const cornersMatch = cornerDist <= CORNER_MATCH_THRESHOLD;
+      // Debug: log first 30 comparisons
+      if (comparisonsDone <= 30) {
+        console.log(`[SimilarScan] #${comparisonsDone} ${a.filename} vs ${b.filename}: dist=${dist}, dt=${Math.round(dt/1000)}s, exif=${a.hasExifTime && b.hasExifTime}`);
+      }
 
+      // Use stricter thresholds if either file lacks EXIF timestamp
+      // (copied files have same OS timestamp, so we can't trust time proximity)
+      const bothHaveExif = a.hasExifTime && b.hasExifTime;
+      
       // Dynamic threshold based on time proximity
       let threshold;
-      if (dt <= 5000) threshold = 8;
-      else if (dt <= 30000) threshold = 7;
-      else if (dt <= 60000) threshold = 6;
-      else if (dt <= 300000) threshold = 5;
-      else threshold = 4;
-
-      // Boost threshold if edges/corners match
-      if (edgesMatch) threshold = Math.max(threshold, 10);
-      if (cornersMatch) threshold = Math.max(threshold, 11);
-      if (edgesMatch && cornersMatch) threshold = Math.max(threshold, 12);
+      if (bothHaveExif) {
+        // Reliable EXIF timestamps: 24 (burst) -> 18 -> 12 -> 6 (far apart)
+        if (dt <= 5000) threshold = 24;           // Within 5 seconds - burst shots with movement
+        else if (dt <= 30000) threshold = 18;     // Within 30 seconds - rapid shooting
+        else if (dt <= 60000) threshold = 12;     // Within 1 minute
+        else threshold = 6;                       // More than 1 minute apart
+      } else {
+        // No reliable EXIF: use stricter thresholds 11 -> 9 -> 6 -> 3
+        if (dt <= 5000) threshold = 11;           // Within 5 seconds
+        else if (dt <= 30000) threshold = 9;      // Within 30 seconds
+        else if (dt <= 60000) threshold = 6;      // Within 1 minute
+        else threshold = 3;                       // More than 1 minute apart
+      }
 
       if (dist > threshold) continue;
 
@@ -950,11 +1080,11 @@ export const scanSimilarPhotos = async ({
       if (seen.has(key)) continue;
       seen.add(key);
 
-      similarPairs.push({ a, b, dist, dt, edgesMatch, cornersMatch });
+      similarPairs.push({ a, b, dist, dt });
     }
 
-    // Thermal cooldown every 100 outer iterations
-    if (i > 0 && i % 100 === 0) {
+    // Thermal cooldown every 200 outer iterations
+    if (i > 0 && i % 200 === 0) {
       await thermalCooldown();
     }
   }
@@ -962,7 +1092,7 @@ export const scanSimilarPhotos = async ({
   console.log('[DupScanner] Found', similarPairs.length, 'similar pairs');
 
   // ========== PHASE 4: Cluster Groups (90-100%) ==========
-  updateStatus(onStatus, 'Grouping similar items...', true);
+  updateStatus(onStatus, 'Scanning: Grouping similar items...', true);
   updateProgress(onProgress, 0.90, true);
   await yieldToUi();
 
@@ -1021,7 +1151,13 @@ export const scanSimilarPhotos = async ({
 
   finalGroups.sort((a, b) => b.length - a.length);
 
-  updateStatus(onStatus, `Found ${finalGroups.length} similar groups`, true);
+  updateProgress(onProgress, 0.95, true);
+  await yieldToUi();
+  
+  // Small delay before final result for smooth UX
+  await new Promise(r => setTimeout(r, 200));
+  
+  updateStatus(onStatus, finalGroups.length > 0 ? `Scanning: Found ${finalGroups.length} similar groups` : 'Scanning: No similar photos found', true);
   updateProgress(onProgress, 1, true);
 
   console.log('[DupScanner] Similar scan complete:', finalGroups.length, 'groups');

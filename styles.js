@@ -26,8 +26,9 @@ export const THEME = {
   card: '#1E1E1E',
   text: '#FFFFFF',
   textSec: '#AAAAAA',
-  primary: '#3B82F6',
-  secondary: '#03DAC6',
+  primary: '#DC1FFF',    // Solana vibrant purple
+  secondary: '#00FFA3',  // Solana bright mint/green
+  accent: '#03E1FF',     // Solana ocean blue/cyan
   error: '#CF6679'
 };
 
@@ -302,18 +303,18 @@ export const styles = StyleSheet.create({
     right: 0,
     top: 0,
     bottom: 0,
-    backgroundColor: 'rgba(0,0,0,0.85)',
+    backgroundColor: 'rgba(0,0,0,0.97)',
     justifyContent: 'center',
     alignItems: 'center',
     padding: scaleSpacing(20),
   },
   overlayGlass: {
-    backgroundColor: 'rgba(0,0,0,0.7)',
+    backgroundColor: 'rgba(0,0,0,0.95)',
   },
   overlayCard: {
     width: '100%',
     maxWidth: isTablet ? 550 : 400,
-    backgroundColor: '#1A1A1A',
+    backgroundColor: '#000000',
     borderRadius: scaleSpacing(20),
     padding: scaleSpacing(24),
     borderWidth: 1,
@@ -325,13 +326,13 @@ export const styles = StyleSheet.create({
     elevation: 12,
   },
   overlayCardGlass: {
-    backgroundColor: 'rgba(30, 30, 30, 0.85)',
-    borderColor: 'rgba(255, 255, 255, 0.2)',
+    backgroundColor: '#000000',
+    borderColor: '#333333',
     ...Platform.select({
       ios: {
-        shadowColor: '#fff',
+        shadowColor: '#000',
         shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.15,
+        shadowOpacity: 0.3,
         shadowRadius: 12,
       },
       android: {
@@ -354,22 +355,22 @@ export const styles = StyleSheet.create({
     textAlign: 'center',
   },
   overlayBtnPrimary: {
-    backgroundColor: '#2A2A2A',
-    borderWidth: 2,
-    borderColor: THEME.primary,
+    backgroundColor: '#000000',
+    borderWidth: 1.5,
+    borderColor: '#FFFFFF',
     paddingVertical: scaleSpacing(16),
     borderRadius: scaleSpacing(14),
     alignItems: 'center',
     marginTop: scaleSpacing(8),
   },
   overlayBtnPrimaryGlass: {
-    backgroundColor: 'rgba(59, 130, 246, 0.2)',
-    borderColor: 'rgba(59, 130, 246, 0.6)',
+    backgroundColor: '#000000',
+    borderColor: '#FFFFFF',
     ...Platform.select({
       ios: {
-        shadowColor: '#3B82F6',
+        shadowColor: '#000',
         shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.3,
+        shadowOpacity: 0.2,
         shadowRadius: 6,
       },
       android: {
@@ -383,20 +384,20 @@ export const styles = StyleSheet.create({
     fontSize: scale(16),
   },
   overlayBtnSecondary: {
-    backgroundColor: '#2A2A2A',
+    backgroundColor: '#000000',
     paddingVertical: scaleSpacing(16),
     borderRadius: scaleSpacing(14),
     alignItems: 'center',
     marginTop: scaleSpacing(8),
-    borderWidth: 2,
-    borderColor: '#444444',
+    borderWidth: 1.5,
+    borderColor: '#666666',
   },
   overlayBtnSecondaryGlass: {
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
-    borderColor: 'rgba(255, 255, 255, 0.3)',
+    backgroundColor: '#000000',
+    borderColor: '#666666',
     ...Platform.select({
       ios: {
-        shadowColor: '#fff',
+        shadowColor: '#000',
         shadowOffset: { width: 0, height: 2 },
         shadowOpacity: 0.15,
         shadowRadius: 6,
@@ -464,7 +465,7 @@ export const styles = StyleSheet.create({
     paddingVertical: scaleSpacing(8),
   },
   pickerHeaderBtnText: {
-    color: THEME.secondary,
+    color: THEME.accent,
     fontSize: scale(14),
     fontWeight: '700',
   },

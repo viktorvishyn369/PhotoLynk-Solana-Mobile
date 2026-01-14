@@ -71,55 +71,18 @@ class PixelHashModule(reactContext: ReactApplicationContext) : ReactContextBaseJ
                     return@Thread
                 }
 
-                // Custom bilinear scaling to 9x8 (identical to iOS implementation)
+                // Use high-quality scaling to match Sharp's lanczos resize
+                // createScaledBitmap with filter=true uses bilinear filtering which is closer to Sharp
                 val hashWidth = 9
                 val hashHeight = 8
-                val srcWidth = bitmap!!.width
-                val srcHeight = bitmap!!.height
                 
-                val scaledPixels = IntArray(hashWidth * hashHeight)
-                
-                val xRatio = (srcWidth - 1).toFloat() / (hashWidth - 1).toFloat()
-                val yRatio = (srcHeight - 1).toFloat() / (hashHeight - 1).toFloat()
-                
-                for (y in 0 until hashHeight) {
-                    for (x in 0 until hashWidth) {
-                        val srcX = x.toFloat() * xRatio
-                        val srcY = y.toFloat() * yRatio
-                        
-                        val x1 = srcX.toInt()
-                        val y1 = srcY.toInt()
-                        val x2 = minOf(x1 + 1, srcWidth - 1)
-                        val y2 = minOf(y1 + 1, srcHeight - 1)
-                        
-                        val xWeight = srcX - x1.toFloat()
-                        val yWeight = srcY - y1.toFloat()
-                        
-                        val p11 = bitmap!!.getPixel(x1, y1)
-                        val p21 = bitmap!!.getPixel(x2, y1)
-                        val p12 = bitmap!!.getPixel(x1, y2)
-                        val p22 = bitmap!!.getPixel(x2, y2)
-                        
-                        // Match iOS two-step bilinear interpolation exactly
-                        // Step 1: Interpolate horizontally (top and bottom rows)
-                        val topR = Color.red(p11) * (1f - xWeight) + Color.red(p21) * xWeight
-                        val bottomR = Color.red(p12) * (1f - xWeight) + Color.red(p22) * xWeight
-                        val topG = Color.green(p11) * (1f - xWeight) + Color.green(p21) * xWeight
-                        val bottomG = Color.green(p12) * (1f - xWeight) + Color.green(p22) * xWeight
-                        val topB = Color.blue(p11) * (1f - xWeight) + Color.blue(p21) * xWeight
-                        val bottomB = Color.blue(p12) * (1f - xWeight) + Color.blue(p22) * xWeight
-                        
-                        // Step 2: Interpolate vertically
-                        val r = (topR * (1f - yWeight) + bottomR * yWeight + 0.5f).toInt()
-                        val g = (topG * (1f - yWeight) + bottomG * yWeight + 0.5f).toInt()
-                        val b = (topB * (1f - yWeight) + bottomB * yWeight + 0.5f).toInt()
-                        
-                        scaledPixels[y * hashWidth + x] = Color.rgb(r, g, b)
-                    }
-                }
-                
+                val scaled = Bitmap.createScaledBitmap(bitmap!!, hashWidth, hashHeight, true)
                 bitmap!!.recycle()
                 bitmap = null
+                
+                val scaledPixels = IntArray(hashWidth * hashHeight)
+                scaled.getPixels(scaledPixels, 0, hashWidth, 0, 0, hashWidth, hashHeight)
+                scaled.recycle()
 
                 // Compute grayscale values in 2D array for easier adjacent pixel comparison
                 val grayValues = Array(hashHeight) { IntArray(hashWidth) }

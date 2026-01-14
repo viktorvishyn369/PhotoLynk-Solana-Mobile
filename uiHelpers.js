@@ -9,7 +9,7 @@
  * @param {Object} stats - Operation statistics
  * @returns {{ title: string, message: string }}
  */
-export const buildResultMessage = (type, stats) => {
+export const buildResultMessage = (type, stats = {}) => {
   const titles = {
     backup: { success: 'Backup Complete', error: 'Backup Failed' },
     sync: { success: 'Sync Complete', error: 'Sync Failed' },
@@ -21,27 +21,32 @@ export const buildResultMessage = (type, stats) => {
 
   let message = '';
   if (isError) {
-    message = stats.error;
+    message = String(stats.error);
   } else {
     const lines = [];
     if (type === 'backup') {
-      if (typeof stats.uploaded === 'number') lines.push(`✓ Uploaded: ${stats.uploaded}`);
-      if (typeof stats.skipped === 'number') lines.push(`○ Skipped (already on server): ${stats.skipped}`);
-      if (typeof stats.failed === 'number' && stats.failed > 0) lines.push(`✗ Failed (corrupted/error): ${stats.failed}`);
+      const uploaded = stats.uploaded || 0;
+      const totalSkipped = (stats.skipped || 0) + (stats.failed || 0);
+      lines.push(`${uploaded} uploaded`);
+      if (totalSkipped > 0) lines.push(`${totalSkipped} skipped`);
     } else if (type === 'sync') {
-      if (typeof stats.downloaded === 'number') lines.push(`✓ Downloaded: ${stats.downloaded}`);
-      if (typeof stats.skipped === 'number') lines.push(`○ Skipped (exist on device): ${stats.skipped}`);
-      if (typeof stats.failed === 'number' && stats.failed > 0) lines.push(`✗ Failed (corrupted/error): ${stats.failed}`);
+      const downloaded = stats.downloaded || 0;
+      const totalSkipped = (stats.skipped || 0) + (stats.failed || 0);
+      lines.push(`${downloaded} downloaded`);
+      if (totalSkipped > 0) lines.push(`${totalSkipped} skipped`);
     } else if (type === 'clean') {
-      if (typeof stats.deleted === 'number') lines.push(`✓ Deleted: ${stats.deleted}`);
-      if (typeof stats.kept === 'number') lines.push(`○ Kept: ${stats.kept}`);
+      const deleted = stats.deleted || 0;
+      const kept = stats.kept || 0;
+      lines.push(`${deleted} deleted`);
+      if (kept > 0) lines.push(`${kept} kept`);
     } else if (type === 'delete') {
-      if (typeof stats.deleted === 'number') lines.push(`✓ Deleted: ${stats.deleted}`);
+      const deleted = stats.deleted || 0;
+      lines.push(`${deleted} deleted`);
     }
-    message = lines.join('\n');
+    message = lines.join(' • ');
   }
 
-  return { title, message };
+  return { title, message: message || 'Operation completed' };
 };
 
 /**

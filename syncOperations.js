@@ -36,8 +36,12 @@ import {
   findPerceptualHashMatch,
   extractBaseFilename,
   normalizeDateForCompare,
-  CROSS_PLATFORM_DHASH_THRESHOLD,
+  normalizeFullTimestamp,
 } from './duplicateScanner';
+
+// Sync-specific dHash threshold (6 bits = ~9% tolerance for cross-platform decoder differences)
+// This is more lenient than backup dedup (0 bits) to handle HEIC/JPEG conversion differences
+const SYNC_DHASH_THRESHOLD = 6;
 
 import {
   chooseStealthCloudMaxParallelChunkUploads,
@@ -64,6 +68,152 @@ const getMaxParallelDownloads = (fastMode) => {
     return Platform.OS === 'android' ? 8 : 6;
   }
   return Platform.OS === 'android' ? 4 : 3;
+};
+
+// ============================================================================
+// ASSET COLLECTION (All Albums + iCloud/Google Cloud Download)
+// ============================================================================
+
+/**
+ * Collect all assets from device including all albums (Screenshots, Downloads, WhatsApp, etc.)
+ * Also triggers iCloud/Google Cloud download for cloud-only items before dedup
+ * @returns {Promise<Array>} Array of all assets
+ */
+const collectAllAssetsFromAllAlbums = async (onStatus, onProgress, progressStart, progressEnd) => {
+  const mediaTypes = Platform.OS === 'ios'
+    ? [MediaLibrary.MediaType.photo, MediaLibrary.MediaType.video]
+    : ['photo', 'video'];
+  
+  const allAssets = [];
+  const seenIds = new Set();
+  let after = null;
+  
+  // Get total count first
+  let totalCount = 0;
+  try {
+    const countPage = await MediaLibrary.getAssetsAsync({ first: 1, mediaType: mediaTypes });
+    totalCount = countPage?.totalCount || 0;
+  } catch (e) {
+    totalCount = 1000;
+  }
+
+  updateStatus(onStatus, `Sync: Scanning 0 of ${totalCount} local files...`, true);
+  updateProgress(onProgress, progressStart, true);
+
+  // Phase 1: Collect from main library (paged)
+  while (true) {
+    const page = await MediaLibrary.getAssetsAsync({
+      first: PAGE_SIZE,
+      after: after || undefined,
+      mediaType: mediaTypes,
+    });
+
+    const assets = page?.assets || [];
+    for (const asset of assets) {
+      if (!seenIds.has(asset.id)) {
+        seenIds.add(asset.id);
+        allAssets.push(asset);
+      }
+    }
+
+    // Update progress
+    const scanProgress = progressStart + (allAssets.length / Math.max(totalCount, 1)) * (progressEnd - progressStart) * 0.6;
+    updateProgress(onProgress, Math.min(scanProgress, progressEnd));
+    updateStatus(onStatus, `Sync: Scanning ${allAssets.length} of ${totalCount} local files...`);
+
+    after = page?.endCursor;
+    if (!page?.hasNextPage) break;
+    if (assets.length === 0) break;
+    await quickYield();
+  }
+
+  // Phase 2: Scan all albums to catch Screenshots, Downloads, WhatsApp, user folders, etc.
+  try {
+    const albums = await MediaLibrary.getAlbumsAsync({ includeSmartAlbums: true });
+    updateStatus(onStatus, `Sync: Scanning ${albums.length} albums...`);
+    
+    for (let i = 0; i < albums.length; i++) {
+      const album = albums[i];
+      try {
+        let albumAfter = null;
+        while (true) {
+          const albumPage = await MediaLibrary.getAssetsAsync({
+            first: PAGE_SIZE,
+            after: albumAfter || undefined,
+            album: album.id,
+            mediaType: mediaTypes,
+          });
+          
+          const albumAssets = albumPage?.assets || [];
+          for (const asset of albumAssets) {
+            if (!seenIds.has(asset.id)) {
+              seenIds.add(asset.id);
+              allAssets.push(asset);
+            }
+          }
+          
+          albumAfter = albumPage?.endCursor;
+          if (!albumPage?.hasNextPage || albumAssets.length === 0) break;
+        }
+      } catch (e) {
+        // Skip failed albums
+      }
+
+      // Yield every few albums
+      if (i % 5 === 0) {
+        await quickYield();
+        const albumProgress = progressStart + (progressEnd - progressStart) * (0.6 + 0.2 * (i / albums.length));
+        updateProgress(onProgress, Math.min(albumProgress, progressEnd));
+        updateStatus(onStatus, `Sync: Scanning albums... ${allAssets.length} items found`);
+      }
+    }
+  } catch (e) {
+    console.log('[Sync] Album scan error:', e?.message);
+  }
+
+  // Phase 3: Trigger iCloud/Google Cloud download for cloud-only items (iOS mainly)
+  // Also store localUri back into asset objects for later hash computation
+  if (Platform.OS === 'ios') {
+    updateStatus(onStatus, `Sync: Checking ${allAssets.length} items for cloud availability...`);
+    let cloudDownloadCount = 0;
+    let localUriCount = 0;
+    
+    for (let i = 0; i < allAssets.length; i++) {
+      try {
+        const asset = allAssets[i];
+        // getAssetInfoAsync triggers iCloud download if needed and returns localUri
+        const info = await MediaLibrary.getAssetInfoAsync(asset.id);
+        
+        // Store localUri back into asset for later use in hash computation
+        if (info?.localUri) {
+          asset.localUri = info.localUri;
+          localUriCount++;
+        } else if (info?.uri) {
+          asset.uri = info.uri;
+          cloudDownloadCount++;
+        }
+      } catch (e) {
+        // Skip items that fail
+        if (i < 5) console.log(`[Sync] iOS asset ${i} info error: ${e.message}`);
+      }
+      
+      // Yield and update progress periodically
+      if (i % 50 === 0) {
+        await quickYield();
+        const dlProgress = progressStart + (progressEnd - progressStart) * (0.8 + 0.2 * (i / allAssets.length));
+        updateProgress(onProgress, Math.min(dlProgress, progressEnd));
+        if (cloudDownloadCount > 0) {
+          updateStatus(onStatus, `Sync: Downloading ${cloudDownloadCount} items from iCloud...`);
+        }
+      }
+    }
+    
+    console.log(`[Sync] iOS: ${localUriCount} local files, ${cloudDownloadCount} cloud-only items`);
+  }
+
+  updateProgress(onProgress, progressEnd, true);
+  console.log(`[Sync] Collected ${allAssets.length} assets from all albums`);
+  return allAssets;
 };
 
 // ============================================================================
@@ -102,13 +252,15 @@ const updateStatus = (onStatus, text, force = false) => {
 // UI YIELDING
 // ============================================================================
 
-// Yield to UI - use requestAnimationFrame for true frame-based yielding
+// Yield to UI - use InteractionManager + setImmediate for best React Native responsiveness
 const yieldToUi = () => new Promise(resolve => {
-  if (typeof requestAnimationFrame !== 'undefined') {
-    requestAnimationFrame(() => resolve());
-  } else {
-    setTimeout(resolve, 16);
-  }
+  InteractionManager.runAfterInteractions(() => {
+    if (typeof setImmediate !== 'undefined') {
+      setImmediate(resolve);
+    } else {
+      setTimeout(resolve, 0);
+    }
+  });
 });
 
 // Quick yield for inside tight loops
@@ -164,16 +316,19 @@ const fetchManifestsWithMeta = async (serverUrl, config, onProgress) => {
 /**
  * Fetch all Local/Remote server files with pagination
  */
-const fetchServerFilesPaged = async (serverUrl, config, onProgress) => {
+const fetchServerFilesPaged = async (serverUrl, config, onProgress, includeMeta = true) => {
   const PAGE_LIMIT = 500;
   const allFiles = [];
   let offset = 0;
   let estimatedTotal = null;
 
   while (true) {
+    const params = { offset, limit: PAGE_LIMIT };
+    if (includeMeta) params.meta = 'true';
+    
     const response = await axios.get(`${serverUrl}/api/files`, {
       ...config,
-      params: { offset, limit: PAGE_LIMIT }
+      params
     });
 
     const files = response.data?.files || [];
@@ -266,7 +421,7 @@ const shouldSkipServerFile = (serverFile, localSets) => {
   
   // Check by perceptual hash (images)
   if (perceptualHash && localSets.perceptualHashes.size > 0) {
-    if (findPerceptualHashMatch(perceptualHash, localSets.perceptualHashes, CROSS_PLATFORM_DHASH_THRESHOLD)) {
+    if (findPerceptualHashMatch(perceptualHash, localSets.perceptualHashes, SYNC_DHASH_THRESHOLD)) {
       return { skip: true, reason: 'perceptualHash' };
     }
   }
@@ -300,7 +455,7 @@ const shouldSkipServerFile = (serverFile, localSets) => {
 
 /**
  * Scan local device files and build dedup sets
- * FAST version - uses asset metadata only, no getAssetInfoAsync calls
+ * Scans ALL albums (Screenshots, Downloads, WhatsApp, user folders) + triggers iCloud download
  */
 const scanLocalPhotosForDedup = async (onStatus, onProgress, progressStart, progressEnd) => {
   const localSets = {
@@ -312,91 +467,60 @@ const scanLocalPhotosForDedup = async (onStatus, onProgress, progressStart, prog
     baseNameDates: new Map(),
   };
 
-  const mediaTypeQuery = Platform.OS === 'ios'
-    ? [MediaLibrary.MediaType.photo, MediaLibrary.MediaType.video]
-    : ['photo', 'video'];
-
-  let after = null;
-  let totalCount = null;
-  let scanned = 0;
-
-  // Show initial status immediately
-  updateStatus(onStatus, 'Scanning local files...', true);
-  updateProgress(onProgress, progressStart, true);
-
-  while (true) {
-    const page = await MediaLibrary.getAssetsAsync({
-      first: PAGE_SIZE,
-      after: after || undefined,
-      mediaType: mediaTypeQuery,
-    });
-
-    if (totalCount === null && page?.totalCount) {
-      totalCount = page.totalCount;
-      updateStatus(onStatus, `Scanning 0 of ${totalCount} local files...`, true);
-    }
-
-    const assets = page?.assets || [];
-    if (assets.length === 0) break;
-
-    for (const asset of assets) {
-      scanned++;
-      
-      // Use asset.filename directly - no slow getAssetInfoAsync call
-      const filename = asset.filename;
-      
-      if (filename) {
-        const normalized = normalizeFilenameForCompare(filename);
-        if (normalized) localSets.filenames.add(normalized);
-        
-        // Compute manifestId (filename + size) - use asset metadata
-        const fileSize = asset.width && asset.height ? (asset.width * asset.height) : null; // Approximate
-        const duration = asset.duration || 0;
-        
-        // For manifestId, use filename + duration (videos) or filename only (photos)
-        const fileIdentity = computeFileIdentity(filename, duration > 0 ? Math.round(duration * 1000) : (fileSize || 0));
-        if (fileIdentity) {
-          const manifestId = sha256(`file:${fileIdentity}`);
-          localSets.manifestIds.add(manifestId);
-        }
-        
-        // Base name + size/date for fallback dedup
-        const baseName = extractBaseFilename(filename);
-        if (baseName) {
-          if (fileSize) {
-            if (!localSets.baseNameSizes.has(baseName)) localSets.baseNameSizes.set(baseName, new Set());
-            localSets.baseNameSizes.get(baseName).add(fileSize);
-          }
-          
-          if (asset.creationTime) {
-            const dateStr = normalizeDateForCompare(asset.creationTime);
-            if (dateStr) {
-              if (!localSets.baseNameDates.has(baseName)) localSets.baseNameDates.set(baseName, new Set());
-              localSets.baseNameDates.get(baseName).add(dateStr);
-            }
-          }
-        }
-      }
-      
-      // Progress update every 100 files (fast scan, less frequent updates needed)
-      if (scanned % 100 === 0) {
-        const progress = progressStart + (scanned / (totalCount || scanned)) * (progressEnd - progressStart);
-        updateProgress(onProgress, progress);
-        updateStatus(onStatus, `Scanning ${scanned} of ${totalCount || '?'} local files...`);
-        await quickYield();
-      }
-    }
-
-    // Yield after each page
-    await quickYield();
+  // Collect all assets from all albums + trigger iCloud download
+  const allAssets = await collectAllAssetsFromAllAlbums(onStatus, onProgress, progressStart, progressStart + (progressEnd - progressStart) * 0.7);
+  
+  // Build dedup sets from collected assets
+  updateStatus(onStatus, `Sync: Building dedup index from ${allAssets.length} files...`, true);
+  
+  for (let i = 0; i < allAssets.length; i++) {
+    const asset = allAssets[i];
+    const filename = asset.filename;
     
-    after = page?.endCursor;
-    if (!page?.hasNextPage) break;
+    if (filename) {
+      const normalized = normalizeFilenameForCompare(filename);
+      if (normalized) localSets.filenames.add(normalized);
+      
+      // Compute manifestId (filename + size) - use asset metadata
+      const fileSize = asset.width && asset.height ? (asset.width * asset.height) : null;
+      const duration = asset.duration || 0;
+      
+      const fileIdentity = computeFileIdentity(filename, duration > 0 ? Math.round(duration * 1000) : (fileSize || 0));
+      if (fileIdentity) {
+        const manifestId = sha256(`file:${fileIdentity}`);
+        localSets.manifestIds.add(manifestId);
+      }
+      
+      // Base name + size/date for fallback dedup
+      const baseName = extractBaseFilename(filename);
+      if (baseName) {
+        if (fileSize) {
+          if (!localSets.baseNameSizes.has(baseName)) localSets.baseNameSizes.set(baseName, new Set());
+          localSets.baseNameSizes.get(baseName).add(fileSize);
+        }
+        
+        if (asset.creationTime) {
+          const dateStr = normalizeDateForCompare(asset.creationTime);
+          if (dateStr) {
+            if (!localSets.baseNameDates.has(baseName)) localSets.baseNameDates.set(baseName, new Set());
+            localSets.baseNameDates.get(baseName).add(dateStr);
+          }
+        }
+      }
+    }
+    
+    // Progress update every 100 files
+    if (i % 100 === 0) {
+      const progress = progressStart + (progressEnd - progressStart) * (0.7 + 0.3 * (i / allAssets.length));
+      updateProgress(onProgress, Math.min(progress, progressEnd));
+      updateStatus(onStatus, `Sync: Indexing ${i} of ${allAssets.length} local files...`);
+      await quickYield();
+    }
   }
 
   // Final progress update
   updateProgress(onProgress, progressEnd, true);
-  updateStatus(onStatus, `Scanned ${scanned} local files`, true);
+  updateStatus(onStatus, `Sync: Indexed ${allAssets.length} local files`, true);
 
   console.log(`[Sync] Local scan: ${localSets.filenames.size} filenames, ${localSets.manifestIds.size} manifestIds`);
   return localSets;
@@ -404,7 +528,8 @@ const scanLocalPhotosForDedup = async (onStatus, onProgress, progressStart, prog
 
 /**
  * Build local dedup index for StealthCloud restore
- * FAST version - uses filename-based dedup primarily, with selective hashing
+ * Scans ALL albums (Screenshots, Downloads, WhatsApp, user folders) + triggers iCloud download
+ * Computes actual file hashes for cross-device dedup
  */
 const buildLocalHashIndex = async (resolveReadableFilePath, onStatus, onProgress, progressStart, progressEnd) => {
   const localSets = {
@@ -416,95 +541,141 @@ const buildLocalHashIndex = async (resolveReadableFilePath, onStatus, onProgress
     baseNameDates: new Map(),
   };
 
-  const mediaTypeQuery = Platform.OS === 'ios'
-    ? [MediaLibrary.MediaType.photo, MediaLibrary.MediaType.video]
-    : ['photo', 'video'];
-
-  let after = null;
-  let totalCount = null;
-  let scanned = 0;
-
-  // Show initial status immediately
-  updateStatus(onStatus, 'Scanning local files...', true);
-  updateProgress(onProgress, progressStart, true);
-
-  while (true) {
-    const page = await MediaLibrary.getAssetsAsync({
-      first: PAGE_SIZE,
-      after: after || undefined,
-      mediaType: mediaTypeQuery,
-    });
-
-    if (totalCount === null && page?.totalCount) {
-      totalCount = page.totalCount;
-      updateStatus(onStatus, `Scanning 0 of ${totalCount} local files...`, true);
-    }
-
-    const assets = page?.assets || [];
-    if (assets.length === 0) break;
-
-    for (const asset of assets) {
-      scanned++;
+  // Collect all assets from all albums + trigger iCloud download
+  const allAssets = await collectAllAssetsFromAllAlbums(onStatus, onProgress, progressStart, progressStart + (progressEnd - progressStart) * 0.3);
+  
+  // Build dedup sets from collected assets - compute hashes for cross-device dedup
+  console.log(`[Sync] ${Platform.OS}: Starting hash computation for ${allAssets.length} assets`);
+  updateStatus(onStatus, `Sync: Building dedup index from ${allAssets.length} files...`, true);
+  
+  let hashedCount = 0;
+  let hashErrors = 0;
+  let resolveErrors = 0;
+  
+  for (let i = 0; i < allAssets.length; i++) {
+    const asset = allAssets[i];
+    const filename = asset.filename;
+    
+    if (filename) {
+      // Primary dedup: exact filename match (fast and reliable)
+      const normalized = normalizeFilenameForCompare(filename);
+      if (normalized) localSets.filenames.add(normalized);
       
-      // Use asset.filename directly for speed
-      const filename = asset.filename;
+      // Base name for cross-platform variant matching
+      const baseName = extractBaseFilename(filename);
       
-      if (filename) {
-        const normalized = normalizeFilenameForCompare(filename);
-        if (normalized) localSets.filenames.add(normalized);
-        
-        // Use asset metadata for manifestId (no file access needed)
-        const duration = asset.duration || 0;
-        const approxSize = asset.width && asset.height ? (asset.width * asset.height) : 0;
-        const sizeProxy = duration > 0 ? Math.round(duration * 1000) : approxSize;
-        
-        if (sizeProxy > 0) {
-          const fileIdentity = computeFileIdentity(filename, sizeProxy);
-          if (fileIdentity) {
-            const manifestId = sha256(`file:${fileIdentity}`);
-            localSets.manifestIds.add(manifestId);
-          }
+      // Try to get actual file path and compute hashes for cross-device dedup
+      try {
+        // resolveReadableFilePath expects { assetId, assetInfo } format
+        if (typeof resolveReadableFilePath !== 'function') {
+          throw new Error('resolveReadableFilePath is not a function');
         }
+        const resolved = await resolveReadableFilePath({ assetId: asset.id, assetInfo: asset });
+        const filePath = resolved?.filePath || resolved;
         
-        // Base name + date for fallback dedup
-        const baseName = extractBaseFilename(filename);
-        if (baseName) {
-          if (approxSize > 0) {
-            if (!localSets.baseNameSizes.has(baseName)) localSets.baseNameSizes.set(baseName, new Set());
-            localSets.baseNameSizes.get(baseName).add(approxSize);
+        if (filePath && typeof filePath === 'string') {
+          // Log first few files for debugging
+          if (i < 3) console.log(`[Sync] File ${i}: ${filename} -> ${filePath.substring(0, 80)}...`);
+          
+          // Get actual file size
+          let fileSize = null;
+          try {
+            const fileUri = filePath.startsWith('file://') ? filePath : (filePath.startsWith('/') ? `file://${filePath}` : filePath);
+            const info = await FileSystem.getInfoAsync(fileUri);
+            fileSize = info?.size ? Number(info.size) : null;
+            if (i < 3) console.log(`[Sync] File ${i}: size=${fileSize}`);
+          } catch (e) {
+            if (i < 3) console.log(`[Sync] File ${i}: size error: ${e.message}`);
           }
           
-          if (asset.creationTime) {
-            const dateStr = normalizeDateForCompare(asset.creationTime);
-            if (dateStr) {
-              if (!localSets.baseNameDates.has(baseName)) localSets.baseNameDates.set(baseName, new Set());
-              localSets.baseNameDates.get(baseName).add(dateStr);
+          // Compute manifestId with actual file size
+          if (fileSize) {
+            const fileIdentity = computeFileIdentity(filename, fileSize);
+            if (fileIdentity) {
+              const manifestId = sha256(`file:${fileIdentity}`);
+              localSets.manifestIds.add(manifestId);
+              if (i < 3) console.log(`[Sync] File ${i}: manifestId=${manifestId.substring(0, 16)}...`);
+            }
+            
+            // Base name + actual size for fallback
+            if (baseName) {
+              if (!localSets.baseNameSizes.has(baseName)) localSets.baseNameSizes.set(baseName, new Set());
+              localSets.baseNameSizes.get(baseName).add(fileSize);
             }
           }
+          
+          // Compute file hash for videos (cross-device dedup)
+          const isVideo = asset.mediaType === 'video' || (asset.duration && asset.duration > 0);
+          if (isVideo) {
+            try {
+              if (i < 5) console.log(`[Sync] File ${i}: computing video hash...`);
+              const fileHash = await computeExactFileHash(filePath);
+              if (fileHash) {
+                localSets.fileHashes.add(fileHash);
+                hashedCount++;
+                if (i < 5) console.log(`[Sync] File ${i}: videoHash=${fileHash.substring(0, 16)}...`);
+              } else {
+                if (i < 5) console.log(`[Sync] File ${i}: videoHash=null`);
+              }
+            } catch (e) { 
+              hashErrors++;
+              if (i < 10) console.log(`[Sync] File ${i}: videoHash error: ${e.message}`);
+            }
+          } else {
+            // Compute perceptual hash for images (cross-device dedup)
+            try {
+              if (i < 5) console.log(`[Sync] File ${i}: computing perceptual hash...`);
+              const phash = await computePerceptualHash(filePath);
+              if (phash) {
+                localSets.perceptualHashes.add(phash);
+                hashedCount++;
+                if (i < 5) console.log(`[Sync] File ${i}: phash=${phash}`);
+              } else {
+                if (i < 5) console.log(`[Sync] File ${i}: phash=null`);
+              }
+            } catch (e) { 
+              hashErrors++;
+              if (i < 10) console.log(`[Sync] File ${i}: phash error: ${e.message}`);
+            }
+          }
+        } else {
+          if (i < 5) console.log(`[Sync] File ${i}: ${filename} - no valid filePath`);
+          resolveErrors++;
+        }
+      } catch (e) {
+        resolveErrors++;
+        if (i < 10) console.log(`[Sync] File ${i}: ${filename} - resolve error: ${e.message}`);
+        // Fall back to metadata-only if file access fails
+        const duration = asset.duration || 0;
+        const approxSize = asset.width && asset.height ? (asset.width * asset.height) : 0;
+        if (baseName && approxSize > 0) {
+          if (!localSets.baseNameSizes.has(baseName)) localSets.baseNameSizes.set(baseName, new Set());
+          localSets.baseNameSizes.get(baseName).add(approxSize);
         }
       }
       
-      // Progress update every 100 files
-      if (scanned % 100 === 0) {
-        const progress = progressStart + (scanned / (totalCount || scanned)) * (progressEnd - progressStart);
-        updateProgress(onProgress, progress);
-        updateStatus(onStatus, `Scanning ${scanned} of ${totalCount || '?'} local files...`);
-        await quickYield();
+      // Base name + date for fallback dedup
+      if (baseName && asset.creationTime) {
+        const dateStr = normalizeDateForCompare(asset.creationTime);
+        if (dateStr) {
+          if (!localSets.baseNameDates.has(baseName)) localSets.baseNameDates.set(baseName, new Set());
+          localSets.baseNameDates.get(baseName).add(dateStr);
+        }
       }
     }
-
-    // Yield after each page
-    await quickYield();
     
-    after = page?.endCursor;
-    if (!page?.hasNextPage) break;
+    // Progress update every file (hashing can be slow for large files)
+    const progress = progressStart + (progressEnd - progressStart) * (0.3 + 0.7 * (i / allAssets.length));
+    updateProgress(onProgress, Math.min(progress, progressEnd));
+    updateStatus(onStatus, `Sync: Hashing ${i + 1} of ${allAssets.length}: ${filename || 'file'}`);
+    await quickYield();
   }
 
   // Final progress update
   updateProgress(onProgress, progressEnd, true);
-  updateStatus(onStatus, `Scanned ${scanned} local files`, true);
+  updateStatus(onStatus, `Sync: Indexed ${allAssets.length} local files`, true);
 
-  console.log(`[Sync] Local index: ${localSets.filenames.size} filenames, ${localSets.manifestIds.size} manifestIds`);
+  console.log(`[Sync] Local index: ${localSets.filenames.size} filenames, ${localSets.manifestIds.size} manifestIds, ${localSets.fileHashes.size} fileHashes, ${localSets.perceptualHashes.size} perceptualHashes (hashed=${hashedCount}, hashErrors=${hashErrors}, resolveErrors=${resolveErrors})`);
   return localSets;
 };
 
@@ -539,12 +710,12 @@ export const stealthCloudRestoreCore = async ({
   resetProgress();
   
   // ========== PHASE 1: Setup ==========
-  onStatus('Preparing sync...');
+  onStatus('Sync: Preparing...');
   onProgress(0);
   await yieldToUi();
 
   // ========== PHASE 2: Fetch Server Manifests with Metadata (0-5%) ==========
-  onStatus('Fetching server files...');
+  onStatus('Sync: Fetching server files...');
   updateProgress(onProgress, 0.01, true);
 
   let serverManifests = [];
@@ -552,7 +723,7 @@ export const stealthCloudRestoreCore = async ({
     serverManifests = await fetchManifestsWithMeta(SERVER_URL, config, (fetched, total) => {
       const progress = 0.01 + (fetched / (total || fetched)) * 0.04;
       updateProgress(onProgress, progress);
-      updateStatus(onStatus, `Fetching ${fetched}${total > fetched ? ` of ${total}` : ''} server files...`);
+      updateStatus(onStatus, `Sync: Fetching ${fetched}${total > fetched ? ` of ${total}` : ''} server files...`);
     });
   } catch (e) {
     console.error('Failed to fetch manifests:', e?.message);
@@ -573,11 +744,11 @@ export const stealthCloudRestoreCore = async ({
     return { restored: 0, skipped: 0, failed: 0, noBackups: true };
   }
 
-  onStatus(`Found ${serverManifests.length} server files...`);
+  onStatus(`Sync: Found ${serverManifests.length} server files...`);
   await yieldToUi();
 
   // ========== PHASE 3: Scan Local Photos (5-15%) ==========
-  onStatus('Scanning local photos...');
+  onStatus('Sync: Scanning local photos...');
   updateProgress(onProgress, 0.05, true);
 
   const localSets = await buildLocalHashIndex(resolveReadableFilePath, onStatus, onProgress, 0.05, 0.15);
@@ -586,18 +757,22 @@ export const stealthCloudRestoreCore = async ({
   await yieldToUi();
 
   // ========== PHASE 4: Filter Files to Download (15-20%) ==========
-  onStatus('Comparing files...');
+  onStatus('Sync: Comparing files...');
   updateProgress(onProgress, 0.15, true);
 
   const toDownload = [];
   let skipped = 0;
 
+  const skipReasons = {};
+  let historySkipped = 0;
+  
   for (let i = 0; i < serverManifests.length; i++) {
     const manifest = serverManifests[i];
     
     // Check restore history
     const historyKey = makeHistoryKey('sc', manifest.manifestId);
     if (restoreHistory.has(historyKey)) {
+      historySkipped++;
       skipped++;
       continue;
     }
@@ -606,21 +781,27 @@ export const stealthCloudRestoreCore = async ({
     const check = shouldSkipServerFile(manifest, localSets);
     if (check.skip) {
       skipped++;
+      skipReasons[check.reason] = (skipReasons[check.reason] || 0) + 1;
+      if (i < 10) console.log(`[Sync] Skip ${manifest.filename}: ${check.reason}`);
       continue;
     }
     
+    // Log files that will be downloaded
+    if (toDownload.length < 5) console.log(`[Sync] Will download: ${manifest.filename} (no local match)`);
     toDownload.push(manifest);
     
     if (i % 100 === 0) {
       const progress = 0.15 + (i / serverManifests.length) * 0.05;
       updateProgress(onProgress, progress);
-      updateStatus(onStatus, `Comparing ${i + 1} of ${serverManifests.length} files...`);
+      updateStatus(onStatus, `Sync: Comparing ${i + 1} of ${serverManifests.length} files...`);
       await quickYield();
     }
   }
+  
+  console.log(`[Sync] Comparison done: toDownload=${toDownload.length}, skipped=${skipped} (history=${historySkipped})`, skipReasons);
 
   updateProgress(onProgress, 0.20, true);
-  onStatus(`${toDownload.length} files to sync, ${skipped} already on device`);
+  onStatus(`Sync: ${toDownload.length} files to sync, ${skipped} already on device`);
   await yieldToUi();
 
   if (toDownload.length === 0) {
@@ -653,7 +834,7 @@ export const stealthCloudRestoreCore = async ({
     // Progress: 20-100%
     const progress = 0.20 + (fileNum / toDownload.length) * 0.80;
     updateProgress(onProgress, progress);
-    updateStatus(onStatus, `Syncing ${fileNum} of ${toDownload.length}: ${manifest.filename || 'file'}...`, true);
+    updateStatus(onStatus, `Sync: Downloading ${fileNum} of ${toDownload.length}: ${manifest.filename || 'file'}...`, true);
 
     // Yield every few files
     if (i % 3 === 0) await yieldToUi();
@@ -696,8 +877,8 @@ export const stealthCloudRestoreCore = async ({
 
       const baseNonce16 = naclUtil.decodeBase64(fullManifest.baseNonce16);
 
-      // Prepare output file
-      const safeFilename = String(filename).replace(/[\\/\n\r\t\0]/g, '_');
+      // Prepare output file - sanitize for local storage
+      const safeFilename = String(filename).replace(/[^a-zA-Z0-9._-]/g, '_');
       const outUri = `${FileSystem.cacheDirectory}${safeFilename}`;
       const outPath = normalizeFilePath(outUri);
       await FileSystem.deleteAsync(outUri, { idempotent: true });
@@ -782,7 +963,7 @@ export const stealthCloudRestoreCore = async ({
       if (restored > 0 && restored % batchLimit === 0) {
         const batchCooldown = getBatchCooldownMs(fastMode);
         if (batchCooldown > 0) {
-          onStatus(`Cooling down (batch ${Math.floor(restored / batchLimit)})...`);
+          onStatus(`Sync: Cooling down (batch ${Math.floor(restored / batchLimit)})...`);
           await sleep(batchCooldown);
         }
       }
@@ -801,7 +982,7 @@ export const stealthCloudRestoreCore = async ({
   }
 
   updateProgress(onProgress, 1.0, true);
-  updateStatus(onStatus, `Sync complete: ${restored} restored, ${skipped} skipped, ${failed} failed`, true);
+  updateStatus(onStatus, `Sync: Complete - ${restored} restored, ${skipped} skipped, ${failed} failed`, true);
 
   return { restored, skipped, failed };
 };
@@ -822,25 +1003,28 @@ export const stealthCloudRestoreCore = async ({
 export const localRemoteRestoreCore = async ({
   config,
   SERVER_URL,
+  resolveReadableFilePath, // Required for hash computation
   onlyFilenames = null, // Optional: specific filenames to restore
   fastMode = false,
   onStatus = () => {},
   onProgress = () => {},
   abortRef,
+  appStateRef, // For pausing when backgrounded
 }) => {
   resetProgress();
   
-  // ========== PHASE 1: Fetch Server Files (0-5%) ==========
-  onStatus('Fetching server files...');
+  // ========== PHASE 1: Fetch Server Files with Hash Metadata (0-5%) ==========
+  onStatus('Sync: Fetching server files...');
   onProgress(0);
 
   let serverFiles = [];
   try {
+    // Fetch with meta=true to get hash metadata for cross-device dedup
     serverFiles = await fetchServerFilesPaged(SERVER_URL, config, (fetched, total) => {
       const progress = (fetched / (total || fetched)) * 0.05;
       updateProgress(onProgress, progress);
-      updateStatus(onStatus, `Fetching ${fetched}${total > fetched ? ` of ${total}` : ''} server files...`);
-    });
+      updateStatus(onStatus, `Sync: Fetching ${fetched}${total > fetched ? ` of ${total}` : ''} server files...`);
+    }, true); // includeMeta=true
   } catch (e) {
     console.error('Failed to fetch server files:', e?.message);
     return { restored: 0, skipped: 0, failed: 0, error: e?.message };
@@ -863,45 +1047,129 @@ export const localRemoteRestoreCore = async ({
     return { restored: 0, skipped: 0, failed: 0, noFiles: true };
   }
 
-  onStatus(`Found ${serverFiles.length} server files...`);
+  onStatus(`Sync: Found ${serverFiles.length} server files...`);
   await yieldToUi();
 
-  // ========== PHASE 2: Scan Local Photos (5-15%) ==========
-  onStatus('Scanning local photos...');
+  // ========== PHASE 2: Scan Local Photos with Hash Computation (5-15%) ==========
+  onStatus('Sync: Scanning local photos...');
   updateProgress(onProgress, 0.05, true);
 
-  const localSets = await scanLocalPhotosForDedup(onStatus, onProgress, 0.05, 0.15);
+  // Use buildLocalHashIndex for perceptual hash matching (handles iOS file renaming)
+  const localSets = await buildLocalHashIndex(resolveReadableFilePath, onStatus, onProgress, 0.05, 0.15);
   
   updateProgress(onProgress, 0.15, true);
   await yieldToUi();
 
   // ========== PHASE 3: Filter Files to Download (15-20%) ==========
-  onStatus('Comparing files...');
+  onStatus('Sync: Comparing files...');
+  
+  // Debug: count server files with hashes
+  const serverWithPhash = serverFiles.filter(f => f?.perceptualHash).length;
+  const serverWithFhash = serverFiles.filter(f => f?.fileHash).length;
+  console.log(`[Sync] Server files: ${serverFiles.length} total, ${serverWithPhash} with perceptualHash, ${serverWithFhash} with fileHash`);
+  console.log(`[Sync] Local sets: ${localSets.perceptualHashes?.size || 0} perceptualHashes, ${localSets.fileHashes?.size || 0} fileHashes`);
   
   const toDownload = [];
   let skipped = 0;
+  const skipReasons = {};
 
-  for (const file of serverFiles) {
+  for (let i = 0; i < serverFiles.length; i++) {
+    const file = serverFiles[i];
     const normalized = normalizeFilenameForCompare(file?.filename);
+    const baseName = extractBaseFilename(file?.filename);
+    
+    // Log first few files for debugging
+    if (i < 5) {
+      console.log(`[Sync] Server file ${i}: "${file?.filename}" -> normalized: "${normalized}", baseName: "${baseName}", phash: ${file?.perceptualHash || 'none'}`);
+      console.log(`[Sync] Local has filename: ${normalized ? localSets.filenames.has(normalized) : 'N/A'}, baseName: ${baseName ? localSets.baseNameSizes.has(baseName) : 'N/A'}`);
+    }
+    
+    // Check by exact filename first
     if (normalized && localSets.filenames.has(normalized)) {
       skipped++;
-    } else {
-      toDownload.push(file);
+      skipReasons.filename = (skipReasons.filename || 0) + 1;
+      if (i < 10) console.log(`[Sync] Skip ${file?.filename}: filename`);
+      continue;
     }
+    
+    // Check by base filename (handles iOS renaming: IMG_1413.JPG -> IMG_3618.JPG but same base pattern)
+    // This catches files with same base name but different numbering
+    if (baseName && localSets.baseNameSizes.has(baseName)) {
+      skipped++;
+      skipReasons.baseName = (skipReasons.baseName || 0) + 1;
+      if (i < 10) console.log(`[Sync] Skip ${file?.filename}: baseName`);
+      continue;
+    }
+    
+    // Check by perceptual hash (cross-device dedup for images)
+    const serverPhash = file?.perceptualHash;
+    if (serverPhash && localSets.perceptualHashes && localSets.perceptualHashes.size > 0) {
+      if (findPerceptualHashMatch(serverPhash, localSets.perceptualHashes, SYNC_DHASH_THRESHOLD)) {
+        skipped++;
+        skipReasons.perceptualHash = (skipReasons.perceptualHash || 0) + 1;
+        if (i < 10) console.log(`[Sync] Skip ${file?.filename}: perceptualHash`);
+        continue;
+      }
+    }
+    
+    // Check by file hash (cross-device dedup for videos)
+    const serverFileHash = file?.fileHash;
+    if (serverFileHash && localSets.fileHashes && localSets.fileHashes.has(serverFileHash)) {
+      skipped++;
+      skipReasons.fileHash = (skipReasons.fileHash || 0) + 1;
+      if (i < 10) console.log(`[Sync] Skip ${file?.filename}: fileHash`);
+      continue;
+    }
+    
+    // FALLBACK: Check ALL platform-specific hashes (double-confirm before download)
+    // Check current platform first, then other platforms
+    const platformOrder = Platform.OS === 'ios' ? ['ios', 'android'] : ['android', 'ios'];
+    let platformSkipped = false;
+    for (const plat of platformOrder) {
+      const platformHash = file?.platformHashes?.[plat];
+      if (platformHash) {
+        // Check platform-specific perceptual hash
+        if (platformHash.perceptualHash && localSets.perceptualHashes?.size > 0) {
+          if (findPerceptualHashMatch(platformHash.perceptualHash, localSets.perceptualHashes, SYNC_DHASH_THRESHOLD)) {
+            skipped++;
+            skipReasons[`platform_${plat}_phash`] = (skipReasons[`platform_${plat}_phash`] || 0) + 1;
+            if (i < 10) console.log(`[Sync] Skip ${file?.filename}: platformPhash (${plat})`);
+            platformSkipped = true;
+            break;
+          }
+        }
+        // Check platform-specific file hash
+        if (platformHash.fileHash && localSets.fileHashes?.has(platformHash.fileHash)) {
+          skipped++;
+          skipReasons[`platform_${plat}_fhash`] = (skipReasons[`platform_${plat}_fhash`] || 0) + 1;
+          if (i < 10) console.log(`[Sync] Skip ${file?.filename}: platformFileHash (${plat})`);
+          platformSkipped = true;
+          break;
+        }
+      }
+    }
+    if (platformSkipped) continue;
+    
+    if (toDownload.length < 5) console.log(`[Sync] Will download: ${file?.filename} (no local match)`);
+    toDownload.push(file);
   }
 
+  console.log(`[Sync] Comparison done: toDownload=${toDownload.length}, skipped=${skipped}`, skipReasons);
   updateProgress(onProgress, 0.20, true);
-  onStatus(`${toDownload.length} files to sync, ${skipped} already on device`);
+  onStatus(`Sync: ${toDownload.length} files to sync, ${skipped} already on device`);
   await yieldToUi();
 
   if (toDownload.length === 0) {
     onProgress(1);
-    return { restored: 0, skipped, failed: 0, allSynced: true };
+    return { restored: 0, skipped, failed: 0, allSynced: true, serverTotal: serverFiles.length };
   }
 
   // ========== PHASE 4: Download Each File (20-100%) ==========
   let restored = 0;
   let failed = 0;
+  
+  // Collect computed hashes to submit to server for future fast dedup
+  const computedPlatformHashes = [];
 
   const maxParallel = getMaxParallelDownloads(fastMode);
   const runDownload = createConcurrencyLimiter(maxParallel);
@@ -910,10 +1178,19 @@ export const localRemoteRestoreCore = async ({
   const downloadTasks = toDownload.map((file, idx) => runDownload(async () => {
     // Check abort
     if (abortRef?.current) return;
+    
+    // Wait if app is backgrounded (pause instead of failing)
+    if (appStateRef) {
+      while (appStateRef.current !== 'active') {
+        await sleep(1000);
+      }
+    }
 
     try {
       const downloadUrl = `${SERVER_URL}/api/files/${encodeURIComponent(file.filename)}`;
-      const localUri = `${FileSystem.cacheDirectory}${file.filename}`;
+      // Sanitize filename for local storage - replace spaces and special chars
+      const safeFilename = file.filename.replace(/[^a-zA-Z0-9._-]/g, '_');
+      const localUri = `${FileSystem.cacheDirectory}${safeFilename}`;
       
       await FileSystem.deleteAsync(localUri, { idempotent: true });
       
@@ -922,13 +1199,59 @@ export const localRemoteRestoreCore = async ({
       });
 
       if (result.status === 200) {
-        await MediaLibrary.saveToLibraryAsync(localUri);
-        await FileSystem.deleteAsync(localUri, { idempotent: true });
-        restored++;
+        // Check perceptual hash BEFORE saving to detect duplicates (handles iOS renaming)
+        const filePath = localUri.startsWith('file://') ? localUri.slice(7) : localUri;
+        const isVideo = /\.(mov|mp4|m4v|avi|mkv|webm|3gp)$/i.test(file.filename);
         
-        // Add to local set
-        const normalized = normalizeFilenameForCompare(file.filename);
-        if (normalized) localSets.filenames.add(normalized);
+        let isDuplicate = false;
+        let computedHash = null;
+        try {
+          if (isVideo) {
+            computedHash = await computeExactFileHash(filePath);
+            const hasMatch = computedHash && localSets.fileHashes.has(computedHash);
+            if (idx < 10) console.log(`[Sync] Video ${file.filename}: hash=${computedHash?.substring(0,16)}..., localHashes=${localSets.fileHashes.size}, match=${hasMatch}`);
+            if (hasMatch) {
+              isDuplicate = true;
+            }
+          } else {
+            computedHash = await computePerceptualHash(filePath);
+            const hasMatch = computedHash && findPerceptualHashMatch(computedHash, localSets.perceptualHashes, SYNC_DHASH_THRESHOLD);
+            if (idx < 10) console.log(`[Sync] Image ${file.filename}: phash=${computedHash}, localPhashes=${localSets.perceptualHashes.size}, match=${hasMatch}`);
+            if (hasMatch) {
+              isDuplicate = true;
+            }
+          }
+        } catch (hashErr) {
+          // Hash computation failed, proceed with save
+          if (idx < 5) console.log(`[Sync] Hash check failed for ${file.filename}: ${hashErr.message}`);
+        }
+        
+        if (isDuplicate) {
+          await FileSystem.deleteAsync(localUri, { idempotent: true });
+          skipped++;
+          skipReasons.hashMatch = (skipReasons.hashMatch || 0) + 1;
+        } else {
+          await MediaLibrary.saveToLibraryAsync(localUri);
+          await FileSystem.deleteAsync(localUri, { idempotent: true });
+          restored++;
+          
+          // Add computed hash to localSets to prevent duplicate downloads in same session
+          if (computedHash) {
+            if (isVideo) {
+              localSets.fileHashes.add(computedHash);
+              // Collect for server submission
+              computedPlatformHashes.push({ filename: file.filename, fileHash: computedHash });
+            } else {
+              localSets.perceptualHashes.add(computedHash);
+              // Collect for server submission
+              computedPlatformHashes.push({ filename: file.filename, perceptualHash: computedHash });
+            }
+          }
+          
+          // Add filename to local set
+          const normalized = normalizeFilenameForCompare(file.filename);
+          if (normalized) localSets.filenames.add(normalized);
+        }
       } else {
         console.warn(`Download failed for ${file.filename}: HTTP ${result.status}`);
         failed++;
@@ -940,14 +1263,29 @@ export const localRemoteRestoreCore = async ({
       processed++;
       const progress = 0.20 + (processed / toDownload.length) * 0.80;
       updateProgress(onProgress, progress);
-      updateStatus(onStatus, `Syncing ${processed} of ${toDownload.length}...`);
+      updateStatus(onStatus, `Sync: Downloading ${processed} of ${toDownload.length}...`);
     }
   }));
 
   await Promise.all(downloadTasks);
 
+  // Submit computed platform hashes to server for future fast dedup
+  if (computedPlatformHashes.length > 0) {
+    try {
+      const platform = Platform.OS;
+      console.log(`[Sync] Submitting ${computedPlatformHashes.length} platform hashes to server (${platform})`);
+      await axios.post(`${SERVER_URL}/api/files/platform-hashes`, {
+        platform,
+        hashes: computedPlatformHashes
+      }, config);
+    } catch (e) {
+      console.warn('[Sync] Failed to submit platform hashes:', e?.message);
+      // Non-fatal, continue
+    }
+  }
+
   updateProgress(onProgress, 1.0, true);
-  updateStatus(onStatus, `Sync complete: ${restored} restored, ${skipped} skipped, ${failed} failed`, true);
+  updateStatus(onStatus, `Sync: Complete - ${restored} restored, ${skipped} skipped, ${failed} failed`, true);
 
   return { restored, skipped, failed, serverTotal: serverFiles.length };
 };
