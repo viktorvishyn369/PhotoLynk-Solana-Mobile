@@ -124,6 +124,7 @@ export const buildAuthPayload = ({
   effectiveType,
   selectedStealthPlanGb,
   hardwareDeviceId,
+  countryVerificationCode,
 }) => {
   const payload = {
     email: normalizedEmail,
@@ -141,7 +142,32 @@ export const buildAuthPayload = ({
     payload.plan_gb = selectedStealthPlanGb;
   }
 
+  // Country verification code for new country login
+  if (countryVerificationCode) {
+    payload.country_verification_code = countryVerificationCode;
+  }
+
   return payload;
+};
+
+/**
+ * Resend country verification code
+ * @param {Object} params
+ * @param {string} params.email - User email
+ * @param {string} params.countryCode - Country code to verify
+ * @param {string} params.baseUrl - Server base URL
+ * @returns {Promise<{ success: boolean, error?: string }>}
+ */
+export const resendCountryVerificationCode = async ({ email, countryCode, baseUrl }) => {
+  try {
+    await axios.post(`${baseUrl}/api/auth/resend-country-code`, {
+      email,
+      countryCode
+    }, { timeout: 10000 });
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e?.response?.data?.error || 'Failed to resend code' };
+  }
 };
 
 /**
@@ -421,6 +447,29 @@ export const attemptBiometricReauth = async ({ storedEmail, baseUrl, getDeviceUU
     return { success: true, token, userId, savedPassword, deviceId };
   } catch (e) {
     console.log('Biometric re-auth failed:', e?.response?.status || e?.message);
+    
+    // Handle country verification requirement
+    if (e?.response?.status === 403 && e?.response?.data?.requiresCountryVerification) {
+      return { 
+        success: false, 
+        biometricCancelled: false,
+        requiresCountryVerification: true,
+        newCountry: e.response.data.newCountry,
+        newCountryCode: e.response.data.newCountryCode,
+        message: e.response.data.message
+      };
+    }
+    
+    // Handle email verification requirement
+    if (e?.response?.status === 403 && e?.response?.data?.requiresEmailVerification) {
+      return { 
+        success: false, 
+        biometricCancelled: false,
+        requiresEmailVerification: true,
+        message: e.response.data.hint
+      };
+    }
+    
     return { success: false, biometricCancelled: false };
   }
 };
@@ -467,6 +516,78 @@ export const performDevicePasswordReset = async ({ email, newPassword, serverTyp
       success: false, 
       error: error.response?.data?.error || 'Failed to reset password',
       hint 
+    };
+  }
+};
+
+/**
+ * Request email-based password reset code
+ * Works for all server types (local/remote/stealthcloud)
+ * @param {Object} params
+ * @param {string} params.email - User email
+ * @param {string} params.serverType - Server type
+ * @param {string} params.localHost - Local host
+ * @param {string} params.remoteHost - Remote host
+ * @returns {Promise<{ success: boolean, error?: string }>}
+ */
+export const requestPasswordResetCode = async ({ email, serverType, localHost, remoteHost }) => {
+  const normalizedEmail = normalizeEmailForDeviceUuid(email);
+  if (!normalizedEmail) {
+    return { success: false, error: 'Please enter a valid email address' };
+  }
+
+  try {
+    const baseUrl = computeServerUrl(serverType, localHost, remoteHost);
+    await axios.post(`${baseUrl}/api/auth/request-password-reset`, {
+      email: normalizedEmail
+    }, { timeout: 15000 });
+    return { success: true };
+  } catch (error) {
+    return { 
+      success: false, 
+      error: error.response?.data?.error || 'Failed to send reset code'
+    };
+  }
+};
+
+/**
+ * Reset password using email verification code
+ * Works for all server types (local/remote/stealthcloud)
+ * @param {Object} params
+ * @param {string} params.email - User email
+ * @param {string} params.code - Verification code from email
+ * @param {string} params.newPassword - New password
+ * @param {string} params.serverType - Server type
+ * @param {string} params.localHost - Local host
+ * @param {string} params.remoteHost - Remote host
+ * @returns {Promise<{ success: boolean, error?: string }>}
+ */
+export const resetPasswordWithCode = async ({ email, code, newPassword, serverType, localHost, remoteHost }) => {
+  const normalizedEmail = normalizeEmailForDeviceUuid(email);
+  if (!normalizedEmail) {
+    return { success: false, error: 'Please enter a valid email address' };
+  }
+
+  if (!code || code.length !== 6) {
+    return { success: false, error: 'Please enter the 6-digit verification code' };
+  }
+
+  if (newPassword.length < 6) {
+    return { success: false, error: 'Password must be at least 6 characters' };
+  }
+
+  try {
+    const baseUrl = computeServerUrl(serverType, localHost, remoteHost);
+    await axios.post(`${baseUrl}/api/auth/reset-password-with-code`, {
+      email: normalizedEmail,
+      code,
+      newPassword
+    }, { timeout: 15000 });
+    return { success: true };
+  } catch (error) {
+    return { 
+      success: false, 
+      error: error.response?.data?.error || 'Failed to reset password'
     };
   }
 };
@@ -569,6 +690,9 @@ export default {
   getSavedPasswordWithBiometrics,
   attemptBiometricReauth,
   performDevicePasswordReset,
+  requestPasswordResetCode,
+  resetPasswordWithCode,
+  resendCountryVerificationCode,
   logoutCore,
   getDeviceUUID,
 };
