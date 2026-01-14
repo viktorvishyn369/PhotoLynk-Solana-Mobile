@@ -52,6 +52,8 @@ import {
   CROSS_PLATFORM_DHASH_THRESHOLD,
 } from './duplicateScanner';
 
+import { extractFullExif } from './exifExtractor';
+
 // ============================================================================
 // CONSTANTS & CONFIGURATION
 // ============================================================================
@@ -773,6 +775,28 @@ const encryptAndUpload = async ({
       { headers: config.headers, timeout: 30000 }
     );
   }, { retries: 20, baseDelayMs: 2000, maxDelayMs: 30000, shouldRetry: shouldRetryChunkUpload });
+
+  // Store full EXIF to server for universal cross-platform preservation
+  // This runs in parallel with cleanup - non-blocking, fire-and-forget
+  if (fileHash && !manifestResponse?.data?.skipped) {
+    const isImage = asset.mediaType === 'photo' || /\.(jpg|jpeg|png|heic|heif|gif|bmp|webp|tiff?)$/i.test(filename || '');
+    if (isImage) {
+      try {
+        const fullExif = extractFullExif(assetInfo, asset);
+        // Only store if we have meaningful EXIF data
+        if (fullExif.captureTime || fullExif.make || fullExif.gpsLatitude != null) {
+          axios.post(
+            `${SERVER_URL}/api/exif/store`,
+            { fileHash, exif: fullExif, platform: Platform.OS },
+            { headers: config.headers, timeout: 10000 }
+          ).catch(e => console.log('[EXIF] Store failed (non-critical):', e?.message));
+        }
+      } catch (e) {
+        // Non-critical - don't fail upload if EXIF storage fails
+        console.log('[EXIF] Extract failed (non-critical):', e?.message);
+      }
+    }
+  }
 
   // Cleanup temp file
   if (tmpCopied && tmpUri) {

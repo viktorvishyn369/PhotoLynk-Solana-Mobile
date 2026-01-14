@@ -14,6 +14,8 @@ import { buildLocalAssetIdSetPaged, fetchAllServerFilesPaged } from './mediaHelp
 import { PHOTO_ALBUM_NAME, LEGACY_PHOTO_ALBUM_NAME } from './backupManager';
 import { findFirstAlbumByTitle } from './autoUpload';
 import { computePerceptualHash, computeExactFileHash, findPerceptualHashMatch } from './duplicateScanner';
+import { extractFullExif } from './exifExtractor';
+import axios from 'axios';
 
 // dHash threshold for backup dedup (6 bits = ~9% tolerance for cross-platform differences)
 const BACKUP_DHASH_THRESHOLD = 6;
@@ -374,6 +376,24 @@ export const localRemoteBackupCore = async ({
         } else {
           successCount++;
           console.log(`✓ Uploaded: ${actualFilename}`);
+          
+          // Store full EXIF to server for universal cross-platform preservation
+          // Non-blocking, fire-and-forget
+          const isImage = asset.mediaType === 'photo' || /\.(jpg|jpeg|png|heic|heif|gif|bmp|webp|tiff?)$/i.test(actualFilename || '');
+          if (isImage && parsed?.fileHash) {
+            try {
+              const fullExif = extractFullExif(assetInfo, asset);
+              if (fullExif.captureTime || fullExif.make || fullExif.gpsLatitude != null) {
+                axios.post(
+                  `${SERVER_URL}/api/exif/store`,
+                  { fileHash: parsed.fileHash, exif: fullExif, platform: Platform.OS },
+                  { headers: config.headers, timeout: 10000 }
+                ).catch(e => console.log('[EXIF] Store failed (non-critical):', e?.message));
+              }
+            } catch (e) {
+              // Non-critical
+            }
+          }
         }
       } catch (fileError) {
         // If connection failed and app was backgrounded, wait and retry once

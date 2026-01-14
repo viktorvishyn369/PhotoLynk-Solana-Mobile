@@ -940,6 +940,27 @@ export const stealthCloudRestoreCore = async ({
         }
       }
 
+      // Retrieve and apply EXIF if available (for cross-platform preservation)
+      const fileHash = fullManifest.fileHash;
+      if (fileHash && /\.(jpg|jpeg|png|heic|heif|gif|bmp|webp|tiff?)$/i.test(filename || '')) {
+        try {
+          const exifRes = await axios.get(`${SERVER_URL}/api/exif/${fileHash}`, {
+            headers: config.headers,
+            timeout: 10000,
+            validateStatus: (status) => status < 500, // Don't throw on 404
+          });
+          if (exifRes.status === 200 && exifRes.data?.exif) {
+            // TODO: Apply EXIF to file using native module (ExifWriter)
+            // For now, log that EXIF was retrieved for this file
+            console.log(`[EXIF] Retrieved EXIF for ${filename} (hash: ${fileHash.slice(0, 16)}...)`);
+            // Future: await ExifWriter.writeExif(outPath, exifRes.data.exif);
+          }
+        } catch (e) {
+          // Non-critical - don't fail restore if EXIF retrieval fails
+          console.log('[EXIF] Retrieve failed (non-critical):', e?.message);
+        }
+      }
+
       // Save to media library
       await MediaLibrary.saveToLibraryAsync(outUri);
       await FileSystem.deleteAsync(outUri, { idempotent: true });
@@ -1231,6 +1252,25 @@ export const localRemoteRestoreCore = async ({
           skipped++;
           skipReasons.hashMatch = (skipReasons.hashMatch || 0) + 1;
         } else {
+          // Retrieve and apply EXIF if available (for cross-platform preservation)
+          const fileHash = file.fileHash || computedHash;
+          if (fileHash && /\.(jpg|jpeg|png|heic|heif|gif|bmp|webp|tiff?)$/i.test(file.filename || '')) {
+            try {
+              const exifRes = await axios.get(`${SERVER_URL}/api/exif/${fileHash}`, {
+                headers: config.headers,
+                timeout: 10000,
+                validateStatus: (status) => status < 500,
+              });
+              if (exifRes.status === 200 && exifRes.data?.exif) {
+                console.log(`[EXIF] Retrieved EXIF for ${file.filename} (hash: ${fileHash.slice(0, 16)}...)`);
+                // TODO: Apply EXIF to file using native module (ExifWriter)
+                // Future: await ExifWriter.writeExif(filePath, exifRes.data.exif);
+              }
+            } catch (e) {
+              // Non-critical
+            }
+          }
+          
           await MediaLibrary.saveToLibraryAsync(localUri);
           await FileSystem.deleteAsync(localUri, { idempotent: true });
           restored++;
