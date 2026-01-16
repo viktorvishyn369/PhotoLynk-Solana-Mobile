@@ -132,15 +132,17 @@ export const LanguageButton = ({ onPress }) => {
 const styles = StyleSheet.create({
   modalContainer: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    backgroundColor: 'rgba(0, 0, 0, 0.85)',
     justifyContent: 'flex-end',
   },
   modalContent: {
-    backgroundColor: '#1a1a2e',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
+    backgroundColor: '#0A0A0A',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
     maxHeight: '80%',
     paddingBottom: 20,
+    borderTopWidth: 1,
+    borderTopColor: '#1A1A1A',
   },
   header: {
     flexDirection: 'row',
@@ -148,7 +150,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: 16,
     borderBottomWidth: 1,
-    borderBottomColor: '#333',
+    borderBottomColor: '#1A1A1A',
   },
   title: {
     fontSize: 18,
@@ -164,15 +166,15 @@ const styles = StyleSheet.create({
     color: '#888',
   },
   englishButton: {
-    backgroundColor: '#2563eb',
+    backgroundColor: '#00D4FF',
     marginHorizontal: 16,
     marginTop: 12,
-    padding: 12,
-    borderRadius: 8,
+    padding: 14,
+    borderRadius: 12,
     alignItems: 'center',
   },
   englishButtonText: {
-    color: '#fff',
+    color: '#000',
     fontSize: 16,
     fontWeight: '600',
   },
@@ -184,14 +186,14 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     padding: 14,
-    borderRadius: 10,
+    borderRadius: 12,
     marginVertical: 4,
-    backgroundColor: '#252540',
+    backgroundColor: '#1A1A1A',
   },
   selectedItem: {
-    backgroundColor: '#3b3b5c',
+    backgroundColor: '#1A1A1A',
     borderWidth: 1,
-    borderColor: '#6366f1',
+    borderColor: '#00D4FF',
   },
   flag: {
     fontSize: 24,
@@ -211,20 +213,20 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   selectedText: {
-    color: '#6366f1',
+    color: '#00D4FF',
   },
   checkmark: {
     fontSize: 18,
-    color: '#6366f1',
+    color: '#00D4FF',
     fontWeight: 'bold',
   },
   // Language button styles
   languageButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#252540',
+    backgroundColor: '#1A1A1A',
     padding: 14,
-    borderRadius: 10,
+    borderRadius: 12,
   },
   languageButtonFlag: {
     fontSize: 22,

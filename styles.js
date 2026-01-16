@@ -26,7 +26,7 @@ export const THEME = {
   card: '#1E1E1E',
   text: '#FFFFFF',
   textSec: '#AAAAAA',
-  primary: '#DC1FFF',    // Solana vibrant purple
+  primary: '#3B82F6',    // Ocean blue
   secondary: '#00FFA3',  // Solana bright mint/green
   accent: '#03E1FF',     // Solana ocean blue/cyan
   error: '#CF6679'

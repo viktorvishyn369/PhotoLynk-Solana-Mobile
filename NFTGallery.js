@@ -22,6 +22,7 @@ import {
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import NFTOperations from './nftOperations';
+import { t } from './i18n';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -48,12 +49,12 @@ const COLORS = {
 // NFT GALLERY COMPONENT
 // ============================================================================
 
-// Sort options
+// Sort options - labels will be translated at render time
 const SORT_OPTIONS = [
-  { key: 'date_desc', label: 'Newest First', icon: 'arrow-down' },
-  { key: 'date_asc', label: 'Oldest First', icon: 'arrow-up' },
-  { key: 'name_asc', label: 'Name A-Z', icon: 'type' },
-  { key: 'name_desc', label: 'Name Z-A', icon: 'type' },
+  { key: 'date_desc', labelKey: 'nftAlbum.newestFirst', icon: 'arrow-down' },
+  { key: 'date_asc', labelKey: 'nftAlbum.oldestFirst', icon: 'arrow-up' },
+  { key: 'name_asc', labelKey: 'nftAlbum.nameAZ', icon: 'type' },
+  { key: 'name_desc', labelKey: 'nftAlbum.nameZA', icon: 'type' },
 ];
 
 const ITEMS_PER_PAGE = 6;
@@ -79,6 +80,16 @@ const NFTGallery = ({
   const [showSortMenu, setShowSortMenu] = useState(false);
   const [displayCount, setDisplayCount] = useState(ITEMS_PER_PAGE);
   const [showOnlyPhotoLynk, setShowOnlyPhotoLynk] = useState(true); // Default: show only PhotoLynk NFTs
+  
+  // Custom dark alert state
+  const [darkAlert, setDarkAlert] = useState(null);
+  
+  // Show dark themed alert
+  const showDarkAlert = (title, message, buttons = [{ text: t('common.ok'), onPress: () => setDarkAlert(null) }]) => {
+    setDarkAlert({ title, message, buttons });
+  };
+  
+  const closeDarkAlert = () => setDarkAlert(null);
   
   // Load NFTs on mount - sync from server first
   useEffect(() => {
@@ -122,7 +133,7 @@ const NFTGallery = ({
   // Backup NFTs to server
   const backupToServer = async () => {
     if (!serverUrl || !getAuthHeaders) {
-      Alert.alert('Not Connected', 'Connect to your StealthCloud server to backup NFTs.');
+      showDarkAlert(t('nftAlbum.notConnected'), t('nftAlbum.connectToBackup'));
       return;
     }
     
@@ -132,12 +143,12 @@ const NFTGallery = ({
       const headers = authConfig?.headers || authConfig;
       const result = await NFTOperations.backupNFTsToServer(serverUrl, headers);
       if (result.success) {
-        Alert.alert('Backup Complete', `${result.backed} NFTs backed up to server.`);
+        showDarkAlert(t('nftAlbum.backupComplete'), t('nftAlbum.nftsBackedUp', { count: result.backed }));
       } else {
-        Alert.alert('Backup Failed', result.error || 'Unknown error');
+        showDarkAlert(t('nftAlbum.backupFailed'), result.error || t('nftAlbum.unknownError'));
       }
     } catch (e) {
-      Alert.alert('Backup Failed', e.message);
+      showDarkAlert(t('nftAlbum.backupFailed'), e.message);
     } finally {
       setSyncing(false);
     }
@@ -171,7 +182,7 @@ const NFTGallery = ({
       });
       
       if (!walletAddress) {
-        Alert.alert('Error', 'Could not get wallet address');
+        showDarkAlert(t('common.error'), t('nftAlbum.couldNotGetWallet'));
         return;
       }
       
@@ -193,19 +204,19 @@ const NFTGallery = ({
       
       if (result.success) {
         if (result.imported > 0) {
-          Alert.alert('NFTs Found!', `Imported ${result.imported} NFTs from your wallet.`);
+          showDarkAlert(t('nftAlbum.nftsFound'), t('nftAlbum.importedNfts', { count: result.imported }));
           await loadNFTs(false); // Reload without server sync
         } else if (result.total > 0) {
-          Alert.alert('Already Synced', `Found ${result.total} NFTs, all already in your album.`);
+          showDarkAlert(t('nftAlbum.alreadySynced'), t('nftAlbum.allAlreadyInAlbum', { count: result.total }));
         } else {
-          Alert.alert('No NFTs Found', 'No NFTs found in your wallet.');
+          showDarkAlert(t('nftAlbum.noNftsFound'), t('nftAlbum.noNftsInWallet'));
         }
       } else {
-        Alert.alert('Scan Failed', result.error || 'Could not scan wallet for NFTs');
+        showDarkAlert(t('nftAlbum.scanFailed'), result.error || t('nftAlbum.couldNotScan'));
       }
     } catch (e) {
       console.error('[NFTGallery] Scan failed:', e);
-      Alert.alert('Scan Failed', e.message);
+      showDarkAlert(t('nftAlbum.scanFailed'), e.message);
     } finally {
       setSyncing(false);
     }
@@ -276,15 +287,15 @@ const NFTGallery = ({
   
   // Clear all NFTs (for testing)
   const clearAllNFTs = async () => {
-    Alert.alert(
-      'Clear All NFTs',
-      'This will remove all NFTs from local storage. This is for testing only and does not affect the blockchain.',
+    showDarkAlert(
+      t('nftAlbum.clearAllNfts'),
+      t('nftAlbum.clearAllNftsMessage'),
       [
-        { text: 'Cancel', style: 'cancel' },
+        { text: t('common.cancel'), onPress: () => setDarkAlert(null) },
         { 
-          text: 'Clear', 
-          style: 'destructive',
+          text: t('nftAlbum.clear'), 
           onPress: async () => {
+            setDarkAlert(null);
             await NFTOperations.clearAllStoredNFTs();
             setNfts([]);
             setSelectedNFT(null);
@@ -312,7 +323,7 @@ const NFTGallery = ({
   // Open external link
   const openLink = (url) => {
     Linking.openURL(url).catch(e => {
-      Alert.alert('Error', 'Could not open link');
+      showDarkAlert(t('common.error'), t('nftAlbum.couldNotOpenLink'));
     });
   };
   
@@ -407,7 +418,7 @@ const NFTGallery = ({
             
             {/* Owner info */}
             <View style={styles.ownerSection}>
-              <Text style={styles.sectionLabel}>NFT Owner</Text>
+              <Text style={styles.sectionLabel}>{t('nftAlbum.nftOwner')}</Text>
               <Text style={styles.ownerAddress} numberOfLines={1}>
                 {selectedNFT.ownerAddress}
               </Text>
@@ -416,7 +427,7 @@ const NFTGallery = ({
             {/* Description */}
             {selectedNFT.description && (
               <View style={styles.descriptionSection}>
-                <Text style={styles.sectionLabel}>Description</Text>
+                <Text style={styles.sectionLabel}>{t('nftAlbum.description')}</Text>
                 <Text style={styles.descriptionText}>{selectedNFT.description}</Text>
               </View>
             )}
@@ -424,7 +435,7 @@ const NFTGallery = ({
             {/* EXIF Data */}
             {selectedNFT.exifData && (
               <View style={styles.exifSection}>
-                <Text style={styles.sectionLabel}>Photo Details</Text>
+                <Text style={styles.sectionLabel}>{t('nftAlbum.photoDetails')}</Text>
                 <View style={styles.exifGrid}>
                   {selectedNFT.exifData.dateTaken && (
                     <View style={styles.exifItem}>
@@ -454,7 +465,7 @@ const NFTGallery = ({
             
             {/* Blockchain verification */}
             <View style={styles.verifySection}>
-              <Text style={styles.sectionLabel}>Blockchain Verification</Text>
+              <Text style={styles.sectionLabel}>{t('nftAlbum.blockchainVerification')}</Text>
               
               {verifying ? (
                 <ActivityIndicator size="small" color={COLORS.primary} />
@@ -472,7 +483,7 @@ const NFTGallery = ({
                     styles.verifyText,
                     { color: verificationResult.verified ? COLORS.accent : COLORS.error }
                   ]}>
-                    {verificationResult.verified ? 'Verified on Solana' : 'Not found on chain'}
+                    {verificationResult.verified ? t('nftAlbum.verifiedOnSolana') : t('nftAlbum.notFoundOnChain')}
                   </Text>
                 </View>
               ) : (
@@ -481,7 +492,7 @@ const NFTGallery = ({
                   onPress={() => verifyOnChain(selectedNFT)}
                 >
                   <Feather name="shield" size={16} color={COLORS.primary} />
-                  <Text style={styles.verifyButtonText}>Verify on Chain</Text>
+                  <Text style={styles.verifyButtonText}>{t('nftAlbum.verifyOnChain')}</Text>
                 </TouchableOpacity>
               )}
             </View>
@@ -493,7 +504,7 @@ const NFTGallery = ({
                 onPress={() => openLink(NFTOperations.getExplorerUrl(selectedNFT.txSignature))}
               >
                 <Feather name="external-link" size={16} color={COLORS.text} />
-                <Text style={styles.actionButtonText}>Explorer</Text>
+                <Text style={styles.actionButtonText}>{t('nftAlbum.explorer')}</Text>
               </TouchableOpacity>
               
               <TouchableOpacity
@@ -501,7 +512,7 @@ const NFTGallery = ({
                 onPress={() => openLink(NFTOperations.getSolscanUrl(selectedNFT.mintAddress))}
               >
                 <Feather name="search" size={16} color={COLORS.text} />
-                <Text style={styles.actionButtonText}>Solscan</Text>
+                <Text style={styles.actionButtonText}>{t('nftAlbum.solscan')}</Text>
               </TouchableOpacity>
               
               <TouchableOpacity
@@ -509,7 +520,7 @@ const NFTGallery = ({
                 onPress={() => openLink(selectedNFT.arweaveUrl || selectedNFT.imageUrl)}
               >
                 <Feather name="image" size={16} color={COLORS.text} />
-                <Text style={styles.actionButtonText}>IPFS</Text>
+                <Text style={styles.actionButtonText}>{t('nftAlbum.ipfs')}</Text>
               </TouchableOpacity>
             </View>
             
@@ -519,7 +530,7 @@ const NFTGallery = ({
               onPress={() => handleTransfer(selectedNFT)}
             >
               <Feather name="send" size={18} color="#fff" />
-              <Text style={styles.transferButtonText}>Transfer NFT</Text>
+              <Text style={styles.transferButtonText}>{t('nftAlbum.transferNft')}</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -543,8 +554,8 @@ const NFTGallery = ({
             <Feather name="x" size={24} color={COLORS.text} />
           </TouchableOpacity>
           <View style={styles.headerCenter}>
-            <Text style={styles.headerTitle}>My Album</Text>
-            <Text style={styles.headerSubtitle}>{nfts.length} Memories</Text>
+            <Text style={styles.headerTitle}>{t('nftAlbum.myAlbum')}</Text>
+            <Text style={styles.headerSubtitle}>{nfts.length} {t('nftAlbum.memories')}</Text>
           </View>
           <TouchableOpacity onPress={clearAllNFTs} style={styles.headerRight}>
             {nfts.length > 0 && (
@@ -571,7 +582,7 @@ const NFTGallery = ({
             >
               <Feather name="grid" size={14} color={!showOnlyPhotoLynk ? '#fff' : COLORS.textSecondary} />
               <Text style={[styles.filterToggleText, !showOnlyPhotoLynk && styles.filterToggleTextActive]}>
-                All NFTs
+                {t('nftAlbum.allNfts')}
               </Text>
             </TouchableOpacity>
           </View>
@@ -584,7 +595,7 @@ const NFTGallery = ({
               <Feather name="search" size={18} color={COLORS.textSecondary} />
               <TextInput
                 style={styles.searchInput}
-                placeholder="Search memories..."
+                placeholder={t('nftAlbum.searchMemories')}
                 placeholderTextColor={COLORS.textSecondary}
                 value={searchQuery}
                 onChangeText={setSearchQuery}
@@ -629,7 +640,7 @@ const NFTGallery = ({
                   styles.sortOptionText,
                   sortBy === option.key && styles.sortOptionTextActive
                 ]}>
-                  {option.label}
+                  {t(option.labelKey)}
                 </Text>
                 {sortBy === option.key && (
                   <Feather name="check" size={16} color={COLORS.primary} />
@@ -643,16 +654,16 @@ const NFTGallery = ({
         {loading ? (
           <View style={styles.loadingContainer}>
             <ActivityIndicator size="large" color={COLORS.primary} />
-            <Text style={styles.loadingText}>Loading NFTs...</Text>
+            <Text style={styles.loadingText}>{t('nftAlbum.loadingNfts')}</Text>
           </View>
         ) : nfts.length === 0 ? (
           <View style={styles.emptyContainer}>
             <View style={styles.emptyIcon}>
               <Feather name="image" size={48} color={COLORS.textSecondary} />
             </View>
-            <Text style={styles.emptyTitle}>No NFTs Yet</Text>
+            <Text style={styles.emptyTitle}>{t('nftAlbum.noNftsYet')}</Text>
             <Text style={styles.emptyText}>
-              Mint your first photo NFT to see it here
+              {t('nftAlbum.mintFirstNft')}
             </Text>
             <TouchableOpacity 
               style={styles.syncButton}
@@ -664,7 +675,7 @@ const NFTGallery = ({
               ) : (
                 <>
                   <Feather name="search" size={18} color={COLORS.primary} />
-                  <Text style={styles.syncButtonText}>Scan Wallet for NFTs</Text>
+                  <Text style={styles.syncButtonText}>{t('nftAlbum.scanWallet')}</Text>
                 </>
               )}
             </TouchableOpacity>
@@ -722,6 +733,29 @@ const NFTGallery = ({
         
         {/* Detail modal */}
         {renderDetailModal()}
+        
+        {/* Dark Alert Modal */}
+        {darkAlert && (
+          <View style={styles.darkAlertOverlay}>
+            <View style={styles.darkAlertCard}>
+              <Text style={styles.darkAlertTitle}>{darkAlert.title}</Text>
+              <Text style={styles.darkAlertMessage}>{darkAlert.message}</Text>
+              <View style={styles.darkAlertButtons}>
+                {darkAlert.buttons.map((btn, idx) => (
+                  <TouchableOpacity
+                    key={idx}
+                    style={[styles.darkAlertButton, idx === darkAlert.buttons.length - 1 && styles.darkAlertButtonPrimary]}
+                    onPress={btn.onPress}
+                  >
+                    <Text style={[styles.darkAlertButtonText, idx === darkAlert.buttons.length - 1 && styles.darkAlertButtonTextPrimary]}>
+                      {btn.text}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+          </View>
+        )}
       </View>
     </Modal>
   );
@@ -750,9 +784,11 @@ const styles = StyleSheet.create({
     padding: 8,
   },
   headerTitle: {
+    flex: 1,
     fontSize: 18,
     fontWeight: '600',
     color: COLORS.text,
+    marginHorizontal: 8,
   },
   headerRight: {
     flexDirection: 'row',
@@ -1242,6 +1278,65 @@ const styles = StyleSheet.create({
   transferButtonText: {
     fontSize: 16,
     fontWeight: '600',
+    color: '#fff',
+  },
+  // Dark Alert styles
+  darkAlertOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.85)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  darkAlertCard: {
+    backgroundColor: '#1a1a1a',
+    borderRadius: 16,
+    padding: 24,
+    width: '100%',
+    maxWidth: 340,
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+  darkAlertTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#fff',
+    textAlign: 'center',
+    marginBottom: 12,
+  },
+  darkAlertMessage: {
+    fontSize: 14,
+    color: '#a1a1aa',
+    textAlign: 'center',
+    marginBottom: 24,
+    lineHeight: 20,
+  },
+  darkAlertButtons: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 12,
+  },
+  darkAlertButton: {
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    borderRadius: 8,
+    backgroundColor: '#2a2a2a',
+    minWidth: 100,
+  },
+  darkAlertButtonPrimary: {
+    backgroundColor: COLORS.primary,
+  },
+  darkAlertButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#a1a1aa',
+    textAlign: 'center',
+  },
+  darkAlertButtonTextPrimary: {
     color: '#fff',
   },
 });

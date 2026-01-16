@@ -162,6 +162,8 @@ import NFTOperations, { checkStealthCloudEligibility } from './nftOperations';
 import NFTPhotoPicker from './NFTPhotoPicker';
 import NFTGallery from './NFTGallery';
 import NFTTransferModal from './NFTTransferModal';
+import { initializeLanguage, t, getCurrentLanguage, setLanguage, SUPPORTED_LANGUAGES } from './i18n';
+import LanguageSelector, { LanguageButton } from './LanguageSelector';
 
 // Constants moved from inline definitions
 const APP_DISPLAY_NAME = 'PhotoLynk';
@@ -194,7 +196,7 @@ const scheduleAuthProgressLabels = (loginLabelTimerRef, setAuthLoadingLabel) => 
   // Removed - status messages now sync with actual operations
 };
 
-const resetAuthLoadingLabel = (loginStatusTimerRef, loginLabelTimerRef, setAuthLoadingLabel, label = 'Signing in...') => {
+const resetAuthLoadingLabel = (loginStatusTimerRef, loginLabelTimerRef, setAuthLoadingLabel, label) => {
   if (loginStatusTimerRef?.current) {
     clearTimeout(loginStatusTimerRef.current);
     loginStatusTimerRef.current = null;
@@ -248,7 +250,7 @@ export default function App() {
   const SYNC_PICKER_PAGE_SIZE = 18; // Items per page (18 for thumbnails)
   const [cleanupModeOpen, setCleanupModeOpen] = useState(false);
   const [quickSetupOpen, setQuickSetupOpen] = useState(false);
-  const [authLoadingLabel, setAuthLoadingLabel] = useState('Signing in...');
+  const [authLoadingLabel, setAuthLoadingLabel] = useState(t('auth.signingIn'));
   const loginStatusTimerRef = useRef(null);
   const loginLabelTimerRef = useRef(null);
   const [qrScannerOpen, setQrScannerOpen] = useState(false);
@@ -285,6 +287,8 @@ export default function App() {
   const [backgroundWarnEligible, setBackgroundWarnEligible] = useState(false);
   const [quickSetupCollapsed, setQuickSetupCollapsed] = useState(true);
   const [quickSetupHighlightInput, setQuickSetupHighlightInput] = useState(false);
+  const [currentLanguage, setCurrentLanguage] = useState('en');
+  const [languageSelectorOpen, setLanguageSelectorOpen] = useState(false);
   
   // NFT state
   const [nftPickerOpen, setNftPickerOpen] = useState(false);
@@ -383,18 +387,18 @@ export default function App() {
         await SecureStore.setItemAsync('server_type', 'local');
 
         showDarkAlert(
-          'Connected!',
-          'Server IP set to ' + serverIp + ':' + parsed.port + (parsed.name ? '\n\nServer: ' + parsed.name : '')
+          t('login.connected'),
+          t('login.serverIpSetTo', { ip: serverIp + ':' + parsed.port }) + (parsed.name ? '\n\n' + t('login.serverName', { name: parsed.name }) : '')
         );
       } else if (parsed.type === 'photolynk-decrypt' && parsed.sessionId && parsed.server) {
         // Web portal decryption request - connect via WebSocket
         setQrScannerOpen(false);
         await handleWebPortalDecryption(parsed.sessionId, parsed.server);
       } else {
-        showDarkAlert('Invalid QR Code', 'This QR code is not from PhotoLynk Server.');
+        showDarkAlert(t('alerts.invalidQrCode'), t('alerts.invalidQrCodeNotPhotolynk'));
       }
     } catch (e) {
-      showDarkAlert('Invalid QR Code', 'Could not parse QR code data.');
+      showDarkAlert(t('alerts.invalidQrCode'), t('alerts.invalidQrCodeParse'));
     }
   };
 
@@ -407,7 +411,7 @@ export default function App() {
       const deviceUuid = await SecureStore.getItemAsync('device_uuid');
       
       if (!encryptionKey || !token || !deviceUuid) {
-        showDarkAlert('Not Logged In', 'Please log in first to enable web portal decryption.');
+        showDarkAlert(t('alerts.notLoggedIn'), t('alerts.notLoggedInMessage'));
         return;
       }
 
@@ -424,12 +428,12 @@ export default function App() {
           deviceUuid: deviceUuid,
           encryptionKey: encryptionKey
         }));
-        showDarkAlert('Connected!', 'Your phone is now connected to the web portal.\n\nYou can view your decrypted files in the browser.');
+        showDarkAlert(t('login.connected'), t('login.webPortalConnected'));
       };
 
       ws.onerror = (error) => {
         console.error('WebSocket error:', error);
-        showDarkAlert('Connection Failed', 'Could not connect to web portal. Please try again.');
+        showDarkAlert(t('alerts.connectionFailed'), t('alerts.webPortalFailed'));
       };
 
       ws.onmessage = (event) => {
@@ -455,7 +459,7 @@ export default function App() {
 
     } catch (error) {
       console.error('Web portal decryption error:', error);
-      showDarkAlert('Error', 'Failed to connect to web portal.');
+      showDarkAlert(t('alerts.error'), t('alerts.failedToConnectWebPortal'));
     }
   };
 
@@ -535,22 +539,22 @@ export default function App() {
         const s = stats.skipped || 0;
         const total = u + s;
         if (u > 0) {
-          msg = `${u} of ${total} uploaded`;
+          msg = t('results.xOfYUploaded', { uploaded: u, total });
         } else {
-          msg = `${s} files on server`;
+          msg = t('results.filesOnServer', { count: s });
         }
       } else if (type === 'sync') {
         const d = stats.downloaded || 0;
         const s = stats.skipped || 0;
         const total = d + s;
         if (d > 0) {
-          msg = `${d} of ${total} downloaded`;
+          msg = t('results.xOfYDownloaded', { downloaded: d, total });
         } else {
-          msg = `${s} files on device`;
+          msg = t('results.filesOnDevice', { count: s });
         }
       } else if (type === 'cleanup' || type === 'clean') {
         const del = stats.deleted || 0;
-        msg = del > 0 ? `${del} files deleted` : '0 duplicates found';
+        msg = del > 0 ? t('results.filesDeleted', { count: del }) : t('results.noDuplicatesFound');
       }
       showCompletionTickBriefly(msg);
     }
@@ -631,7 +635,7 @@ export default function App() {
   const handlePurchase = async (tierGb) => {
     try {
       setPurchaseLoading(true);
-      setStatus('Processing purchase...');
+      setStatus(t('status.processingPurchase'));
 
       // Get auth token for server authentication
       let authToken = token;
@@ -641,51 +645,55 @@ export default function App() {
         } catch (e) {}
       }
       if (!authToken) {
-        showDarkAlert('Error', 'Not logged in. Please logout and login again.');
+        showDarkAlert(t('alerts.error'), t('alerts.notLoggedInMessage'));
         setPurchaseLoading(false);
-        setStatus('Idle');
+        setStatus(t('status.idle'));
         return;
       }
 
       const result = await purchaseWithSol(tierGb, authToken);
 
       if (result.success) {
-        showDarkAlert('Success!', `Your ${tierGb === 1000 ? '1 TB' : tierGb + ' GB'} plan is now active.`);
+        showDarkAlert(t('alerts.success'), t('alerts.planActive', { plan: tierGb === 1000 ? '1 TB' : tierGb + ' GB' }));
         await refreshSubscriptionStatus();
         await refreshStealthUsage();
         setSelectedStealthPlanGb(tierGb);
       } else if (result.userCancelled) {
         // User cancelled - no message needed
       } else {
-        showDarkAlert('Purchase Failed', result.error || 'Unable to complete purchase. Please try again.');
+        // Use translated error message based on errorKey
+        const errorMessage = result.errorKey 
+          ? t(`alerts.${result.errorKey}`) 
+          : (result.error || t('alerts.purchaseFailedMessage'));
+        showDarkAlert(t('alerts.purchaseFailed'), errorMessage);
       }
     } catch (e) {
-      showDarkAlert('Purchase Error', e.message || 'An error occurred during purchase.');
+      showDarkAlert(t('alerts.purchaseError'), e.message || t('alerts.purchaseErrorMessage'));
     } finally {
       setPurchaseLoading(false);
-      setStatus('Idle');
+      setStatus(t('status.idle'));
     }
   };
 
   const handleRestorePurchases = async () => {
     try {
       setPurchaseLoading(true);
-      setStatus('Checking subscription...');
+      setStatus(t('status.checkingSubscription'));
 
       // For Solana payments, just refresh from server - it tracks all payments
       const status = await refreshSubscriptionStatus();
       await refreshStealthUsage();
 
       if (status && status.isActive) {
-        showDarkAlert('Subscription Active', 'Your subscription is active.');
+        showDarkAlert(t('alerts.success'), t('alerts.subscriptionRestored'));
       } else {
-        showDarkAlert('No Active Subscription', 'No active subscription found. Purchase a plan with SOL to get started.');
+        showDarkAlert(t('alerts.noSubscriptionFound'), t('alerts.noSubscriptionFoundMessage'));
       }
     } catch (e) {
-      showDarkAlert('Error', e.message || 'An error occurred while checking subscription.');
+      showDarkAlert(t('alerts.error'), e.message || t('alerts.restoreErrorMessage'));
     } finally {
       setPurchaseLoading(false);
-      setStatus('Idle');
+      setStatus(t('status.idle'));
     }
   };
 
@@ -703,7 +711,7 @@ export default function App() {
     const el = await getAutoUploadEligibility();
     if (el.ok) {
       const st = (appStateRef.current || 'active').toString();
-      if (st === 'active') setStatus('Auto-Backup: Resumed');
+      if (st === 'active') setStatus(t('status.autoBackupResumed'));
       return true;
     }
     setStatus(el.reason || 'Auto-Backup: Waiting');
@@ -812,7 +820,7 @@ export default function App() {
       const photoAccess = await checkPhotoAccessForAutoUpload();
       if (!photoAccess.granted) {
         if (canLog) { autoUploadDebugLastLogMsRef.current = now; console.log('AutoUpload: not starting (photos permission denied)'); }
-        setStatus('Auto-Backup: Allow Photos access');
+        setStatus(t('status.autoBackupAllowPhotos'));
         autoUploadNightRunnerStartingRef.current = false;
         return;
       }
@@ -822,10 +830,10 @@ export default function App() {
           console.log('AutoUpload: not starting (photos access limited)');
         }
         if (Platform.OS === 'ios') {
-          setStatus('Auto-Backup: Enable "All Photos" access in Settings → Photos → PhotoLynk');
+          setStatus(t('status.autoBackupEnableAllPhotos'));
           showDarkAlert(
-            'Allow All Photos',
-            'Auto Upload needs access to all photos. Go to iOS Settings → PhotoLynk → Photos → All Photos.'
+            t('alerts.allowAllPhotos'),
+            t('alerts.allowAllPhotosMessage')
           );
         }
         autoUploadNightRunnerStartingRef.current = false;
@@ -859,7 +867,7 @@ export default function App() {
     autoUploadNightRunnerSessionIdRef.current += 1;
     const sessionId = autoUploadNightRunnerSessionIdRef.current;
     console.log('AutoUpload: starting night runner session', sessionId);
-    setStatus('Auto-Backup: Resumed');
+    setStatus(t('status.autoBackupResumed'));
 
     autoUploadNightRunnerActiveRef.current = true;
     autoUploadNightRunnerCancelRef.current = false;
@@ -975,7 +983,7 @@ export default function App() {
         const alreadyExifTimeModel = new Set(); // captureTime|model
         const alreadyExifTimeMake = new Set(); // captureTime|make
         if (existingManifests.length > 0) {
-          setStatus('Auto-Backup: Preparing...');
+          setStatus(t('status.autoBackupPreparing'));
           const masterKey = await getStealthCloudMasterKey();
           for (const m of existingManifests) {
             try {
@@ -1145,7 +1153,7 @@ export default function App() {
                 if (!page || page.hasNextPage !== true) {
                   console.log('AutoUpload: reached end of assets, clearing cursor and setting completion');
                   await SecureStore.deleteItemAsync(AUTO_UPLOAD_CURSOR_KEY);
-                  setStatus('Auto-Backup: Complete');
+                  setStatus(t('status.autoBackupComplete'));
                   console.log('AutoUpload: full backup cycle complete, all photos backed up');
                   backupCompleted = true;
                 }
@@ -1161,10 +1169,10 @@ export default function App() {
             // Update status with current progress or completion
             console.log('AutoUpload: initial status - backupCompleted:', backupCompleted, 'cumulativeUploaded:', cumulativeUploaded, 'totalEstimatedCount:', totalEstimatedCount);
             if (backupCompleted || cumulativeUploaded === totalEstimatedCount) {
-              setStatus('Auto-Backup: Complete');
+              setStatus(t('status.autoBackupComplete'));
               console.log('AutoUpload: showing completion message');
             } else {
-              setStatus(`Auto-Backup: ${cumulativeUploaded} of ${totalEstimatedCount}`);
+              setStatus(t('status.autoBackupProgress', { current: cumulativeUploaded, total: totalEstimatedCount }));
               console.log('AutoUpload: showing progress message');
             }
           }
@@ -1213,7 +1221,7 @@ export default function App() {
               onStatus: (phase) => {
                 if (totalEstimatedCount !== null && !autoUploadNightRunnerCancelRef.current && autoUploadEnabledRef.current) {
                   if (phase === 'encrypting' || phase === 'uploading') {
-                    setStatus(`Auto-Backup: ${cumulativeUploaded + 1} of ${totalEstimatedCount}`);
+                    setStatus(t('status.autoBackupProgress', { current: cumulativeUploaded + 1, total: totalEstimatedCount }));
                   }
                 }
               }
@@ -1224,7 +1232,7 @@ export default function App() {
               if (r.manifestId) already.add(r.manifestId);
               // Update status with current progress (only if not cancelled)
               if (totalEstimatedCount !== null && !autoUploadNightRunnerCancelRef.current && autoUploadEnabledRef.current) {
-                setStatus(`Auto-Backup: ${cumulativeUploaded} of ${totalEstimatedCount}`);
+                setStatus(t('status.autoBackupProgress', { current: cumulativeUploaded, total: totalEstimatedCount }));
               }
               console.log('AutoUpload: successfully uploaded asset:', asset.id, 'cumulative:', cumulativeUploaded);
             } else if (r && r.skipped) {
@@ -1242,7 +1250,7 @@ export default function App() {
             const batchLimit = getThrottleBatchLimit();
             const batchCooldown = getThrottleBatchCooldownMs();
             if (batchCooldown > 0 && uploaded > 0 && uploaded % batchLimit === 0) {
-              setStatus('Auto-Backup: Pausing...');
+              setStatus(t('status.autoBackupPausing'));
               await sleep(batchCooldown);
             }
           }
@@ -1260,7 +1268,7 @@ export default function App() {
             // If we completed a full cycle and uploaded nothing, all photos are backed up
             if (uploaded === 0 && totalEstimatedCount !== null) {
               backupCompleted = true;
-              setStatus('Auto-Backup: Complete');
+              setStatus(t('status.autoBackupComplete'));
               console.log('AutoUpload: full backup cycle complete, all photos backed up');
             }
           }
@@ -1297,7 +1305,7 @@ export default function App() {
       console.log('AutoUpload: exiting night runner session', sessionId);
       // Only set paused status if not completed and not disabled by user
       if (!backupCompleted && autoUploadEnabledRef.current) {
-        setStatus('Auto-Backup: Paused');
+        setStatus(t('status.autoBackupPaused'));
       }
 
       // Stop Android foreground service
@@ -1338,31 +1346,51 @@ export default function App() {
     const status = st && st.status ? String(st.status) : 'none';
     if (status === 'active' || status === 'trial') return true;
 
+    const purchasedVia = st && st.purchased_via ? st.purchased_via : null;
+    const isOtherPlatform = purchasedVia && purchasedVia !== 'solana';
+    const platformName = purchasedVia === 'apple' ? 'App Store' : purchasedVia === 'google' ? 'Google Play' : null;
+
     if (status === 'grace') {
-      showDarkAlert(
-        'Subscription Expired',
-        `Backups are disabled. You have ${GRACE_PERIOD_DAYS} days to sync your data before access is locked. Renew now to continue backups.`,
-        [
-          { text: 'Sync Now', onPress: () => openSyncModeChooser() },
-          { text: 'Later' }
-        ]
-      );
+      if (isOtherPlatform && platformName) {
+        showDarkAlert(
+          t('alerts.subscriptionExpired'),
+          t('alerts.managedByOtherPlatform', { platform: platformName }),
+          [{ text: t('alerts.ok') }]
+        );
+      } else {
+        showDarkAlert(
+          t('alerts.subscriptionExpired'),
+          t('alerts.graceMessage', { days: GRACE_PERIOD_DAYS }),
+          [
+            { text: t('alerts.syncNow'), onPress: () => openSyncModeChooser() },
+            { text: t('alerts.later') }
+          ]
+        );
+      }
       return false;
     }
 
     if (status === 'grace_expired' || status === 'trial_expired') {
-      showDarkAlert(
-        'Access Locked',
-        'Your subscription has expired. Renew to restore access to your encrypted backups.',
-        [
-          { text: 'View Plans', onPress: () => setView('info') },
-          { text: 'OK' }
-        ]
-      );
+      if (isOtherPlatform && platformName) {
+        showDarkAlert(
+          t('alerts.accessLocked'),
+          t('alerts.managedByOtherPlatform', { platform: platformName }),
+          [{ text: t('alerts.ok') }]
+        );
+      } else {
+        showDarkAlert(
+          t('alerts.accessLocked'),
+          t('alerts.accessLockedMessage'),
+          [
+            { text: t('alerts.viewPlans'), onPress: () => setView('info') },
+            { text: t('alerts.ok') }
+          ]
+        );
+      }
       return false;
     }
 
-    showDarkAlert('Backup disabled', 'Select a plan to enable StealthCloud backups.');
+    showDarkAlert(t('alerts.backupDisabled'), t('alerts.backupDisabledMessage'));
     return false;
   };
 
@@ -1378,15 +1406,27 @@ export default function App() {
         const status = st && st.status ? String(st.status) : 'none';
         if (status !== 'grace' && status !== 'grace_expired' && status !== 'trial_expired') return;
 
-        showDarkAlert(
-          'Subscription Expired',
-          `Your plan expired. You have ${GRACE_PERIOD_DAYS} days to sync your data before access is locked. Backups are disabled until you renew.`,
-          [
-            { text: 'Sync Now', onPress: () => openSyncModeChooser() },
-            { text: 'View Plans', onPress: () => setView('info') },
-            { text: 'Later' }
-          ]
-        );
+        const purchasedVia = st && st.purchased_via ? st.purchased_via : null;
+        const isOtherPlatform = purchasedVia && purchasedVia !== 'solana';
+        const platformName = purchasedVia === 'apple' ? 'App Store' : purchasedVia === 'google' ? 'Google Play' : null;
+
+        if (isOtherPlatform && platformName) {
+          showDarkAlert(
+            t('alerts.subscriptionExpired'),
+            t('alerts.managedByOtherPlatform', { platform: platformName }),
+            [{ text: t('alerts.ok') }]
+          );
+        } else {
+          showDarkAlert(
+            t('alerts.subscriptionExpired'),
+            t('alerts.expiredGraceMessage', { days: GRACE_PERIOD_DAYS }),
+            [
+              { text: t('alerts.syncNow'), onPress: () => openSyncModeChooser() },
+              { text: t('alerts.viewPlans'), onPress: () => setView('info') },
+              { text: t('alerts.later') }
+            ]
+          );
+        }
       } catch (e) {
         // ignore
       }
@@ -1398,7 +1438,7 @@ export default function App() {
       if (batteryState === Battery.BatteryState.CHARGING) {
         if (autoUploadEnabledRef.current && !autoUploadNightRunnerActiveRef.current && serverTypeRef.current === 'stealthcloud' && tokenRef.current) {
           console.log('Battery plugged in, resuming auto upload');
-          setStatus('Auto-Backup: Resumed');
+          setStatus(t('status.autoBackupResumed'));
           maybeStartAutoUploadNightSession();
         }
       }
@@ -1411,7 +1451,7 @@ export default function App() {
   const stealthCloudBackupSelected = async ({ assets }) => {
     const permission = await MediaLibrary.requestPermissionsAsync();
     if (!permission || permission.status !== 'granted') {
-      showDarkAlert('Permission needed', 'We need access to photos to back them up.');
+      showDarkAlert(t('alerts.permissionNeeded'), t('alerts.permissionNeededMessage'));
       return;
     }
 
@@ -1422,12 +1462,12 @@ export default function App() {
     setWasBackgroundedDuringWorkSafe(false);
     setProgress(0);
     setProgressAction('backup');
-    setStatus('Backup: Preparing...');
+    setStatus(t('status.backupPreparing'));
 
     if (Platform.OS === 'ios') {
       const ap = await getMediaLibraryAccessPrivileges(permission);
       if (ap && ap !== 'all') {
-        setStatus('Limited Photos access (Selected Photos). Backing up accessible items...');
+        setStatus(t('status.limitedPhotosAccess'));
       }
     }
 
@@ -1437,7 +1477,7 @@ export default function App() {
 
     const list = Array.isArray(assets) ? assets.filter(a => a && a.id) : [];
     if (list.length === 0) {
-      showDarkAlert('Select items', 'Choose photos & videos to back up.');
+      showDarkAlert(t('alerts.selectItems'), t('alerts.selectItemsMessage'));
       return;
     }
 
@@ -1464,7 +1504,7 @@ export default function App() {
       }
 
       if (result.noAssets) {
-        showDarkAlert('Select items', 'Choose photos & videos to back up.');
+        showDarkAlert(t('alerts.selectItems'), t('alerts.selectItemsMessage'));
         return;
       }
 
@@ -1484,11 +1524,11 @@ export default function App() {
 
       setProgress(1);
       await sleep(300);
-      setStatus('Backup complete');
+      setStatus(t('status.backupComplete'));
       showResultAlert('backup', { uploaded, skipped, failed });
     } catch (e) {
       console.error('StealthCloud backup error:', e);
-      setStatus('Backup error');
+      setStatus(t('status.backupFailed'));
       showResultAlert('backup', { error: e && e.message ? e.message : 'Unknown error' });
     } finally {
       setLoadingSafe(false);
@@ -1500,7 +1540,7 @@ export default function App() {
   const backupSelectedAssets = async ({ assets }) => {
     const list = Array.isArray(assets) ? assets.filter(a => a && a.id) : [];
     if (list.length === 0) {
-      showDarkAlert('Select items', 'Choose photos & videos to back up.');
+      showDarkAlert(t('alerts.selectItems'), t('alerts.selectItemsMessage'));
       return;
     }
 
@@ -1518,7 +1558,7 @@ export default function App() {
     setWasBackgroundedDuringWorkSafe(false);
     setProgress(0);
     setProgressAction('backup');
-    setStatus('Backup: Preparing...');
+    setStatus(t('status.backupPreparing'));
 
     // Enable background warning only after we start actual work (permission already granted inside core)
     setTimeout(() => { if (loadingRef.current) setBackgroundWarnEligibleSafe(true); }, 2000);
@@ -1532,35 +1572,36 @@ export default function App() {
         appStateRef, // Pass appStateRef so upload can pause when backgrounded
         onStatus: setStatus,
         onProgress: setProgress,
+        t,
       });
 
       if (result.permissionDenied) {
-        showDarkAlert('Permission needed', 'We need access to photos to back them up.');
+        showDarkAlert(t('alerts.permissionNeeded'), t('alerts.permissionNeededMessage'));
         return;
       }
 
       if (result.noSelection) {
-        showDarkAlert('Select items', 'Choose photos & videos to back up.');
+        showDarkAlert(t('alerts.selectItems'), t('alerts.selectItemsMessage'));
         return;
       }
 
       if (result.alreadyBackedUp) {
         const count = result.skipped || list.length;
         setProgress(1); // Show 100% before checkmark
-        setStatus(`All ${count} files already backed up`);
+        setStatus(t('status.allFilesBackedUp', { count }));
         await sleep(400); // Brief pause to show 100%
-        showCompletionTickBriefly(`${count} files on server`);
+        showCompletionTickBriefly(t('results.filesOnServer', { count }));
         setProgress(0);
         return;
       }
 
       setProgress(1); // Show 100% before checkmark
-      setStatus('Backup complete');
+      setStatus(t('status.backupComplete'));
       await sleep(400); // Brief pause to show 100%
       showResultAlert('backup', { uploaded: result.uploaded, skipped: result.skipped, failed: result.failed });
       setProgress(0);
     } catch (error) {
-      setStatus('Backup error');
+      setStatus(t('status.backupFailed'));
       showResultAlert('backup', { error: error && error.message ? error.message : 'Unknown error' });
     } finally {
       setLoadingSafe(false);
@@ -1578,23 +1619,23 @@ export default function App() {
   const purgeStealthCloudData = async () => {
     if (loadingRef.current) return;
     if (!token) {
-      setStatus('Please login');
+      setStatus(t('status.idle'));
       return;
     }
 
     showDarkAlert(
-      'Delete all data on server?',
-      'This will permanently delete your encrypted StealthCloud chunks and manifests for this device/account. This cannot be undone.',
+      t('alerts.deleteAllDataTitle'),
+      t('alerts.deleteAllDataStealthCloud'),
       [
-        { text: 'Cancel' },
+        { text: t('alerts.cancel') },
         {
-          text: 'Delete',
+          text: t('alerts.delete'),
           onPress: async () => {
             try {
               setLoadingSafe(true);
               setBackgroundWarnEligibleSafe(false);
               setWasBackgroundedDuringWorkSafe(false);
-              setStatus('Deleting cloud data...');
+              setStatus(t('status.deletingItems', { count: 0 }));
 
               const SERVER_URL = getServerUrl();
               const config = await getAuthHeaders();
@@ -1602,18 +1643,18 @@ export default function App() {
               const deleted = res && res.data && res.data.deleted ? res.data.deleted : null;
               const chunks = deleted && typeof deleted.chunks === 'number' ? deleted.chunks : null;
               const manifests = deleted && typeof deleted.manifests === 'number' ? deleted.manifests : null;
-              const msg = 'All your files were successfully deleted from StealthCloud.';
+              const msg = t('alerts.allFilesDeleted');
               if (chunks !== null || manifests !== null) {
                 console.log('[StealthCloud] Purge deleted:', { chunks, manifests });
               }
-              setStatus('Cloud data deleted');
-              showDarkAlert('Deleted', msg);
+              setStatus(t('status.cloudDataDeleted'));
+              showDarkAlert(t('alerts.deleted'), msg);
             } catch (e) {
               const m = e && e.response && e.response.data && e.response.data.error
                 ? e.response.data.error
                 : (e && e.message ? e.message : 'Unknown error');
-              setStatus('Delete failed');
-              showDarkAlert('Error', m);
+              setStatus(t('status.deletionFailed'));
+              showDarkAlert(t('alerts.error'), m);
             } finally {
               setLoadingSafe(false);
             }
@@ -1626,23 +1667,23 @@ export default function App() {
   const purgeClassicServerData = async () => {
     if (loadingRef.current) return;
     if (!token) {
-      setStatus('Please login');
+      setStatus(t('status.idle'));
       return;
     }
 
     showDarkAlert(
-      'Delete all data on server?',
-      'This will permanently delete your uploaded photos and videos from your server for this device/account. This cannot be undone.',
+      t('alerts.deleteAllDataTitle'),
+      t('alerts.deleteAllDataClassic'),
       [
-        { text: 'Cancel' },
+        { text: t('alerts.cancel') },
         {
-          text: 'Delete',
+          text: t('alerts.delete'),
           onPress: async () => {
             try {
               setLoadingSafe(true);
               setBackgroundWarnEligibleSafe(false);
               setWasBackgroundedDuringWorkSafe(false);
-              setStatus('Deleting server files...');
+              setStatus(t('status.deletingItems', { count: 0 }));
 
               const SERVER_URL = getServerUrl();
               const config = await getAuthHeaders();
@@ -1652,14 +1693,14 @@ export default function App() {
               if (files !== null) {
                 console.log('[Classic] Purge deleted:', { files });
               }
-              setStatus('Server files deleted');
-              showDarkAlert('Deleted', 'All your files were successfully deleted from your server.');
+              setStatus(t('status.cloudDataDeleted'));
+              showDarkAlert(t('alerts.deleted'), t('alerts.allFilesDeleted'));
             } catch (e) {
               const m = e && e.response && e.response.data && e.response.data.error
                 ? e.response.data.error
                 : (e && e.message ? e.message : 'Unknown error');
-              setStatus('Delete failed');
-              showDarkAlert('Error', m);
+              setStatus(t('status.deletionFailed'));
+              showDarkAlert(t('alerts.error'), m);
             } finally {
               setLoadingSafe(false);
             }
@@ -1681,7 +1722,7 @@ export default function App() {
     setBackupPickerLoading(true);
     try {
       const permission = await MediaLibrary.requestPermissionsAsync();
-      if (permission.status !== 'granted') { showDarkAlert('Permission needed', 'We need access to photos to back them up.'); return; }
+      if (permission.status !== 'granted') { showDarkAlert(t('alerts.permissionNeeded'), t('alerts.permissionNeededMessage')); return; }
       const first = 18; // 18 files per batch for thumbnails
       const after = reset ? null : backupPickerAfter;
       const page = await MediaLibrary.getAssetsAsync({ first, after: after || undefined, mediaType: ['photo', 'video'] });
@@ -1845,7 +1886,7 @@ export default function App() {
   const advanceSimilarGroup = ({ groups, nextIndex }) => {
     const g = Array.isArray(groups) ? groups : [];
     const i = typeof nextIndex === 'number' ? nextIndex : 0;
-    if (i >= g.length) { closeSimilarReview(); setStatus('Cleanup complete'); showCompletionTickBriefly('Cleanup done'); return; }
+    if (i >= g.length) { closeSimilarReview(); setStatus(t('status.cleanupComplete')); showCompletionTickBriefly(t('results.cleanupDone')); return; }
     openSimilarGroup({ groups: g, index: i });
   };
 
@@ -1882,7 +1923,7 @@ export default function App() {
   
   const handleNftTransferComplete = async (result) => {
     closeNftTransfer();
-    showCompletionTickBriefly('NFT transferred');
+    showCompletionTickBriefly(t('results.nftTransferred'));
     // Refresh gallery if open
     if (nftGalleryOpen) {
       // Gallery will refresh on its own
@@ -1891,13 +1932,13 @@ export default function App() {
   
   const handleMintNFT = async ({ asset, filePath, name, description, stripExif, storageOption, serverConfig }) => {
     if (!asset || !filePath) {
-      showDarkAlert('Error', 'No photo selected');
+      showDarkAlert(t('alerts.error'), t('alerts.selectItemsMessage'));
       return;
     }
     
     setNftMinting(true);
     setLoadingSafe(true);
-    setStatus('NFT: Preparing...');
+    setStatus(t('status.nftPreparing'));
     setProgress(0);
     setProgressAction('nft');
     
@@ -1919,11 +1960,11 @@ export default function App() {
       // Show cost confirmation
       const confirmMint = await new Promise((resolve) => {
         setCustomAlert({
-          title: 'Confirm NFT Minting',
-          message: `Estimated cost: ${costEstimate.total.solFormatted} SOL (${costEstimate.total.usdFormatted})\n\nThis includes:\n• ${storageLabel} storage\n• Solana rent\n• App commission: $${commissionUsd.toFixed(2)}\n\nProceed with minting?`,
+          title: t('nftMint.confirmMinting'),
+          message: `${t('nftMint.estimatedCost')}: ${costEstimate.total.solFormatted} SOL (${costEstimate.total.usdFormatted})\n\n${t('nftMint.thisIncludes')}:\n• ${storageLabel} ${t('nftMint.storage')}\n• ${t('nftMint.solanaRent')}\n• ${t('nftMint.appCommission')}: $${commissionUsd.toFixed(2)}\n\n${t('nftMint.proceedWithMinting')}`,
           buttons: [
-            { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
-            { text: 'Mint NFT', onPress: () => resolve(true) },
+            { text: t('common.cancel'), style: 'cancel', onPress: () => resolve(false) },
+            { text: t('nftMint.mintNft'), onPress: () => resolve(true) },
           ],
         });
       });
@@ -1931,7 +1972,7 @@ export default function App() {
       if (!confirmMint) {
         setNftMinting(false);
         setLoadingSafe(false);
-        setStatus('Idle');
+        setStatus(t('status.idle'));
         setProgress(0);
         return;
       }
@@ -1950,9 +1991,9 @@ export default function App() {
       });
       
       if (result.success) {
-        setStatus('NFT minted successfully!');
+        setStatus(t('status.nftMinted'));
         await sleep(400);
-        showCompletionTickBriefly('NFT minted!');
+        showCompletionTickBriefly(t('results.nftMinted'));
         
         // Show success with explorer link
         showDarkAlert(
@@ -1960,11 +2001,11 @@ export default function App() {
           `Your photo NFT "${name}" has been minted on Solana.\n\nMint Address:\n${result.mintAddress?.slice(0, 20)}...\n\nView in your NFT Gallery or check on Solana Explorer.`
         );
       } else {
-        showDarkAlert('Minting Failed', result.error || 'Unknown error');
+        showDarkAlert(t('alerts.error'), result.error || t('alerts.error'));
       }
     } catch (e) {
       console.error('[NFT] Mint error:', e);
-      showDarkAlert('Error', e.message || 'Failed to mint NFT');
+      showDarkAlert(t('alerts.error'), e.message || t('alerts.error'));
     } finally {
       setNftMinting(false);
       setLoadingSafe(false);
@@ -1978,7 +2019,7 @@ export default function App() {
     setBackgroundWarnEligibleSafe(false); setWasBackgroundedDuringWorkSafe(false); setLoadingSafe(true); // Don't warn during permission prompts
     setProgress(0);
     setProgressAction('cleanup');
-    setStatus('Comparing: Preparing...');
+    setStatus(t('status.comparingPreparing'));
     
     // Enable background warning only after we start actual work (permission already granted inside core)
     setTimeout(() => { if (loadingRef.current) setBackgroundWarnEligibleSafe(true); }, 2000);
@@ -1997,14 +2038,14 @@ export default function App() {
 
     if (result.error) {
       setLoadingSafe(false);
-      showDarkAlert('Similar Photos', result.error);
+      showDarkAlert(t('alerts.similarPhotos'), result.error);
       return;
     }
 
     if (result.noGroups) {
-      setStatus('No similar photos found');
+      setStatus(t('status.noSimilarPhotos'));
       await sleep(400); // Let user see 100% before checkmark
-      showCompletionTickBriefly('0 similar photos');
+      showCompletionTickBriefly(t('results.noSimilarPhotos'));
       setLoadingSafe(false);
       return;
     }
@@ -2020,7 +2061,7 @@ export default function App() {
       // Ensure media library permission before listing local assets
       const permission = await MediaLibrary.requestPermissionsAsync();
       if (!permission || permission.status !== 'granted') {
-        showDarkAlert('Sync list failed', 'Photos permission is required to list local media.');
+        showDarkAlert(t('alerts.syncListFailed'), t('alerts.syncListFailedPermission'));
         setSyncPickerOpen(false);
         return;
       }
@@ -2053,7 +2094,7 @@ export default function App() {
       setSyncPickerTotal(0);
       setSyncPickerOffset(0);
       const detail = e?.response?.data?.error || e?.message || 'Unknown error';
-      showDarkAlert('Sync list failed', detail);
+      showDarkAlert(t('alerts.syncListFailed'), detail);
     } finally { setSyncPickerLoading(false); }
   };
 
@@ -2108,10 +2149,21 @@ export default function App() {
   };
 
   useEffect(() => {
+    // Initialize language first (fast, from SecureStore)
+    initializeLanguage().then(lang => {
+      setCurrentLanguage(lang);
+      console.log('[i18n] App language:', lang);
+    });
     checkLogin();
     // Clear sync picker state on app launch to prevent stale data
     resetSyncPickerState();
   }, []);
+
+  // Handle language change - triggers re-render
+  const handleLanguageChange = (langCode) => {
+    setCurrentLanguage(langCode);
+    console.log('[i18n] Language changed to:', langCode);
+  };
 
   // Initialize Solana when app starts
   useEffect(() => {
@@ -2191,7 +2243,7 @@ export default function App() {
     if (autoUploadNightRunnerActiveRef.current) return;
     setProgress(0);
     setProgressAction(null);
-    setStatus(`Idle • ${fastModeEnabled ? 'Fast' : 'Slow'} Mode`);
+    setStatus(t('status.idleWithMode', { mode: fastModeEnabled ? t('settings.fastModeLabel') : t('settings.slowModeLabel') }));
   }, [loading, view, status, fastModeEnabled]);
 
   useEffect(() => {
@@ -2231,13 +2283,14 @@ export default function App() {
 
         if (!loadingRef.current && !autoUploadNightRunnerActiveRef.current) {
           setProgress(0);
-          setStatus('Idle');
+          setProgressAction(null);
+          setStatus(t('status.idle'));
         }
       }
 
       // iOS: show paused status when backgrounded (Android has foreground service)
       if (Platform.OS === 'ios' && nextState === 'background' && autoUploadEnabledRef.current && serverTypeRef.current === 'stealthcloud') {
-        setStatus('Auto-backup paused (backgrounded)');
+        setStatus(t('status.autoBackupPaused'));
       }
 
       if (nextState === 'active' && wasBackgroundedDuringWorkRef.current) {
@@ -2259,7 +2312,7 @@ export default function App() {
         if (Platform.OS === 'ios' && backgroundForMs > 0 && backgroundForMs < 2000) return;
 
         if (!autoUploadEnabledRef.current) {
-          showDarkAlert('Process paused', 'The app was backgrounded during an operation. Keep the app open during long tasks for best reliability.');
+          showDarkAlert(t('alerts.processPaused'), t('alerts.processPausedMessage'));
         }
       }
     });
@@ -2461,7 +2514,7 @@ export default function App() {
   const thermalCooldownPause = async (batchCount) => {
     const cooldownMs = getThrottleBatchCooldownMs();
     if (cooldownMs <= 0) return; // Fast mode - no cooldown
-    setStatus(`Cooling down (batch ${batchCount})...`);
+    setStatus(t('status.coolingDown', { batch: batchCount }));
     console.log(`Thermal: cooling pause after batch ${batchCount}, waiting ${cooldownMs}ms`);
     await sleep(cooldownMs);
   };
@@ -2553,7 +2606,7 @@ export default function App() {
       await Linking.openURL(url);
     } catch (error) {
       console.error('Link open error', error);
-      showDarkAlert('Error', 'Could not open link');
+      showDarkAlert(t('alerts.error'), t('alerts.couldNotOpenLink'));
     }
   };
 
@@ -2597,7 +2650,7 @@ export default function App() {
       }
 
       if (result.permissionDenied) {
-        showDarkAlert('Permission needed', 'We need access to photos to back them up.');
+        showDarkAlert(t('alerts.permissionNeeded'), t('alerts.permissionNeededMessage'));
         return;
       }
 
@@ -2607,9 +2660,9 @@ export default function App() {
 
       if (result.noFiles) {
         setProgress(1);
-        setStatus('No files on device');
+        setStatus(t('status.noPhotosFound'));
         await sleep(1500);
-        setStatus('Idle');
+        setStatus(t('status.idle'));
         setProgress(0);
         return;
       }
@@ -2618,7 +2671,7 @@ export default function App() {
 
       if (uploaded === 0 && skipped === 0 && failed === 0) {
         setProgress(1);
-        setStatus('No files on device');
+        setStatus(t('status.noPhotosFound'));
         await sleep(1000);
         setProgress(0);
         return;
@@ -2626,11 +2679,11 @@ export default function App() {
 
       setProgress(1);
       await sleep(300);
-      setStatus('Backup complete');
+      setStatus(t('status.backupComplete'));
       showResultAlert('backup', { uploaded, skipped, failed });
     } catch (e) {
       console.error('StealthCloud backup error:', e);
-      setStatus('Backup error');
+      setStatus(t('status.backupFailed'));
       showResultAlert('backup', { error: e && e.message ? e.message : 'Unknown error' });
     } finally {
       setLoadingSafe(false);
@@ -2662,19 +2715,19 @@ export default function App() {
     setWasBackgroundedDuringWorkSafe(false);
     setProgress(0);
     setProgressAction('sync');
-    setStatus('Sync: Preparing...');
+    setStatus(t('status.syncPreparing'));
 
     const permission = await MediaLibrary.requestPermissionsAsync();
     if (permission.status !== 'granted') {
-      showDarkAlert('Permission Required', 'Media library permission is required to sync photos to your gallery.');
+      showDarkAlert(t('alerts.permissionRequired'), t('alerts.permissionRequiredSync'));
       setLoadingSafe(false);
       setBackgroundWarnEligibleSafe(false);
       setWasBackgroundedDuringWorkSafe(false);
       return;
     }
     if (Platform.OS === 'ios' && permission.accessPrivileges && permission.accessPrivileges !== 'all') {
-      setStatus('Sync: Limited photo access');
-      showDarkAlert('Limited Photos Access', 'Sync needs Full Access to your Photos library.');
+      setStatus(t('status.syncLimitedAccess'));
+      showDarkAlert(t('alerts.limitedPhotosAccess'), t('alerts.limitedPhotosAccessMessage'));
       setLoadingSafe(false);
       setBackgroundWarnEligibleSafe(false);
       setWasBackgroundedDuringWorkSafe(false);
@@ -2709,9 +2762,9 @@ export default function App() {
 
       if (result.noBackups) {
         setProgress(1);
-        setStatus('Sync: No files to sync');
+        setStatus(t('status.syncNoFiles'));
         await sleep(800);
-        showDarkAlert('No Backups', 'No StealthCloud backups found for this account.');
+        showDarkAlert(t('alerts.noBackups'), t('alerts.noBackupsMessage'));
         await sleep(500);
         setProgress(0);
         return;
@@ -2719,11 +2772,11 @@ export default function App() {
 
       setProgress(1);
       await sleep(300);
-      setStatus('Sync: Complete');
+      setStatus(t('status.syncComplete'));
       showResultAlert('sync', { downloaded: result.restored, skipped: result.skipped, failed: result.failed });
     } catch (e) {
       console.error('StealthCloud restore error:', e);
-      setStatus('Sync: Error');
+      setStatus(t('status.syncFailed'));
       showResultAlert('sync', { error: e && e.message ? e.message : 'Unknown error' });
     } finally {
       setLoadingSafe(false);
@@ -2830,7 +2883,7 @@ export default function App() {
       if (validationResult.success) {
         // Token valid or network error with offline access
         if (validationResult.savedPassword) {
-          setStatus('Securing session...');
+          setStatus(t('status.securingSession'));
           await cacheStealthCloudMasterKey(storedEmail, validationResult.savedPassword);
         }
         setTokenSafe(storedToken);
@@ -2862,7 +2915,7 @@ export default function App() {
       if (reauthResult.deviceId) setDeviceUuid(reauthResult.deviceId);
       if (reauthResult.userId) setUserId(reauthResult.userId);
 
-      setStatus('Securing session...');
+      setStatus(t('status.securingSession'));
       await cacheStealthCloudMasterKey(storedEmail, reauthResult.savedPassword);
 
       setTokenSafe(reauthResult.token);
@@ -2901,23 +2954,23 @@ export default function App() {
     console.log('Email:', email, 'Password:', password ? '***' : 'empty');
 
     if (!email || !password) {
-      showDarkAlert('Error', 'Please fill in all fields');
+      showDarkAlert(t('alerts.error'), t('alerts.fillAllFields'));
       return;
     }
 
     const normalizedEmail = normalizeEmailForDeviceUuid(email);
     if (!normalizedEmail) {
-      showDarkAlert('Error', 'Please enter a valid email.');
+      showDarkAlert(t('alerts.error'), t('alerts.invalidEmail'));
       return;
     }
 
     if (type === 'register') {
       if (!confirmPassword) {
-        showDarkAlert('Error', 'Please confirm your password');
+        showDarkAlert(t('alerts.error'), t('alerts.confirmPasswordRequired'));
         return;
       }
       if (password !== confirmPassword) {
-        showDarkAlert('Error', 'Passwords do not match');
+        showDarkAlert(t('alerts.error'), t('alerts.passwordsDoNotMatch'));
         return;
       }
       // For Local/Remote registration, require server address and show Quick Setup if missing
@@ -2949,11 +3002,11 @@ export default function App() {
 
     Keyboard.dismiss();
     setLoadingSafe(true);
-    resetAuthLoadingLabel(loginStatusTimerRef, loginLabelTimerRef, setAuthLoadingLabel, type === 'register' ? 'Creating account...' : 'Signing in...');
+    resetAuthLoadingLabel(loginStatusTimerRef, loginLabelTimerRef, setAuthLoadingLabel, type === 'register' ? t('auth.creatingAccount') : t('auth.signingIn'));
 
     try {
       // Step 1: Bonding device
-      setAuthLoadingLabel('Bonding device...');
+      setAuthLoadingLabel(t('auth.bondingDevice'));
       await new Promise(resolve => setTimeout(resolve, 1000));
 
       // Resolve and persist effective server settings
@@ -2971,7 +3024,7 @@ export default function App() {
       const deviceId = await getDeviceUUID(normalizedEmail, password);
       await new Promise(resolve => setTimeout(resolve, 200));
       if (!deviceId) {
-        showDarkAlert('Device ID unavailable', 'Could not derive a device ID from your credentials. Please try again.');
+        showDarkAlert(t('alerts.deviceIdUnavailable'), t('alerts.deviceIdUnavailableMessage'));
         setLoadingSafe(false);
         return;
       }
@@ -2979,7 +3032,7 @@ export default function App() {
 
       // Plan selection is mandatory for StealthCloud registration (7-day free trial)
       if (type === 'register' && effectiveType === 'stealthcloud' && !selectedStealthPlanGb) {
-        showDarkAlert('Select a plan', 'Choose a StealthCloud plan to start your 7-day free trial.');
+        showDarkAlert(t('alerts.selectPlan'), t('alerts.selectPlanMessage'));
         setLoadingSafe(false);
         return;
       }
@@ -3014,7 +3067,7 @@ export default function App() {
       // iOS Local Network Permission: Pre-trigger permission before actual auth request
       // This prevents the auth request from failing while the permission popup is shown
       if (Platform.OS === 'ios' && (effectiveType === 'local' || effectiveType === 'remote')) {
-        setAuthLoadingLabel('Checking network access...');
+        setAuthLoadingLabel(t('auth.checkingNetwork'));
         try {
           // Small HEAD request to trigger iOS Local Network permission popup
           // Use a short timeout - we don't care if it succeeds, just need to trigger the popup
@@ -3028,21 +3081,21 @@ export default function App() {
       }
 
       // Step 2: Generating token / Authenticating with retry for StealthCloud
-      setAuthLoadingLabel(type === 'register' ? 'Generating token...' : 'Authenticating...');
+      setAuthLoadingLabel(type === 'register' ? t('auth.generatingToken') : t('auth.authenticating'));
       await new Promise(resolve => setTimeout(resolve, 500));
 
       // StealthCloud retry logic with rotating status messages (server may be rebooting ~2-3 min)
       const STEALTHCLOUD_MAX_RETRIES = 20; // ~3+ minutes of retries
       const STEALTHCLOUD_RETRY_DELAY_MS = 10000; // 10 seconds between retries
       const STEALTHCLOUD_RETRY_MESSAGES = [
-        'Connecting...',
-        'Establishing connection...',
-        'Reaching StealthCloud...',
-        'Waiting for server...',
-        'Retrying connection...',
-        'Still connecting...',
-        'Please wait...',
-        'Almost there...',
+        t('auth.connecting'),
+        t('auth.establishingConnection'),
+        t('auth.reachingStealthCloud'),
+        t('auth.waitingForServer'),
+        t('auth.retryingConnection'),
+        t('auth.stillConnecting'),
+        t('common.pleaseWait'),
+        t('auth.almostThere'),
       ];
 
       let res;
@@ -3115,7 +3168,7 @@ export default function App() {
         }
 
         // Step 3: Securing credentials
-        setAuthLoadingLabel('Securing credentials...');
+        setAuthLoadingLabel(t('auth.securingCredentials'));
         await new Promise(resolve => setTimeout(resolve, 1000));
 
         await SecureStore.setItemAsync('auth_token', token);
@@ -3129,7 +3182,7 @@ export default function App() {
         }
 
         // Step 4: Finalizing (cache master key)
-        setAuthLoadingLabel('Finalizing...');
+        setAuthLoadingLabel(t('common.finalizing'));
         await cacheStealthCloudMasterKey(normalizedEmail, password);
         await new Promise(resolve => setTimeout(resolve, 500));
 
@@ -3150,7 +3203,7 @@ export default function App() {
         const { token, userId } = res.data;
 
         // Step 3: Securing credentials
-        setAuthLoadingLabel('Securing credentials...');
+        setAuthLoadingLabel(t('auth.securingCredentials'));
         await new Promise(resolve => setTimeout(resolve, 1000));
 
         // Store token
@@ -3166,7 +3219,7 @@ export default function App() {
         }
 
         // Step 4: Finalizing (cache master key)
-        setAuthLoadingLabel('Finalizing...');
+        setAuthLoadingLabel(t('common.finalizing'));
         await cacheStealthCloudMasterKey(normalizedEmail, password);
         await new Promise(resolve => setTimeout(resolve, 500));
 
@@ -3182,9 +3235,9 @@ export default function App() {
 
         // Show success message after navigation
         showDarkAlert(
-          'Account Created!',
-          'Your account has been successfully created and you are now logged in.',
-          [{ text: 'Get Started' }]
+          t('alerts.accountCreated'),
+          t('alerts.accountCreatedMessage'),
+          [{ text: t('alerts.getStarted') }]
         );
       }
     } catch (error) {
@@ -3196,17 +3249,32 @@ export default function App() {
         // 429 - Rate limited
         if (status === 429) {
           showDarkAlert(
-            'Too Many Attempts',
-            'You\'ve made too many login attempts. Please wait 2-3 minutes before trying again.'
+            t('alerts.tooManyAttempts'),
+            t('alerts.tooManyAttemptsMessage')
           );
         // 5xx errors after retries exhausted - server is down
         } else if (status >= 500 && status < 600 && serverType === 'stealthcloud') {
           showDarkAlert(
-            'Server Temporarily Unavailable',
-            'StealthCloud is currently undergoing maintenance. Please try again in a few minutes.'
+            t('alerts.serverUnavailable'),
+            t('alerts.serverUnavailableMessage')
           );
         } else {
-          showDarkAlert('Error', error.response?.data?.error || 'Connection failed');
+          // Map known server error messages to translations
+          const serverError = error.response?.data?.error;
+          let translatedError = t('alerts.connectionFailed');
+          if (serverError) {
+            const errorLower = serverError.toLowerCase();
+            if (errorLower.includes('invalid credentials') || errorLower.includes('invalid password') || errorLower.includes('wrong password')) {
+              translatedError = t('alerts.invalidCredentials');
+            } else if (errorLower.includes('user not found') || errorLower.includes('no user')) {
+              translatedError = t('alerts.userNotFound');
+            } else if (errorLower.includes('email already') || errorLower.includes('already registered')) {
+              translatedError = t('alerts.emailAlreadyRegistered');
+            } else {
+              translatedError = serverError;
+            }
+          }
+          showDarkAlert(t('alerts.error'), translatedError);
         }
       } else if (error.request) {
         console.error('Network Error - cannot reach server', {
@@ -3216,14 +3284,18 @@ export default function App() {
           method: error?.config?.method,
           baseURL: error?.config?.baseURL,
         });
-        const serverLabel = serverType === 'stealthcloud' ? 'StealthCloud' : 'your local server';
-        const hint = serverType === 'stealthcloud' 
-          ? 'Please check your internet connection and try again.' 
-          : 'Make sure the server is running and both devices are on the same network. Follow Quick Setup below for help.';
-        showDarkAlert('Connection Failed', `Cannot reach ${serverLabel}. ${hint}`);
+        let message;
+        if (serverType === 'stealthcloud') {
+          message = t('alerts.cannotReachStealthCloud');
+        } else if (serverType === 'remote') {
+          message = t('alerts.cannotReachRemote');
+        } else {
+          message = t('alerts.cannotReachLocal');
+        }
+        showDarkAlert(t('alerts.connectionFailed'), message);
       }
     } finally {
-      resetAuthLoadingLabel(loginStatusTimerRef, loginLabelTimerRef, setAuthLoadingLabel, 'Signing in...');
+      resetAuthLoadingLabel(loginStatusTimerRef, loginLabelTimerRef, setAuthLoadingLabel, t('auth.signingIn'));
       setLoadingSafe(false);
       setBackgroundWarnEligibleSafe(false);
       setWasBackgroundedDuringWorkSafe(false);
@@ -3236,13 +3308,13 @@ export default function App() {
    */
   const handleResetPassword = async () => {
     if (!email || !newPassword) {
-      showDarkAlert('Error', 'Please enter your email and new password');
+      showDarkAlert(t('alerts.error'), t('alerts.enterEmailAndPassword'));
       return;
     }
 
     Keyboard.dismiss();
     setLoadingSafe(true);
-    setAuthLoadingLabel('Verifying device...');
+    setAuthLoadingLabel(t('auth.verifyingDevice'));
 
     try {
       const result = await performDevicePasswordReset({
@@ -3255,22 +3327,22 @@ export default function App() {
 
       if (!result.success) {
         if (result.hint === 'device_mismatch') {
-          showDarkAlert('Different Device', 'Password reset is only available on the device where you created your account.');
+          showDarkAlert(t('alerts.differentDevice'), t('alerts.differentDeviceMessage'));
         } else if (result.hint === 'no_hardware_id_stored') {
-          showDarkAlert('Feature Not Available', 'Password reset is not available for accounts created before this feature was added.');
+          showDarkAlert(t('alerts.featureNotAvailable'), t('alerts.featureNotAvailableMessage'));
         } else {
-          showDarkAlert('Error', result.error);
+          showDarkAlert(t('alerts.error'), result.error);
         }
         return;
       }
 
-      showDarkAlert('Success', 'Your password has been reset. Please login with your new password.');
+      showDarkAlert(t('alerts.success'), t('alerts.passwordResetSuccess'));
       setPassword(newPassword);
       setAuthMode('login');
       setNewPassword('');
     } finally {
       setLoadingSafe(false);
-      setAuthLoadingLabel('Signing in...');
+      setAuthLoadingLabel(t('auth.signingIn'));
     }
   };
 
@@ -3287,7 +3359,7 @@ export default function App() {
     setLoadingSafe(true);
     setProgress(0);
     setProgressAction('cleanup');
-    setStatus('Comparing: Preparing...');
+    setStatus(t('status.comparingPreparing'));
 
     // Enable background warning only after we start actual work (permission already granted inside core)
     setTimeout(() => { if (loadingRef.current) setBackgroundWarnEligibleSafe(true); }, 2000);
@@ -3306,24 +3378,24 @@ export default function App() {
 
       if (result.error) {
         if (result.error.includes('Limited')) {
-          showDarkAlert('Limited Photos Access', `Clean Duplicates needs Full Access to your Photos library.\n\nGo to Settings → ${APP_DISPLAY_NAME} → Photos → Full Access.`);
+          showDarkAlert(t('alerts.limitedPhotosAccess'), t('alerts.limitedPhotosAccessClean'));
         } else if (result.error.includes('permission')) {
-          showDarkAlert('Permission needed', 'We need access to photos to safely scan for duplicates.');
+          showDarkAlert(t('alerts.permissionNeeded'), t('alerts.permissionNeededDuplicates'));
         } else {
-          showDarkAlert('Error', result.error);
+          showDarkAlert(t('alerts.error'), result.error);
         }
         return;
       }
 
       if (result.noAssets) {
-        showDarkAlert('No Media', 'No photos were found on this device.');
+        showDarkAlert(t('alerts.noMedia'), t('alerts.noMediaMessage'));
         return;
       }
 
       if (result.noDuplicates) {
-        setStatus('No identical photos or videos found');
+        setStatus(t('status.noIdenticalPhotos'));
         await sleep(400); // Let user see 100% before checkmark
-        showCompletionTickBriefly('0 identical files');
+        showCompletionTickBriefly(t('results.noIdenticalFiles'));
         return;
       }
 
@@ -3337,11 +3409,11 @@ export default function App() {
         groups: result.groups
       });
 
-      setStatus(`Found ${result.totalDuplicates} identical photos/videos in ${result.groups.length} group${result.groups.length !== 1 ? 's' : ''}`);
+      setStatus(t('status.foundDuplicates', { count: result.totalDuplicates, groups: result.groups.length }));
     } catch (error) {
       console.error('Clean duplicates error:', error);
-      setStatus('Error during duplicate cleanup: ' + error.message);
-      showDarkAlert('Error', error.message);
+      setStatus(t('status.errorDuringCleanup', { message: error.message }));
+      showDarkAlert(t('alerts.error'), error.message);
     } finally {
       setLoadingSafe(false);
     }
@@ -3362,7 +3434,7 @@ export default function App() {
 
     // Show signing out spinner
     setLoadingSafe(true);
-    setAuthLoadingLabel('Signing out...');
+    setAuthLoadingLabel(t('auth.signingOut'));
 
     // Use core logout logic from authHelpers
     await logoutCore({ forgetCredentials });
@@ -3379,16 +3451,16 @@ export default function App() {
     setUserId(null);
     setDeviceUuid(null);
     setPassword('');
-    setView('auth');
     
-    // Reset progress state on logout
+    // Reset progress state BEFORE changing view to prevent blue flash
     setProgress(0);
     setProgressAction(null);
-    setStatus('Idle');
-    
-    // Hide spinner after logout complete
+    setStatus(t('status.idle'));
     setLoadingSafe(false);
-    setAuthLoadingLabel('Signing in...');
+    
+    // Change view last
+    setView('auth');
+    setAuthLoadingLabel(t('auth.signingIn'));
     
     // DO NOT reset abort flag here - it must stay true until user starts a new operation
     // The abort flag will be reset by cancelInFlightOperations when a new operation starts
@@ -3493,56 +3565,57 @@ export default function App() {
         fastMode: fastModeEnabledRef.current,
         onStatus: (s) => setStatusSafe(opId, s),
         onProgress: (p) => setProgressSafe(opId, p),
+        t,
       });
 
       if (result.permissionDenied) {
-        showDarkAlert('Permission needed', 'We need access to photos to back them up.');
+        showDarkAlert(t('alerts.permissionNeeded'), t('alerts.permissionNeededMessage'));
         setStatus('');
         return;
       }
 
       if (result.limitedAccess) {
-        setStatus('Limited photo access. Please allow full access to back up.');
+        setStatus(t('status.limitedPhotosAccess'));
         showDarkAlert(
-          'Limited Photos Access',
-          `Backup needs Full Access to your Photos library.\n\nGo to Settings → ${APP_DISPLAY_NAME} → Photos → Full Access.`
+          t('alerts.limitedPhotosAccess'),
+          t('alerts.limitedPhotosAccessMessage')
         );
         return;
       }
 
       if (result.noFiles) {
         setProgress(1);
-        setStatus('No files on device');
+        setStatus(t('status.noPhotosFound'));
         await sleep(1500);
-        setStatus('Idle');
+        setStatus(t('status.idle'));
         setProgress(0);
         return;
       }
 
       if (result.noFilesToBackup) {
-        setStatus('No files to backup');
-        showDarkAlert('No Photos', 'No photos or videos found on device.');
+        setStatus(t('status.noFilesToBackup'));
+        showDarkAlert(t('alerts.noPhotos'), t('alerts.noPhotosMessage'));
         return;
       }
 
       if (result.alreadyBackedUp) {
         setProgress(1); // Show 100% before checkmark
-        setStatus(`All ${result.checkedCount} files already backed up`);
+        setStatus(t('status.allFilesBackedUp', { count: result.checkedCount }));
         await sleep(400); // Brief pause to show 100%
-        showCompletionTickBriefly(`${result.checkedCount} files on server`);
+        showCompletionTickBriefly(t('results.filesOnServer', { count: result.checkedCount }));
         setProgress(0);
         return;
       }
 
       const { uploaded, skipped, failed } = result;
       setProgress(1); // Show 100% before checkmark
-      setStatus('Backup complete');
+      setStatus(t('status.backupComplete'));
       await sleep(400); // Brief pause to show 100%
       showResultAlert('backup', { uploaded, skipped, failed });
       setProgress(0);
     } catch (error) {
       console.error(error);
-      setStatus('Backup failed');
+      setStatus(t('status.backupFailed'));
       setProgress(0);
       showResultAlert('backup', { error: error && error.message ? error.message : 'Unknown error' });
     } finally {
@@ -3572,7 +3645,7 @@ export default function App() {
 
     await cancelInFlightOperations();
     const opId = currentOperationIdRef.current;
-    setStatus('Sync: Preparing...');
+    setStatus(t('status.syncPreparing'));
     setProgress(0);
     setProgressAction('sync');
     setLoadingSafe(true);
@@ -3581,7 +3654,7 @@ export default function App() {
 
     const permission = await MediaLibrary.requestPermissionsAsync();
     if (permission.status !== 'granted') {
-      showDarkAlert('Permission Required', 'Media library permission is required to sync photos to your gallery.');
+      showDarkAlert(t('alerts.permissionRequired'), t('alerts.permissionRequiredSync'));
       setLoadingSafe(false);
       setStatus('');
       setBackgroundWarnEligibleSafe(false);
@@ -3591,10 +3664,10 @@ export default function App() {
     }
 
     if (Platform.OS === 'ios' && permission.accessPrivileges && permission.accessPrivileges !== 'all') {
-      setStatus('Sync: Limited photo access');
+      setStatus(t('status.syncLimitedAccess'));
       showDarkAlert(
-        'Limited Photos Access',
-        `Sync from Cloud needs Full Access to your Photos library.\n\nGo to Settings → ${APP_DISPLAY_NAME} → Photos → Full Access.`
+        t('alerts.limitedPhotosAccess'),
+        t('alerts.limitedPhotosAccessMessage')
       );
       setLoadingSafe(false);
       setBackgroundWarnEligibleSafe(false);
@@ -3625,9 +3698,9 @@ export default function App() {
 
       if (result.noFiles) {
         setProgress(1);
-        setStatus('Sync: No files to sync');
+        setStatus(t('status.syncNoFiles'));
         await sleep(800);
-        showDarkAlert('No Files', 'There are no files on the server to download.');
+        showDarkAlert(t('alerts.noFiles'), t('alerts.noFilesMessage'));
         await sleep(500);
         setProgress(0);
         return;
@@ -3635,22 +3708,22 @@ export default function App() {
 
       if (result.allSynced) {
         setProgress(1);
-        setStatus(`Sync: All ${result.serverTotal} files already synced`);
+        setStatus(t('status.allFilesSynced', { count: result.serverTotal }));
         await sleep(800);
-        showCompletionTickBriefly(`${result.serverTotal} files on device`);
+        showCompletionTickBriefly(t('results.filesOnDevice', { count: result.serverTotal }));
         await sleep(500);
         setProgress(0);
         return;
       }
 
-      setStatus('Sync: Complete');
+      setStatus(t('status.syncComplete'));
       setProgress(0);
       showResultAlert('sync', { downloaded: result.restored, skipped: result.skipped, failed: result.failed });
       resetSyncPickerState();
 
     } catch (error) {
       console.error('Restore error:', error);
-      setStatus('Sync: Failed');
+      setStatus(t('status.syncFailed'));
       setProgress(0);
       showResultAlert('sync', { error: error.message });
     } finally {
@@ -3703,7 +3776,7 @@ export default function App() {
             if (!cameraPermission?.granted) {
               const result = await requestCameraPermission();
               if (!result.granted) {
-                showDarkAlert('Camera Permission', 'Camera access is needed to scan QR codes.');
+                showDarkAlert(t('login.cameraPermissionTitle'), t('login.cameraPermissionMessage'));
                 return;
               }
             }
@@ -3726,7 +3799,7 @@ export default function App() {
           <View style={{ alignItems: 'center', justifyContent: 'center' }}>
             <GradientSpinner size={isTablet ? 90 : 70} />
             <Text style={{ color: '#fff', fontSize: scale(16), fontWeight: '600', marginTop: scaleSpacing(20) }}>{authLoadingLabel}</Text>
-            <Text style={{ color: '#888', fontSize: scale(13), marginTop: scaleSpacing(8) }}>Please wait...</Text>
+            <Text style={{ color: '#888', fontSize: scale(13), marginTop: scaleSpacing(8) }}>{t('alerts.pleaseWait')}</Text>
           </View>
         </View>
       )}
@@ -3736,13 +3809,13 @@ export default function App() {
           <View style={[styles.overlayCard, { backgroundColor: '#000000', maxWidth: isTablet ? 450 : 320 }]}>
             <Text style={[styles.overlayTitle, { fontSize: scale(18), marginBottom: scaleSpacing(8) }]}>{customAlert.title}</Text>
             <Text style={{ color: '#FFFFFF', fontSize: scale(14), textAlign: 'center', marginBottom: scaleSpacing(20), lineHeight: scale(20) }}>{customAlert.message}</Text>
-            <View style={{ flexDirection: 'row', justifyContent: 'center', gap: scaleSpacing(12) }}>
+            <View style={{ flexDirection: 'row', justifyContent: 'center', gap: scaleSpacing(12), flexWrap: 'wrap' }}>
               {(customAlert.buttons || []).map((btn, idx) => (
                 <TouchableOpacity
                   key={idx}
-                  style={[styles.overlayBtnPrimary, { paddingVertical: scaleSpacing(10), paddingHorizontal: scaleSpacing(24), minWidth: isTablet ? 100 : 80 }]}
+                  style={[styles.overlayBtnPrimary, { paddingVertical: scaleSpacing(10), paddingHorizontal: scaleSpacing(16), minWidth: isTablet ? 100 : 70 }]}
                   onPress={() => { closeDarkAlert(); if (btn.onPress) btn.onPress(); }}>
-                  <Text style={styles.overlayBtnPrimaryText}>{btn.text}</Text>
+                  <Text style={styles.overlayBtnPrimaryText} numberOfLines={1}>{btn.text}</Text>
                 </TouchableOpacity>
               ))}
             </View>
@@ -3754,10 +3827,10 @@ export default function App() {
         <View style={[styles.overlay, {backgroundColor: 'rgba(0,0,0,0.95)'}]}>
           <View style={{flex: 1, width: '100%', justifyContent: 'center', alignItems: 'center'}}>
             <Text style={{color: '#fff', fontSize: scale(20), fontWeight: '600', marginBottom: scaleSpacing(8)}}>
-              Scan QR Code
+              {t('qrScanner.title')}
             </Text>
             <Text style={{color: '#aaa', fontSize: scale(14), marginBottom: scaleSpacing(20), textAlign: 'center', paddingHorizontal: scaleSpacing(40)}}>
-              Point your camera at the QR code shown in the PhotoLynk Server tray app
+              {t('qrScanner.instruction')}
             </Text>
 
             <View style={{width: isTablet ? 350 : 280, height: isTablet ? 350 : 280, borderRadius: scaleSpacing(16), overflow: 'hidden', backgroundColor: '#000'}}>
@@ -3765,8 +3838,11 @@ export default function App() {
                 <CameraView
                   style={{flex: 1}}
                   facing="back"
+                  autofocus="on"
+                  zoom={0}
                   barcodeScannerSettings={{
                     barcodeTypes: ['qr'],
+                    interval: 100,
                   }}
                   onBarcodeScanned={(result) => {
                     if (result && result.data) {
@@ -3777,21 +3853,21 @@ export default function App() {
               ) : (
                 <View style={{flex: 1, justifyContent: 'center', alignItems: 'center'}}>
                   <Text style={{color: '#888', textAlign: 'center', padding: scaleSpacing(20), fontSize: scale(14)}}>
-                    Camera permission required
+                    {t('permissions.cameraRequired')}
                   </Text>
                   <TouchableOpacity
-                    style={{backgroundColor: THEME.primary, paddingHorizontal: scaleSpacing(20), paddingVertical: scaleSpacing(10), borderRadius: scaleSpacing(8)}}
+                    style={{backgroundColor: '#03E1FF', paddingHorizontal: scaleSpacing(20), paddingVertical: scaleSpacing(10), borderRadius: scaleSpacing(8)}}
                     onPress={requestCameraPermission}>
-                    <Text style={{color: '#fff', fontWeight: '600', fontSize: scale(14)}}>Grant Permission</Text>
+                    <Text style={{color: '#000000', fontWeight: '700', fontSize: scale(14)}}>{t('permissions.grant')}</Text>
                   </TouchableOpacity>
                 </View>
               )}
             </View>
 
             <TouchableOpacity
-              style={{marginTop: scaleSpacing(24), paddingVertical: scaleSpacing(14), paddingHorizontal: scaleSpacing(40), backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: scaleSpacing(8)}}
+              style={{marginTop: scaleSpacing(24), paddingVertical: scaleSpacing(14), paddingHorizontal: scaleSpacing(40), backgroundColor: '#000', borderRadius: scaleSpacing(8), borderWidth: 1, borderColor: '#fff'}}
               onPress={() => setQrScannerOpen(false)}>
-              <Text style={{color: '#fff', fontSize: scale(16), fontWeight: '600'}}>Cancel</Text>
+              <Text style={{color: '#fff', fontSize: scale(16), fontWeight: '600'}}>{t('login.cancel')}</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -3802,15 +3878,15 @@ export default function App() {
           <View style={[styles.overlayCard, { backgroundColor: '#000000', maxWidth: 420, width: '94%', padding: scaleSpacing(20) }]}>
             {/* Header with icon */}
             <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: scaleSpacing(16) }}>
-              <View style={{ width: scale(40), height: scale(40), borderRadius: scale(12), backgroundColor: serverType === 'local' ? 'rgba(59, 130, 246, 0.15)' : serverType === 'remote' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(139, 92, 246, 0.15)', alignItems: 'center', justifyContent: 'center', marginRight: scaleSpacing(12) }}>
-                <Feather name={serverType === 'local' ? 'wifi' : serverType === 'remote' ? 'globe' : 'cloud'} size={scale(20)} color={serverType === 'local' ? THEME.primary : serverType === 'remote' ? '#10B981' : '#8B5CF6'} />
+              <View style={{ width: scale(40), height: scale(40), borderRadius: scale(12), backgroundColor: serverType === 'local' ? 'rgba(3, 225, 255, 0.15)' : serverType === 'remote' ? 'rgba(3, 225, 255, 0.15)' : 'rgba(139, 92, 246, 0.15)', alignItems: 'center', justifyContent: 'center', marginRight: scaleSpacing(12) }}>
+                <Feather name={serverType === 'local' ? 'wifi' : serverType === 'remote' ? 'globe' : 'cloud'} size={scale(20)} color={serverType === 'local' ? '#03E1FF' : serverType === 'remote' ? '#03E1FF' : '#8B5CF6'} />
               </View>
               <View style={{ flex: 1 }}>
                 <Text style={{ color: '#FFFFFF', fontSize: scale(18), fontWeight: '700' }}>
-                  {serverType === 'local' ? 'Local Server Setup' : serverType === 'remote' ? 'Remote Server Setup' : 'StealthCloud Setup'}
+                  {serverType === 'local' ? t('quickSetup.localTitle') : serverType === 'remote' ? t('quickSetup.remoteTitle') : t('quickSetup.stealthcloudTitle')}
                 </Text>
                 <Text style={{ color: '#888888', fontSize: scale(12), marginTop: 2 }}>
-                  {serverType === 'local' ? 'Connect to your home network' : serverType === 'remote' ? 'Self-hosted on your VPS' : 'Zero-knowledge encrypted cloud'}
+                  {serverType === 'local' ? t('quickSetup.localSubtitle') : serverType === 'remote' ? t('quickSetup.remoteSubtitle') : t('quickSetup.stealthcloudSubtitle')}
                 </Text>
               </View>
             </View>
@@ -3820,49 +3896,49 @@ export default function App() {
                 {/* Step 1: Computer */}
                 <View style={{ backgroundColor: '#111111', borderRadius: scale(12), padding: scaleSpacing(14), marginBottom: scaleSpacing(16), borderWidth: 1, borderColor: '#333333' }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: scaleSpacing(10) }}>
-                    <Feather name="monitor" size={scale(16)} color={THEME.primary} />
-                    <Text style={{ color: THEME.primary, fontSize: scale(13), fontWeight: '600', marginLeft: scaleSpacing(8) }}>ON YOUR COMPUTER</Text>
+                    <Feather name="monitor" size={scale(16)} color="#03E1FF" />
+                    <Text style={{ color: '#03E1FF', fontSize: scale(13), fontWeight: '600', marginLeft: scaleSpacing(8) }}>{t('quickSetup.onYourComputer')}</Text>
                   </View>
                   <View style={{ flexDirection: 'row', alignItems: 'flex-start', marginBottom: scaleSpacing(8) }}>
-                    <View style={{ width: scale(20), height: scale(20), borderRadius: scale(10), backgroundColor: THEME.primary, alignItems: 'center', justifyContent: 'center', marginRight: scaleSpacing(10) }}>
+                    <View style={{ width: scale(20), height: scale(20), borderRadius: scale(10), backgroundColor: '#03E1FF', alignItems: 'center', justifyContent: 'center', marginRight: scaleSpacing(10) }}>
                       <Text style={{ color: '#fff', fontSize: scale(11), fontWeight: '700' }}>1</Text>
                     </View>
                     <View style={{ flex: 1 }}>
-                      <Text style={{ color: '#FFFFFF', fontSize: scale(13) }}>Download PhotoLynk Server</Text>
+                      <Text style={{ color: '#FFFFFF', fontSize: scale(13) }}>{t('quickSetup.downloadServer')}</Text>
                       <TouchableOpacity
                         style={{ marginTop: scaleSpacing(6), backgroundColor: '#0A0A0A', borderRadius: scale(8), padding: scaleSpacing(8), borderWidth: 1, borderColor: '#333' }}
-                        onPress={() => { Clipboard.setString(GITHUB_RELEASES_LATEST_URL); showDarkAlert('Copied', 'Link copied to clipboard.'); }}
+                        onPress={() => { Clipboard.setString(GITHUB_RELEASES_LATEST_URL); showDarkAlert(t('alerts.copied'), t('alerts.linkCopied')); }}
                         onLongPress={() => openLink(GITHUB_RELEASES_LATEST_URL)}>
                         <Text style={{ color: '#888', fontSize: scale(10) }} numberOfLines={1} ellipsizeMode="middle">{GITHUB_RELEASES_LATEST_URL}</Text>
-                        <Text style={{ color: '#666', fontSize: scale(9), marginTop: 2 }}>Tap to copy • Long-press to open</Text>
+                        <Text style={{ color: '#666', fontSize: scale(9), marginTop: 2 }}>{t('quickSetup.tapToCopy')}</Text>
                       </TouchableOpacity>
                     </View>
                   </View>
                   <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: scaleSpacing(6) }}>
-                    <View style={{ width: scale(20), height: scale(20), borderRadius: scale(10), backgroundColor: THEME.primary, alignItems: 'center', justifyContent: 'center', marginRight: scaleSpacing(10) }}>
+                    <View style={{ width: scale(20), height: scale(20), borderRadius: scale(10), backgroundColor: '#03E1FF', alignItems: 'center', justifyContent: 'center', marginRight: scaleSpacing(10) }}>
                       <Text style={{ color: '#fff', fontSize: scale(11), fontWeight: '700' }}>2</Text>
                     </View>
-                    <Text style={{ color: '#FFFFFF', fontSize: scale(13) }}>Install and run it</Text>
+                    <Text style={{ color: '#FFFFFF', fontSize: scale(13) }}>{t('quickSetup.installAndRun')}</Text>
                   </View>
                   <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    <View style={{ width: scale(20), height: scale(20), borderRadius: scale(10), backgroundColor: THEME.primary, alignItems: 'center', justifyContent: 'center', marginRight: scaleSpacing(10) }}>
+                    <View style={{ width: scale(20), height: scale(20), borderRadius: scale(10), backgroundColor: '#03E1FF', alignItems: 'center', justifyContent: 'center', marginRight: scaleSpacing(10) }}>
                       <Text style={{ color: '#fff', fontSize: scale(11), fontWeight: '700' }}>3</Text>
                     </View>
-                    <Text style={{ color: '#FFFFFF', fontSize: scale(13) }}>Tray → Local Server → Pair Mobile</Text>
+                    <Text style={{ color: '#FFFFFF', fontSize: scale(13) }}>{t('quickSetup.trayPairMobile')}</Text>
                   </View>
                 </View>
 
                 {/* Step 2: Phone */}
                 <View style={{ backgroundColor: '#111111', borderRadius: scale(12), padding: scaleSpacing(14), borderWidth: 1, borderColor: '#333333' }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: scaleSpacing(10) }}>
-                    <Feather name="smartphone" size={scale(16)} color="#10B981" />
-                    <Text style={{ color: '#10B981', fontSize: scale(13), fontWeight: '600', marginLeft: scaleSpacing(8) }}>ON YOUR PHONE</Text>
+                    <Feather name="smartphone" size={scale(16)} color="#03E1FF" />
+                    <Text style={{ color: '#03E1FF', fontSize: scale(13), fontWeight: '600', marginLeft: scaleSpacing(8) }}>{t('quickSetup.onYourPhone')}</Text>
                   </View>
                   <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: scaleSpacing(6) }}>
-                    <View style={{ width: scale(20), height: scale(20), borderRadius: scale(10), backgroundColor: '#10B981', alignItems: 'center', justifyContent: 'center', marginRight: scaleSpacing(10) }}>
+                    <View style={{ width: scale(20), height: scale(20), borderRadius: scale(10), backgroundColor: '#03E1FF', alignItems: 'center', justifyContent: 'center', marginRight: scaleSpacing(10) }}>
                       <Text style={{ color: '#fff', fontSize: scale(11), fontWeight: '700' }}>4</Text>
                     </View>
-                    <Text style={{ color: '#FFFFFF', fontSize: scale(13) }}>Scan QR code or enter IP below:</Text>
+                    <Text style={{ color: '#FFFFFF', fontSize: scale(13) }}>{t('quickSetup.scanQrOrEnterIp')}</Text>
                   </View>
                   {/* IP Input with red highlight if required */}
                   <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: scaleSpacing(10), marginLeft: scale(30) }}>
@@ -3879,25 +3955,25 @@ export default function App() {
                       />
                     </View>
                     <TouchableOpacity 
-                      style={{ marginLeft: scaleSpacing(8), backgroundColor: THEME.primary, borderRadius: scale(8), padding: scaleSpacing(10) }} 
+                      style={{ marginLeft: scaleSpacing(8), backgroundColor: '#03E1FF', borderRadius: scale(8), padding: scaleSpacing(10) }} 
                       onPress={() => { setQuickSetupCollapsed(true); setQuickSetupHighlightInput(false); setQrScannerOpen(true); }}>
                       <Feather name="maximize" size={scale(18)} color="#FFFFFF" />
                     </TouchableOpacity>
                   </View>
                   {quickSetupHighlightInput && !localHost && (
-                    <Text style={{ color: '#EF4444', fontSize: scale(11), marginLeft: scale(30), marginBottom: scaleSpacing(6) }}>⚠ Enter server IP to register</Text>
+                    <Text style={{ color: '#EF4444', fontSize: scale(11), marginLeft: scale(30), marginBottom: scaleSpacing(6) }}>⚠ {t('quickSetup.enterIpToRegister')}</Text>
                   )}
                   <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: scaleSpacing(6) }}>
-                    <View style={{ width: scale(20), height: scale(20), borderRadius: scale(10), backgroundColor: '#10B981', alignItems: 'center', justifyContent: 'center', marginRight: scaleSpacing(10) }}>
+                    <View style={{ width: scale(20), height: scale(20), borderRadius: scale(10), backgroundColor: '#03E1FF', alignItems: 'center', justifyContent: 'center', marginRight: scaleSpacing(10) }}>
                       <Text style={{ color: '#fff', fontSize: scale(11), fontWeight: '700' }}>5</Text>
                     </View>
-                    <Text style={{ color: '#FFFFFF', fontSize: scale(13) }}>Create account & log in</Text>
+                    <Text style={{ color: '#FFFFFF', fontSize: scale(13) }}>{t('quickSetup.createAccountLogin')}</Text>
                   </View>
                   <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    <View style={{ width: scale(20), height: scale(20), borderRadius: scale(10), backgroundColor: '#10B981', alignItems: 'center', justifyContent: 'center', marginRight: scaleSpacing(10) }}>
+                    <View style={{ width: scale(20), height: scale(20), borderRadius: scale(10), backgroundColor: '#03E1FF', alignItems: 'center', justifyContent: 'center', marginRight: scaleSpacing(10) }}>
                       <Text style={{ color: '#fff', fontSize: scale(11), fontWeight: '700' }}>6</Text>
                     </View>
-                    <Text style={{ color: '#FFFFFF', fontSize: scale(13) }}>Start backing up!</Text>
+                    <Text style={{ color: '#FFFFFF', fontSize: scale(13) }}>{t('quickSetup.startBackingUp')}</Text>
                   </View>
                 </View>
               </>
@@ -3908,43 +3984,43 @@ export default function App() {
                 {/* Step 1: Server */}
                 <View style={{ backgroundColor: '#1A1A1A', borderRadius: scale(12), padding: scaleSpacing(14), marginBottom: scaleSpacing(10), borderWidth: 1, borderColor: '#2A2A2A' }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: scaleSpacing(10) }}>
-                    <Feather name="terminal" size={scale(16)} color="#10B981" />
-                    <Text style={{ color: '#10B981', fontSize: scale(13), fontWeight: '600', marginLeft: scaleSpacing(8) }}>ON YOUR SERVER (SSH)</Text>
+                    <Feather name="terminal" size={scale(16)} color="#03E1FF" />
+                    <Text style={{ color: '#03E1FF', fontSize: scale(13), fontWeight: '600', marginLeft: scaleSpacing(8) }}>{t('quickSetup.onYourServer')}</Text>
                   </View>
                   <View style={{ flexDirection: 'row', alignItems: 'flex-start', marginBottom: scaleSpacing(8) }}>
-                    <View style={{ width: scale(20), height: scale(20), borderRadius: scale(10), backgroundColor: '#10B981', alignItems: 'center', justifyContent: 'center', marginRight: scaleSpacing(10), marginTop: 2 }}>
+                    <View style={{ width: scale(20), height: scale(20), borderRadius: scale(10), backgroundColor: '#03E1FF', alignItems: 'center', justifyContent: 'center', marginRight: scaleSpacing(10), marginTop: 2 }}>
                       <Text style={{ color: '#fff', fontSize: scale(11), fontWeight: '700' }}>1</Text>
                     </View>
                     <View style={{ flex: 1 }}>
-                      <Text style={{ color: '#FFFFFF', fontSize: scale(13) }}>Run the install script</Text>
+                      <Text style={{ color: '#FFFFFF', fontSize: scale(13) }}>{t('quickSetup.runInstallScript')}</Text>
                       <TouchableOpacity
                         style={{ marginTop: scaleSpacing(6), backgroundColor: '#0A0A0A', borderRadius: scale(8), padding: scaleSpacing(8), borderWidth: 1, borderColor: '#333' }}
-                        onPress={() => { Clipboard.setString('sudo curl -fsSL https://raw.githubusercontent.com/viktorvishyn369/PhotoLynk/main/install-server.sh | bash'); showDarkAlert('Copied', 'Command copied to clipboard.'); }}
+                        onPress={() => { Clipboard.setString('sudo curl -fsSL https://raw.githubusercontent.com/viktorvishyn369/PhotoLynk/main/install-server.sh | bash'); showDarkAlert(t('alerts.copied'), t('alerts.commandCopied')); }}
                         onLongPress={() => openLink('https://github.com/viktorvishyn369/PhotoLynk/blob/main/install-server.sh')}>
                         <Text style={{ color: '#888', fontSize: scale(10) }} numberOfLines={2}>sudo curl -fsSL https://...install-server.sh | bash</Text>
-                        <Text style={{ color: '#666', fontSize: scale(9), marginTop: 2 }}>Tap to copy • Long-press to view</Text>
+                        <Text style={{ color: '#666', fontSize: scale(9), marginTop: 2 }}>{t('quickSetup.tapToCopyView')}</Text>
                       </TouchableOpacity>
                     </View>
                   </View>
                   <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    <View style={{ width: scale(20), height: scale(20), borderRadius: scale(10), backgroundColor: '#10B981', alignItems: 'center', justifyContent: 'center', marginRight: scaleSpacing(10) }}>
+                    <View style={{ width: scale(20), height: scale(20), borderRadius: scale(10), backgroundColor: '#03E1FF', alignItems: 'center', justifyContent: 'center', marginRight: scaleSpacing(10) }}>
                       <Text style={{ color: '#fff', fontSize: scale(11), fontWeight: '700' }}>2</Text>
                     </View>
-                    <Text style={{ color: '#FFFFFF', fontSize: scale(13) }}>Follow on-screen instructions</Text>
+                    <Text style={{ color: '#FFFFFF', fontSize: scale(13) }}>{t('quickSetup.followInstructions')}</Text>
                   </View>
                 </View>
 
                 {/* Step 2: Phone */}
                 <View style={{ backgroundColor: '#1A1A1A', borderRadius: scale(12), padding: scaleSpacing(14), borderWidth: 1, borderColor: '#2A2A2A' }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: scaleSpacing(10) }}>
-                    <Feather name="smartphone" size={scale(16)} color={THEME.primary} />
-                    <Text style={{ color: THEME.primary, fontSize: scale(13), fontWeight: '600', marginLeft: scaleSpacing(8) }}>ON YOUR PHONE</Text>
+                    <Feather name="smartphone" size={scale(16)} color="#03E1FF" />
+                    <Text style={{ color: '#03E1FF', fontSize: scale(13), fontWeight: '600', marginLeft: scaleSpacing(8) }}>{t('quickSetup.onYourPhone')}</Text>
                   </View>
                   <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: scaleSpacing(6) }}>
-                    <View style={{ width: scale(20), height: scale(20), borderRadius: scale(10), backgroundColor: THEME.primary, alignItems: 'center', justifyContent: 'center', marginRight: scaleSpacing(10) }}>
+                    <View style={{ width: scale(20), height: scale(20), borderRadius: scale(10), backgroundColor: '#03E1FF', alignItems: 'center', justifyContent: 'center', marginRight: scaleSpacing(10) }}>
                       <Text style={{ color: '#fff', fontSize: scale(11), fontWeight: '700' }}>3</Text>
                     </View>
-                    <Text style={{ color: '#FFFFFF', fontSize: scale(13) }}>Enter your domain below:</Text>
+                    <Text style={{ color: '#FFFFFF', fontSize: scale(13) }}>{t('quickSetup.enterDomainBelow')}</Text>
                   </View>
                   {/* Domain Input with red highlight if required */}
                   <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: scaleSpacing(10), marginLeft: scale(30) }}>
@@ -3952,7 +4028,7 @@ export default function App() {
                       <Feather name="globe" size={scale(16)} color={quickSetupHighlightInput && !remoteHost ? '#EF4444' : '#666'} />
                       <TextInput
                         style={{ flex: 1, color: '#FFFFFF', fontSize: scale(13), paddingVertical: scaleSpacing(10), marginLeft: scaleSpacing(8) }}
-                        placeholder="backup.example.com"
+                        placeholder="example.com"
                         placeholderTextColor="#666"
                         value={remoteHost}
                         onChangeText={(t) => setRemoteHost(normalizeHostInput(t))}
@@ -3962,19 +4038,19 @@ export default function App() {
                     </View>
                   </View>
                   {quickSetupHighlightInput && !remoteHost && (
-                    <Text style={{ color: '#EF4444', fontSize: scale(11), marginLeft: scale(30), marginBottom: scaleSpacing(6) }}>⚠ Enter server domain to register</Text>
+                    <Text style={{ color: '#EF4444', fontSize: scale(11), marginLeft: scale(30), marginBottom: scaleSpacing(6) }}>⚠ {t('quickSetup.enterDomainToRegister')}</Text>
                   )}
                   <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: scaleSpacing(6) }}>
-                    <View style={{ width: scale(20), height: scale(20), borderRadius: scale(10), backgroundColor: THEME.primary, alignItems: 'center', justifyContent: 'center', marginRight: scaleSpacing(10) }}>
+                    <View style={{ width: scale(20), height: scale(20), borderRadius: scale(10), backgroundColor: '#03E1FF', alignItems: 'center', justifyContent: 'center', marginRight: scaleSpacing(10) }}>
                       <Text style={{ color: '#fff', fontSize: scale(11), fontWeight: '700' }}>4</Text>
                     </View>
-                    <Text style={{ color: '#FFFFFF', fontSize: scale(13) }}>Create account & log in</Text>
+                    <Text style={{ color: '#FFFFFF', fontSize: scale(13) }}>{t('quickSetup.createAccountLogin')}</Text>
                   </View>
                   <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    <View style={{ width: scale(20), height: scale(20), borderRadius: scale(10), backgroundColor: THEME.primary, alignItems: 'center', justifyContent: 'center', marginRight: scaleSpacing(10) }}>
+                    <View style={{ width: scale(20), height: scale(20), borderRadius: scale(10), backgroundColor: '#03E1FF', alignItems: 'center', justifyContent: 'center', marginRight: scaleSpacing(10) }}>
                       <Text style={{ color: '#fff', fontSize: scale(11), fontWeight: '700' }}>5</Text>
                     </View>
-                    <Text style={{ color: '#FFFFFF', fontSize: scale(13) }}>Start backing up!</Text>
+                    <Text style={{ color: '#FFFFFF', fontSize: scale(13) }}>{t('quickSetup.startBackingUp')}</Text>
                   </View>
                 </View>
               </>
@@ -4048,7 +4124,7 @@ export default function App() {
             if (!cameraPermission?.granted) {
               const result = await requestCameraPermission();
               if (!result.granted) {
-                showDarkAlert('Camera Permission', 'Camera access is needed to scan QR codes.');
+                showDarkAlert(t('login.cameraPermissionTitle'), t('login.cameraPermissionMessage'));
                 return;
               }
             }
@@ -4056,16 +4132,18 @@ export default function App() {
           }}
           normalizeHostInput={normalizeHostInput}
           SecureStore={SecureStore}
+          currentLanguage={currentLanguage}
+          onLanguageChange={handleLanguageChange}
         />
 
         {qrScannerOpen && (
           <View style={[styles.overlay, {backgroundColor: 'rgba(0,0,0,0.95)'}]}>
             <View style={{flex: 1, width: '100%', justifyContent: 'center', alignItems: 'center'}}>
               <Text style={{color: '#fff', fontSize: scale(20), fontWeight: '600', marginBottom: scaleSpacing(8)}}>
-                📷 Scan QR Code
+                📷 {t('qrScanner.title')}
               </Text>
               <Text style={{color: '#aaa', fontSize: scale(14), marginBottom: scaleSpacing(20), textAlign: 'center', paddingHorizontal: scaleSpacing(40)}}>
-                Point your camera at the QR code shown in the PhotoLynk Server tray app
+                {t('qrScanner.instruction')}
               </Text>
 
               <View style={{width: isTablet ? 350 : 280, height: isTablet ? 350 : 280, borderRadius: scaleSpacing(16), overflow: 'hidden', backgroundColor: '#000'}}>
@@ -4073,8 +4151,11 @@ export default function App() {
                   <CameraView
                     style={{flex: 1}}
                     facing="back"
+                    autofocus="on"
+                    zoom={0}
                     barcodeScannerSettings={{
                       barcodeTypes: ['qr'],
+                      interval: 100,
                     }}
                     onBarcodeScanned={(result) => {
                       if (result && result.data) {
@@ -4085,21 +4166,21 @@ export default function App() {
                 ) : (
                   <View style={{flex: 1, justifyContent: 'center', alignItems: 'center'}}>
                     <Text style={{color: '#888', textAlign: 'center', padding: scaleSpacing(20), fontSize: scale(14)}}>
-                      Camera permission required
+                      {t('permissions.cameraRequired')}
                     </Text>
                     <TouchableOpacity
-                      style={{backgroundColor: '#4a90d9', paddingHorizontal: scaleSpacing(20), paddingVertical: scaleSpacing(10), borderRadius: scaleSpacing(8)}}
+                      style={{backgroundColor: '#03E1FF', paddingHorizontal: scaleSpacing(20), paddingVertical: scaleSpacing(10), borderRadius: scaleSpacing(8)}}
                       onPress={requestCameraPermission}>
-                      <Text style={{color: '#fff', fontWeight: '600', fontSize: scale(14)}}>Grant Permission</Text>
+                      <Text style={{color: '#000000', fontWeight: '700', fontSize: scale(14)}}>{t('permissions.grant')}</Text>
                     </TouchableOpacity>
                   </View>
                 )}
               </View>
 
               <TouchableOpacity
-                style={{marginTop: scaleSpacing(24), paddingVertical: scaleSpacing(14), paddingHorizontal: scaleSpacing(40), backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: scaleSpacing(8)}}
+                style={{marginTop: scaleSpacing(24), paddingVertical: scaleSpacing(14), paddingHorizontal: scaleSpacing(40), backgroundColor: '#000', borderRadius: scaleSpacing(8), borderWidth: 1, borderColor: '#fff'}}
                 onPress={() => setQrScannerOpen(false)}>
-                <Text style={{color: '#fff', fontSize: scale(16), fontWeight: '600'}}>Cancel</Text>
+                <Text style={{color: '#fff', fontSize: scale(16), fontWeight: '600'}}>{t('login.cancel')}</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -4110,16 +4191,16 @@ export default function App() {
             <View style={[styles.overlayCard, { backgroundColor: '#000000', maxWidth: isTablet ? 450 : 320 }]}>
               <Text style={[styles.overlayTitle, { fontSize: scale(18), marginBottom: scaleSpacing(8) }]}>{customAlert.title}</Text>
               <Text style={{ color: '#FFFFFF', fontSize: scale(14), textAlign: 'center', marginBottom: scaleSpacing(20), lineHeight: scale(20) }}>{customAlert.message}</Text>
-              <View style={{ flexDirection: 'row', justifyContent: 'center', gap: scaleSpacing(12) }}>
+              <View style={{ flexDirection: 'row', justifyContent: 'center', gap: scaleSpacing(12), flexWrap: 'wrap' }}>
                 {(customAlert.buttons || []).map((btn, idx) => (
                   <TouchableOpacity
                     key={idx}
-                    style={[styles.overlayBtnPrimary, { paddingVertical: scaleSpacing(10), paddingHorizontal: scaleSpacing(24), minWidth: isTablet ? 100 : 80 }]}
+                    style={[styles.overlayBtnPrimary, { paddingVertical: scaleSpacing(10), paddingHorizontal: scaleSpacing(16), minWidth: isTablet ? 100 : 70 }]}
                     onPress={() => {
                       closeDarkAlert();
                       if (btn.onPress) btn.onPress();
                     }}>
-                    <Text style={styles.overlayBtnPrimaryText}>{btn.text}</Text>
+                    <Text style={styles.overlayBtnPrimaryText} numberOfLines={1}>{btn.text}</Text>
                   </TouchableOpacity>
                 ))}
               </View>
@@ -4159,12 +4240,12 @@ export default function App() {
                 {(customAlert.buttons || []).map((btn, idx) => (
                   <TouchableOpacity
                     key={idx}
-                    style={[styles.overlayBtnPrimary, { paddingVertical: scaleSpacing(10), paddingHorizontal: scaleSpacing(24), minWidth: isTablet ? 100 : 80 }]}
+                    style={[styles.overlayBtnPrimary, { paddingVertical: scaleSpacing(10), paddingHorizontal: scaleSpacing(16), minWidth: isTablet ? 100 : 70 }]}
                     onPress={() => {
                       closeDarkAlert();
                       if (btn.onPress) btn.onPress();
                     }}>
-                    <Text style={styles.overlayBtnPrimaryText}>{btn.text}</Text>
+                    <Text style={styles.overlayBtnPrimaryText} numberOfLines={1}>{btn.text}</Text>
                   </TouchableOpacity>
                 ))}
               </View>
@@ -4182,13 +4263,13 @@ export default function App() {
                 const currentPlan = stealthUsage?.planGb || stealthUsage?.plan_gb;
                 const isCurrent = currentPlan === gb;
                 const canSubscribe = !purchaseLoading && !isCurrent && plan && priceStr && priceStr !== '—';
-                const title = gb === 1000 ? '1 TB Monthly' : `${gb} GB Monthly`;
+                const title = gb === 1000 ? t('subscription.storage1000Monthly') : t('subscription.storageGbMonthly', { gb });
 
                 return (
                   <>
                     <Text style={[styles.overlayTitle, { fontSize: scale(18), marginBottom: scaleSpacing(8) }]}>{title}</Text>
                     <Text style={{ color: '#CCC', fontSize: scale(14), textAlign: 'center', marginBottom: scaleSpacing(14), lineHeight: scale(20) }}>
-                      {priceStr !== '—' ? `${priceStr} / month` : 'Pricing unavailable. Please try again later.'}
+                      {priceStr !== '—' ? t('subscription.pricePerMonth', { price: priceStr }) : t('subscription.pricingUnavailable')}
                     </Text>
                     <View style={{ flexDirection: 'row', justifyContent: 'center', gap: scaleSpacing(12), flexWrap: 'wrap' }}>
                       <TouchableOpacity
@@ -4196,7 +4277,7 @@ export default function App() {
                         onPress={closePaywall}
                         disabled={purchaseLoading}
                       >
-                        <Text style={styles.overlayBtnPrimaryText}>Close</Text>
+                        <Text style={styles.overlayBtnPrimaryText}>{t('common.close')}</Text>
                       </TouchableOpacity>
 
                       <TouchableOpacity
@@ -4208,7 +4289,7 @@ export default function App() {
                         }}
                         disabled={!canSubscribe}
                       >
-                        <Text style={styles.overlayBtnPrimaryText}>{isCurrent ? 'Current' : 'Subscribe'}</Text>
+                        <Text style={styles.overlayBtnPrimaryText}>{isCurrent ? t('subscription.currentPlan') : t('subscription.subscribe')}</Text>
                       </TouchableOpacity>
                     </View>
 
@@ -4221,7 +4302,7 @@ export default function App() {
                         }}
                         disabled={purchaseLoading}
                       >
-                        <Text style={styles.restorePurchasesText}>Restore Purchases</Text>
+                        <Text style={styles.restorePurchasesText}>{t('subscription.restorePurchases')}</Text>
                       </TouchableOpacity>
                     )}
                   </>
@@ -4312,14 +4393,14 @@ export default function App() {
             {/* Header */}
             <View style={{ paddingTop: Platform.OS === 'ios' ? 50 : 30, paddingHorizontal: 16, paddingBottom: 12, backgroundColor: 'rgba(0,0,0,0.8)' }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                <TouchableOpacity onPress={closeSimilarReview} style={{ padding: 8 }}>
-                  <Text style={{ color: THEME.secondary, fontSize: scale(16), fontWeight: '600' }}>Cancel</Text>
+                <TouchableOpacity onPress={closeSimilarReview} style={{ padding: 8, minWidth: 60 }}>
+                  <Text style={{ color: THEME.secondary, fontSize: scale(16), fontWeight: '600' }}>{t('common.cancel')}</Text>
                 </TouchableOpacity>
-                <View style={{ alignItems: 'center' }}>
-                  <Text style={{ color: '#FFF', fontSize: scale(16), fontWeight: '700' }}>Similar Photos</Text>
-                  <Text style={{ color: '#888', fontSize: scale(12) }}>Set {similarGroupIndex + 1}/{totalGroups} • Photo {similarPhotoIndex + 1}/{totalInGroup}</Text>
+                <View style={{ flex: 1, alignItems: 'center', marginHorizontal: 8 }}>
+                  <Text style={{ color: '#FFF', fontSize: scale(16), fontWeight: '700' }} numberOfLines={1}>{t('similarPhotos.title')}</Text>
+                  <Text style={{ color: '#888', fontSize: scale(12) }} numberOfLines={1}>{t('similarPhotos.setInfo', { set: similarGroupIndex + 1, total: totalGroups })} • {t('similarPhotos.photoInfo', { photo: similarPhotoIndex + 1, total: totalInGroup })}</Text>
                 </View>
-                <View style={{ width: 60 }} />
+                <View style={{ minWidth: 60 }} />
               </View>
             </View>
 
@@ -4336,7 +4417,7 @@ export default function App() {
               {/* Selection overlay badge */}
               {isSelected && (
                 <View style={{ position: 'absolute', top: 20, right: 20, backgroundColor: 'rgba(255,59,48,0.9)', paddingHorizontal: 16, paddingVertical: 8, borderRadius: 20 }}>
-                  <Text style={{ color: '#FFF', fontSize: scale(14), fontWeight: '700' }}>MARKED FOR DELETION</Text>
+                  <Text style={{ color: '#FFF', fontSize: scale(14), fontWeight: '700' }}>{t('similarPhotos.markedForDeletion')}</Text>
                 </View>
               )}
               
@@ -4399,7 +4480,7 @@ export default function App() {
                 style={{ backgroundColor: isSelected ? '#333' : '#FF3B30', paddingVertical: 14, borderRadius: 12, marginBottom: 10, alignItems: 'center' }}
                 onPress={() => toggleSimilarSelected(currentPhotoId)}>
                 <Text style={{ color: '#FFF', fontSize: scale(15), fontWeight: '700' }}>
-                  {isSelected ? 'Keep This Photo' : 'Mark for Deletion'}
+                  {isSelected ? t('similarPhotos.keepThisPhoto') : t('similarPhotos.markForDeletion')}
                 </Text>
               </TouchableOpacity>
 
@@ -4412,7 +4493,7 @@ export default function App() {
                     const ids = getSimilarSelectedIds();
                     if (ids.length === 0) return;
                     setLoadingSafe(true);
-                    setStatus('Deleting selected photos...');
+                    setStatus(t('status.deletingItems', { count: ids.length }));
                     let didDelete = false;
 
                     try {
@@ -4421,26 +4502,26 @@ export default function App() {
                         const result = await MediaDelete.deleteAssets(ids);
                         if (result === true) {
                           didDelete = true;
-                          setStatus(`Deleted ${ids.length} item${ids.length !== 1 ? 's' : ''}`);
-                          showCompletionTickBriefly(`${ids.length} files deleted`);
+                          setStatus(t('status.deletedItems', { count: ids.length }));
+                          showCompletionTickBriefly(t('results.filesDeleted', { count: ids.length }));
                         } else {
-                          setStatus('Deletion cancelled');
+                          setStatus(t('status.deletionCancelled'));
                         }
                       } else {
                         console.log('Similar Photos: Using MediaLibrary.deleteAssetsAsync fallback for', ids.length, 'items');
                         const result = await MediaLibrary.deleteAssetsAsync(ids);
                         if (result === true) {
                           didDelete = true;
-                          setStatus(`Deleted ${ids.length} item${ids.length !== 1 ? 's' : ''}`);
-                          showCompletionTickBriefly(`${ids.length} files deleted`);
+                          setStatus(t('status.deletedItems', { count: ids.length }));
+                          showCompletionTickBriefly(t('results.filesDeleted', { count: ids.length }));
                         } else {
-                          setStatus('Deletion cancelled or partial');
+                          setStatus(t('status.deletionCancelledPartial'));
                         }
                       }
                     } catch (e) {
                       console.log('Similar Photos: Delete error', e?.message || e);
-                      setStatus('Delete failed');
-                      showDarkAlert('Delete Failed', e?.message || 'Could not delete items.');
+                      setStatus(t('status.deletionFailed'));
+                      showDarkAlert(t('alerts.deleteFailed'), e?.message || t('alerts.deleteFailedMessage'));
                     }
 
                     setLoadingSafe(false);
@@ -4454,8 +4535,8 @@ export default function App() {
 
                     if (nextGroups.length === 0) {
                       closeSimilarReview();
-                      setStatus('Cleanup complete');
-                      showCompletionTickBriefly('Cleanup done');
+                      setStatus(t('status.cleanupComplete'));
+                      showCompletionTickBriefly(t('results.cleanupDone'));
                       return;
                     }
 
@@ -4466,7 +4547,7 @@ export default function App() {
                     setSimilarPhotoIndex(0);
                   }}>
                   <Text style={{ color: selectedCount > 0 ? '#000' : '#888', fontSize: scale(14), fontWeight: '700' }}>
-                    Delete {selectedCount > 0 ? `(${selectedCount})` : ''}
+                    {t('similarPhotos.delete')} {selectedCount > 0 ? `(${selectedCount})` : ''}
                   </Text>
                 </TouchableOpacity>
 
@@ -4477,7 +4558,7 @@ export default function App() {
                     advanceSimilarGroup({ groups: similarGroups, nextIndex: similarGroupIndex + 1 });
                   }}>
                   <Text style={{ color: '#FFF', fontSize: scale(14), fontWeight: '600' }}>
-                    {similarGroupIndex < totalGroups - 1 ? 'Keep All → Next' : 'Keep All & Done'}
+                    {similarGroupIndex < totalGroups - 1 ? t('similarPhotos.keepAllNext') : t('similarPhotos.keepAllDone')}
                   </Text>
                 </TouchableOpacity>
               </View>
@@ -4524,11 +4605,11 @@ export default function App() {
           <View style={[styles.pickerCard, glassModeEnabled && styles.pickerCardGlass]}>
             <View style={styles.pickerHeader}>
               <TouchableOpacity onPress={closeBackupPicker} style={styles.pickerHeaderBtn}>
-                <Text style={styles.pickerHeaderBtnText}>Cancel</Text>
+                <Text style={styles.pickerHeaderBtnText}>{t('picker.cancel')}</Text>
               </TouchableOpacity>
               <View style={{ flex: 1, alignItems: 'center' }}>
-                <Text style={styles.pickerHeaderTitle}>Select media</Text>
-                <Text style={styles.pickerHeaderSubtitle}>{Object.keys(backupPickerSelected || {}).filter(k => backupPickerSelected[k]).length} selected</Text>
+                <Text style={styles.pickerHeaderTitle}>{t('picker.selectMedia')}</Text>
+                <Text style={styles.pickerHeaderSubtitle}>{t('picker.selected', { count: Object.keys(backupPickerSelected || {}).filter(k => backupPickerSelected[k]).length })}</Text>
               </View>
               <TouchableOpacity
                 disabled={Object.keys(backupPickerSelected || {}).filter(k => backupPickerSelected[k]).length === 0 || loading}
@@ -4538,14 +4619,14 @@ export default function App() {
                   await backupSelectedAssets({ assets: selected });
                 }}
                 style={styles.pickerHeaderBtn}>
-                <Text style={styles.pickerHeaderBtnText}>Start</Text>
+                <Text style={styles.pickerHeaderBtnText}>{t('picker.start')}</Text>
               </TouchableOpacity>
             </View>
 
             {/* Info about missing thumbnails */}
             <View style={{ paddingHorizontal: scaleSpacing(12), paddingVertical: scaleSpacing(6), backgroundColor: '#1a1a1a' }}>
               <Text style={{ color: '#666', fontSize: scale(11), textAlign: 'center' }}>
-                Some previews may not load if files were modified externally
+                {t('picker.previewsUnavailable')}
               </Text>
             </View>
 
@@ -4568,7 +4649,7 @@ export default function App() {
                     </View>
                     {a.mediaType === 'video' && (
                       <View style={styles.pickerBadge}>
-                        <Text style={styles.pickerBadgeText}>VIDEO</Text>
+                        <Text style={styles.pickerBadgeText}>{t('picker.video')}</Text>
                       </View>
                     )}
                     {selected && (
@@ -4588,7 +4669,7 @@ export default function App() {
                     <TouchableOpacity
                       style={{ backgroundColor: '#000000', borderWidth: 1.5, borderColor: '#FFFFFF', borderRadius: scaleSpacing(10), paddingVertical: scaleSpacing(14), alignItems: 'center' }}
                       onPress={() => loadBackupPickerPage({ reset: false })}>
-                      <Text style={{ color: '#FFFFFF', fontWeight: '600', fontSize: scale(15) }}>Load More</Text>
+                      <Text style={{ color: '#FFFFFF', fontWeight: '600', fontSize: scale(15) }}>{t('picker.loadMore')}</Text>
                     </TouchableOpacity>
                   )
                 )}
@@ -4601,8 +4682,8 @@ export default function App() {
       {syncModeOpen && (
         <View style={[styles.overlay, glassModeEnabled && styles.overlayGlass]}>
           <View style={[styles.overlayCard, glassModeEnabled && styles.overlayCardGlass]}>
-            <Text style={styles.overlayTitle}>Sync from Cloud</Text>
-            <Text style={styles.overlaySubtitle}>Choose how you want to download{"\n"}(existing files on device will be skipped).</Text>
+            <Text style={styles.overlayTitle}>{t('sync.title')}</Text>
+            <Text style={styles.overlaySubtitle}>{t('sync.subtitle')}</Text>
 
             <TouchableOpacity
               style={[styles.overlayBtnPrimary, glassModeEnabled && styles.overlayBtnPrimaryGlass]}
@@ -4610,7 +4691,7 @@ export default function App() {
                 closeSyncModeChooser();
                 await restorePhotos();
               }}>
-              <Text style={styles.overlayBtnPrimaryText}>All Photos & Videos</Text>
+              <Text style={styles.overlayBtnPrimaryText}>{t('sync.allPhotosVideos')}</Text>
             </TouchableOpacity>
 
             <TouchableOpacity
@@ -4619,13 +4700,13 @@ export default function App() {
                 closeSyncModeChooser();
                 await openSyncPicker();
               }}>
-              <Text style={styles.overlayBtnSecondaryText}>Choose Photos & Videos</Text>
+              <Text style={styles.overlayBtnSecondaryText}>{t('sync.choosePhotosVideos')}</Text>
             </TouchableOpacity>
 
             <TouchableOpacity
               style={[styles.overlayBtnGhost, glassModeEnabled && styles.overlayBtnGhostGlass]}
               onPress={closeSyncModeChooser}>
-              <Text style={styles.overlayBtnGhostText}>Cancel</Text>
+              <Text style={styles.overlayBtnGhostText}>{t('picker.cancel')}</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -4636,11 +4717,11 @@ export default function App() {
           <View style={[styles.pickerCard, glassModeEnabled && styles.pickerCardGlass]}>
             <View style={styles.pickerHeader}>
               <TouchableOpacity onPress={closeSyncPicker} style={styles.pickerHeaderBtn}>
-                <Text style={styles.pickerHeaderBtnText}>Cancel</Text>
+                <Text style={styles.pickerHeaderBtnText}>{t('picker.cancel')}</Text>
               </TouchableOpacity>
               <View style={{ flex: 1, alignItems: 'center' }}>
-                <Text style={styles.pickerHeaderTitle}>Select files</Text>
-                <Text style={styles.pickerHeaderSubtitle}>{getSelectedSyncKeys().length} selected</Text>
+                <Text style={styles.pickerHeaderTitle}>{t('picker.selectFiles')}</Text>
+                <Text style={styles.pickerHeaderSubtitle}>{t('picker.selected', { count: getSelectedSyncKeys().length })}</Text>
               </View>
               <TouchableOpacity
                 disabled={getSelectedSyncKeys().length === 0 || loading}
@@ -4654,7 +4735,7 @@ export default function App() {
                   }
                 }}
                 style={styles.pickerHeaderBtn}>
-                <Text style={styles.pickerHeaderBtnText}>Start</Text>
+                <Text style={styles.pickerHeaderBtnText}>{t('picker.start')}</Text>
               </TouchableOpacity>
             </View>
 
@@ -4662,17 +4743,17 @@ export default function App() {
               {syncPickerLoading ? (
                 <View style={{ width: '100%', paddingVertical: scaleSpacing(32), alignItems: 'center' }}>
                   <ActivityIndicator size={isTablet ? 'large' : 'small'} color={THEME.secondary} />
-                  <Text style={{ color: '#888', fontSize: scale(13), marginTop: scaleSpacing(10) }}>Loading files...</Text>
+                  <Text style={{ color: '#888', fontSize: scale(13), marginTop: scaleSpacing(10) }}>{t('picker.loadingFiles')}</Text>
                 </View>
               ) : serverType === 'stealthcloud' ? (
                 <>
                   {/* StealthCloud: list view with icons (encrypted, no thumbnails) */}
                   <View style={{ paddingHorizontal: scaleSpacing(12), paddingVertical: scaleSpacing(8), borderBottomWidth: 1, borderBottomColor: '#222' }}>
                     <Text style={{ color: '#666', fontSize: scale(11), textAlign: 'center', marginBottom: scaleSpacing(4) }}>
-                      Files are encrypted — previews unavailable for security
+                      {t('picker.filesEncrypted')}
                     </Text>
                     <Text style={{ color: '#888', fontSize: scale(12) }}>
-                      Showing {syncPickerItems.length}{syncPickerTotal > 0 ? ` of ${syncPickerTotal}` : ''} files
+                      {t('picker.showingFiles', { count: syncPickerItems.length, total: syncPickerTotal > 0 ? syncPickerTotal : syncPickerItems.length })}
                     </Text>
                   </View>
 
@@ -4755,7 +4836,7 @@ export default function App() {
                         </View>
                         {isVideo && (
                           <View style={styles.pickerBadge}>
-                            <Text style={styles.pickerBadgeText}>VIDEO</Text>
+                            <Text style={styles.pickerBadgeText}>{t('picker.video')}</Text>
                           </View>
                         )}
                         {selected && (
@@ -4790,15 +4871,15 @@ export default function App() {
       {duplicateReview && (
         <View style={[styles.overlay, glassModeEnabled && styles.overlayGlass]}>
           <View style={[styles.overlayCard, glassModeEnabled && styles.overlayCardGlass]}>
-            <Text style={styles.overlayTitle}>Review Duplicates</Text>
+            <Text style={styles.overlayTitle}>{t('duplicates.review')}</Text>
             <Text style={styles.overlaySubtitle}>
-              {`Found ${duplicateReview.duplicateCount} items in ${duplicateReview.groupCount} group${duplicateReview.groupCount !== 1 ? 's' : ''} (${duplicateReview.mode}). Uncheck any items you want to keep.`}
+              {t('duplicates.reviewSubtitle', { count: duplicateReview.duplicateCount, groups: duplicateReview.groupCount })}
             </Text>
             <ScrollView style={{ maxHeight: 420 }}>
               {duplicateReview.groups.map((group) => (
                 <View key={`grp-${group.groupIndex}`} style={{ marginBottom: 12, padding: 10, backgroundColor: '#111', borderRadius: 8 }}>
                   <Text style={{ color: '#fff', fontWeight: '700', marginBottom: 6 }}>
-                    {group.type === 'similar' ? 'Similar' : 'Best match'} Group {group.groupIndex}
+                    {group.type === 'similar' ? t('duplicates.similarGroup', { index: group.groupIndex }) : t('duplicates.bestMatchGroup', { index: group.groupIndex })}
                   </Text>
                   {group.items.map((item, idx) => (
                     <TouchableOpacity
@@ -4839,7 +4920,7 @@ export default function App() {
                           {new Date(item.created).toLocaleString()} {item.size ? `· ${item.size} bytes` : ''}
                         </Text>
                       </View>
-                      {idx === 0 && <Text style={{ color: THEME.secondary, fontSize: 12 }}>Keep oldest</Text>}
+                      {idx === 0 && <Text style={{ color: THEME.secondary, fontSize: 12 }}>{t('duplicates.keepOldest')}</Text>}
                     </TouchableOpacity>
                   ))}
                 </View>
@@ -4848,9 +4929,9 @@ export default function App() {
             <View style={{ flexDirection: 'row', marginTop: 12, gap: 10 }}>
               <TouchableOpacity
                 style={[styles.overlayBtnSecondary, glassModeEnabled && styles.overlayBtnSecondaryGlass, { flex: 1 }]}
-                onPress={() => { setDuplicateReview(null); setStatus('Duplicate scan cancelled.'); }}
+                onPress={() => { setDuplicateReview(null); setStatus(t('status.duplicateScanCancelled')); }}
               >
-                <Text style={styles.overlayBtnSecondaryText}>Cancel</Text>
+                <Text style={styles.overlayBtnSecondaryText}>{t('common.cancel')}</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={[styles.overlayBtnPrimary, glassModeEnabled && styles.overlayBtnPrimaryGlass, { flex: 1 }]}
@@ -4861,12 +4942,12 @@ export default function App() {
                       g.items.forEach(it => { if (it.delete) idsToDelete.push(it.id); });
                     });
                     if (idsToDelete.length === 0) {
-                      setStatus('All items kept');
+                      setStatus(t('status.allItemsKept'));
                       setDuplicateReview(null);
-                      showCompletionTickBriefly('All files kept');
+                      showCompletionTickBriefly(t('results.allFilesKept'));
                       return;
                     }
-                    setStatus(`Deleting ${idsToDelete.length} item${idsToDelete.length !== 1 ? 's' : ''}...`);
+                    setStatus(t('status.deletingItems', { count: idsToDelete.length }));
 
                     // Use native MediaDelete module on both iOS and Android
                     if (MediaDelete && typeof MediaDelete.deleteAssets === 'function') {
@@ -4874,9 +4955,9 @@ export default function App() {
                       const result = await MediaDelete.deleteAssets(idsToDelete);
                       if (result === true) {
                         showResultAlert('clean', { deleted: idsToDelete.length });
-                        setStatus(`Deleted ${idsToDelete.length} item${idsToDelete.length !== 1 ? 's' : ''}`);
+                        setStatus(t('status.deletedItems', { count: idsToDelete.length }));
                       } else {
-                        setStatus('Deletion cancelled');
+                        setStatus(t('status.deletionCancelled'));
                       }
                     } else {
                       // Fallback to expo-media-library
@@ -4884,15 +4965,15 @@ export default function App() {
                       const result = await MediaLibrary.deleteAssetsAsync(idsToDelete);
                       if (result === true) {
                         showResultAlert('clean', { deleted: idsToDelete.length });
-                        setStatus(`Deleted ${idsToDelete.length} item${idsToDelete.length !== 1 ? 's' : ''}`);
+                        setStatus(t('status.deletedItems', { count: idsToDelete.length }));
                       } else {
-                        setStatus('Deletion cancelled or partial');
+                        setStatus(t('status.deletionCancelledPartial'));
                       }
                     }
                   } catch (err) {
                     console.log('Exact Duplicates: Delete error', err?.message || err);
-                    setStatus('Delete failed');
-                    showDarkAlert('Delete Failed', err?.message || 'Could not delete items.');
+                    setStatus(t('status.deletionFailed'));
+                    showDarkAlert(t('alerts.deleteFailed'), err?.message || t('alerts.deleteFailedMessage'));
                   } finally {
                     setDuplicateReview(null);
                     setLoadingSafe(false);
@@ -4901,7 +4982,7 @@ export default function App() {
                   }
                 }}
               >
-                <Text style={styles.overlayBtnPrimaryText}>Delete Selected</Text>
+                <Text style={styles.overlayBtnPrimaryText}>{t('duplicates.delete')}</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -4913,16 +4994,16 @@ export default function App() {
           <View style={[styles.overlayCard, { backgroundColor: '#000000', maxWidth: isTablet ? 450 : 320 }]}>
             <Text style={[styles.overlayTitle, { fontSize: scale(18), marginBottom: scaleSpacing(8) }]}>{customAlert.title}</Text>
             <Text style={{ color: '#FFFFFF', fontSize: scale(14), textAlign: 'center', marginBottom: scaleSpacing(20), lineHeight: scale(20) }}>{customAlert.message}</Text>
-            <View style={{ flexDirection: 'row', justifyContent: 'center', gap: scaleSpacing(12) }}>
+            <View style={{ flexDirection: 'row', justifyContent: 'center', gap: scaleSpacing(12), flexWrap: 'wrap' }}>
               {(customAlert.buttons || []).map((btn, idx) => (
                 <TouchableOpacity
                   key={idx}
-                  style={[styles.overlayBtnPrimary, { paddingVertical: scaleSpacing(10), paddingHorizontal: scaleSpacing(24), minWidth: isTablet ? 100 : 80 }]}
+                  style={[styles.overlayBtnPrimary, { paddingVertical: scaleSpacing(10), paddingHorizontal: scaleSpacing(16), minWidth: isTablet ? 100 : 70 }]}
                   onPress={() => {
                     closeDarkAlert();
                     if (btn.onPress) btn.onPress();
                   }}>
-                  <Text style={styles.overlayBtnPrimaryText}>{btn.text}</Text>
+                  <Text style={styles.overlayBtnPrimaryText} numberOfLines={1}>{btn.text}</Text>
                 </TouchableOpacity>
               ))}
             </View>

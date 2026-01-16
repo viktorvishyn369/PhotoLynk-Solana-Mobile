@@ -74,9 +74,10 @@ export const localRemoteBackupCore = async ({
   fastMode,
   onStatus,
   onProgress,
+  t,
 }) => {
   resetProgressTracking();
-  onStatus('Preparing backup...');
+  onStatus(t('status.backupPreparing'));
   onProgress(0);
 
   const permission = await MediaLibrary.requestPermissionsAsync();
@@ -95,7 +96,7 @@ export const localRemoteBackupCore = async ({
     const config = await getAuthHeaders();
     const SERVER_URL = getServerUrl();
     console.log('Using server URL for backup:', SERVER_URL);
-    onStatus('Fetching server files...');
+    onStatus(t('status.fetchingServerFilesSimple', { fetched: 0 }));
     onProgress(0.01);
     
     // Fetch with meta=true to get hash metadata for cross-device dedup
@@ -103,7 +104,7 @@ export const localRemoteBackupCore = async ({
       // Progress fills 1-5% during fetch
       const fetchProgress = total > 0 ? (fetched / total) * 0.04 : 0;
       throttledProgress(onProgress, 0.01 + fetchProgress);
-      throttledStatus(onStatus, `Fetching ${fetched}${total > fetched ? ` of ${total}` : ''} server files...`);
+      throttledStatus(onStatus, total > fetched ? t('status.fetchingServerFiles', { fetched, total }) : t('status.fetchingServerFilesSimple', { fetched }));
     }, true); // includeMeta=true
     
     onProgress(0.05);
@@ -179,7 +180,7 @@ export const localRemoteBackupCore = async ({
         if (excludedIds.has(asset.id)) continue;
         checkedCount += 1;
         // Analyzing phase: 5-20% progress
-        throttledStatus(onStatus, `Analyzing ${checkedCount} of ${totalCount || '?'}`);
+        throttledStatus(onStatus, t('status.analyzing', { current: checkedCount, total: totalCount || '?' }));
         if (totalCount) {
           const analyzeProgress = 0.05 + (checkedCount / totalCount) * 0.15;
           throttledProgress(onProgress, analyzeProgress);
@@ -434,7 +435,7 @@ export const localRemoteBackupCore = async ({
         processedCount++;
         // Upload phase: 20-100% progress
         const uploadProgress = 0.2 + (processedCount / toUpload.length) * 0.8;
-        throttledStatus(onStatus, `Backing up ${processedCount} of ${toUpload.length}`);
+        throttledStatus(onStatus, t('status.backingUp', { current: processedCount, total: toUpload.length }));
         throttledProgress(onProgress, uploadProgress);
       }
     }));
@@ -491,6 +492,7 @@ export const localRemoteBackupSelectedCore = async ({
   appStateRef,
   onStatus,
   onProgress,
+  t,
 }) => {
   const list = Array.isArray(assets) ? assets.filter(a => a && a.id) : [];
   if (list.length === 0) {
@@ -503,14 +505,14 @@ export const localRemoteBackupSelectedCore = async ({
   }
 
   resetProgressTracking();
-  onStatus?.('Preparing backup...');
+  onStatus?.(t('status.backupPreparing'));
   onProgress?.(0);
 
   try {
     const config = await getAuthHeaders();
     const SERVER_URL = getServerUrl();
     
-    onStatus?.('Fetching server files...');
+    onStatus?.(t('status.fetchingServerFilesSimple', { fetched: 0 }));
     onProgress?.(0.01);
     
     // Fetch with meta=true to get hash metadata for cross-device dedup
@@ -518,7 +520,7 @@ export const localRemoteBackupSelectedCore = async ({
       // Progress fills 1-5% during fetch
       const fetchProgress = total > 0 ? (fetched / total) * 0.04 : 0;
       throttledProgress(onProgress, 0.01 + fetchProgress);
-      throttledStatus(onStatus, `Fetching ${fetched}${total > fetched ? ` of ${total}` : ''} server files...`);
+      throttledStatus(onStatus, total > fetched ? t('status.fetchingServerFiles', { fetched, total }) : t('status.fetchingServerFilesSimple', { fetched }));
     }, true); // includeMeta=true
     
     onProgress?.(0.05);
@@ -558,7 +560,7 @@ export const localRemoteBackupSelectedCore = async ({
       const asset = list[i];
       // Analyzing phase: 5-20% progress
       const analyzeProgress = 0.05 + ((i + 1) / list.length) * 0.15;
-      throttledStatus(onStatus, `Analyzing ${i + 1} of ${list.length}`);
+      throttledStatus(onStatus, t('status.analyzing', { current: i + 1, total: list.length }));
       throttledProgress(onProgress, analyzeProgress);
       if (excludedIds.has(asset.id)) continue;
 
@@ -607,7 +609,7 @@ export const localRemoteBackupSelectedCore = async ({
         }
         // Upload phase: 20-100% progress
         const uploadProgress = 0.2 + ((i + 1) / toUpload.length) * 0.8;
-        throttledStatus(onStatus, `Backing up ${i + 1} of ${toUpload.length}`);
+        throttledStatus(onStatus, t('status.backingUp', { current: i + 1, total: toUpload.length }));
         throttledProgress(onProgress, uploadProgress);
 
         const assetInfo = await MediaLibrary.getAssetInfoAsync(asset.id);

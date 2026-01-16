@@ -10,6 +10,7 @@ import nacl from 'tweetnacl';
 import naclUtil from 'tweetnacl-util';
 import { sha256 } from 'js-sha256';
 
+import { t } from './i18n';
 import {
   sleep,
   withRetries,
@@ -100,7 +101,7 @@ const collectAllAssetsWithCloudDownload = async ({
     totalCount = 1000;
   }
 
-  updateStatus(onStatus, `Scanning 0 of ${totalCount} local photos...`, true);
+  updateStatus(onStatus, t('status.scanningPhotos', { current: 0, total: totalCount }), true);
   // Don't update progress during scanning - keep progress bar hidden
 
   // Phase 1: Collect from main library (paged)
@@ -123,7 +124,7 @@ const collectAllAssetsWithCloudDownload = async ({
     }
 
     // Don't update progress during scanning - keep progress bar hidden
-    updateStatus(onStatus, `Scanning ${allAssets.length} of ${totalCount} local photos...`);
+    updateStatus(onStatus, t('status.scanningPhotos', { current: allAssets.length, total: totalCount }));
 
     after = page?.endCursor;
     if (!page?.hasNextPage) break;
@@ -134,7 +135,7 @@ const collectAllAssetsWithCloudDownload = async ({
   // Phase 2: Scan all albums to catch Screenshots, Downloads, WhatsApp, user folders, etc.
   try {
     const albums = await MediaLibrary.getAlbumsAsync({ includeSmartAlbums: true });
-    updateStatus(onStatus, `Scanning ${albums.length} albums...`);
+    updateStatus(onStatus, t('status.scanningAlbums', { count: albums.length }));
     
     for (let i = 0; i < albums.length; i++) {
       if (abortRef?.current) return { assets: allAssets, aborted: true };
@@ -168,7 +169,7 @@ const collectAllAssetsWithCloudDownload = async ({
       if (i % 5 === 0) {
         await yieldToUi();
         // Don't update progress during scanning - keep progress bar hidden
-        updateStatus(onStatus, `Scanning albums... ${allAssets.length} items found`);
+        updateStatus(onStatus, t('status.scanningAlbumsFound', { count: allAssets.length }));
       }
     }
   } catch (e) {
@@ -177,7 +178,7 @@ const collectAllAssetsWithCloudDownload = async ({
 
   // Phase 3: Trigger iCloud/Google Cloud download for cloud-only items (iOS mainly)
   if (Platform.OS === 'ios') {
-    updateStatus(onStatus, `Checking ${allAssets.length} items for cloud availability...`);
+    updateStatus(onStatus, t('status.checkingCloudAvailability', { count: allAssets.length }));
     let cloudDownloadCount = 0;
     
     for (let i = 0; i < allAssets.length; i++) {
@@ -198,7 +199,7 @@ const collectAllAssetsWithCloudDownload = async ({
         await yieldToUi();
         // Don't update progress during scanning - keep progress bar hidden
         if (cloudDownloadCount > 0) {
-          updateStatus(onStatus, `Downloading ${cloudDownloadCount} items from iCloud...`);
+          updateStatus(onStatus, t('status.downloadingFromICloud', { count: cloudDownloadCount }));
         }
       }
     }
@@ -839,7 +840,7 @@ export const stealthCloudBackupCore = async ({
   resetProgress();
   
   // ========== PHASE 1: Permissions (instant) ==========
-  onStatus('Requesting Photos permission...');
+  onStatus(t('status.requestingPhotosPermission'));
   onProgress(0);
   
   const permission = await MediaLibrary.requestPermissionsAsync();
@@ -864,13 +865,13 @@ export const stealthCloudBackupCore = async ({
   if (Platform.OS === 'ios') {
     const ap = await getMediaLibraryAccessPrivileges(permission);
     if (ap && ap !== 'all') {
-      onStatus('Limited Photos access. Backing up accessible items...');
+      onStatus(t('status.limitedPhotosAccess'));
       await yieldToUi();
     }
   }
 
   // ========== PHASE 2: Auth & Setup (instant) ==========
-  onStatus('Preparing backup...');
+  onStatus(t('status.backupPreparing'));
   updateProgress(onProgress, 0.01, true);
   await yieldToUi();
 
@@ -882,7 +883,7 @@ export const stealthCloudBackupCore = async ({
     return { uploaded: 0, skipped: 0, failed: 0, notAllowed: true };
   }
 
-  onStatus('Loading encryption key...');
+  onStatus(t('status.loadingEncryptionKey'));
   const masterKey = await getStealthCloudMasterKey();
   await yieldToUi();
 
@@ -903,7 +904,7 @@ export const stealthCloudBackupCore = async ({
 
   if (allAssets.length === 0) {
     updateProgress(onProgress, 1.0, true);
-    onStatus('No photos found to backup');
+    onStatus(t('status.noPhotosFound'));
     return { uploaded: 0, skipped: 0, failed: 0, noFiles: true };
   }
 
@@ -911,13 +912,13 @@ export const stealthCloudBackupCore = async ({
 
   // ========== PHASE 4: Fetch Server State ==========
   // Progress stays at 0 during fetching (progress bar hidden)
-  onStatus('Fetching server state...');
+  onStatus(t('status.fetchingServerState'));
 
   let serverManifests = [];
   try {
     serverManifests = await fetchManifestsWithMeta(SERVER_URL, config, (fetched, total) => {
       // Don't update progress during fetching - keep progress bar hidden
-      updateStatus(onStatus, `Fetching ${fetched}${total > fetched ? ` of ${total}` : ''} server files...`);
+      updateStatus(onStatus, total > fetched ? t('status.fetchingServerFiles', { fetched, total }) : t('status.fetchingServerFilesSimple', { fetched }));
     });
   } catch (e) {
     console.warn('Failed to fetch server manifests:', e?.message);
@@ -925,7 +926,7 @@ export const stealthCloudBackupCore = async ({
   }
 
   // ========== PHASE 5: Build Dedup Sets (instant) ==========
-  onStatus('Preparing deduplication...');
+  onStatus(t('status.preparingDeduplication'));
   
   const dedupSets = buildDedupSetsFromMeta(serverManifests);
   console.log(`[Backup] Server: ${serverManifests.length} files, Dedup sets: manifestIds=${dedupSets.manifestIds.size}, filenames=${dedupSets.filenames.size}, fileHashes=${dedupSets.fileHashes.size}, perceptualHashes=${dedupSets.perceptualHashes.size}`);
@@ -956,7 +957,7 @@ export const stealthCloudBackupCore = async ({
     // Progress: 0-100% (starts at beginning of file, ends after last file)
     const fileProgress = i / totalFiles;
     updateProgress(onProgress, fileProgress);
-    updateStatus(onStatus, `Backing up ${fileNum} of ${totalFiles}...`);
+    updateStatus(onStatus, t('status.backingUp', { current: fileNum, total: totalFiles }));
 
     // Yield every few files to keep UI responsive
     if (i % 5 === 0) await yieldToUi();
@@ -988,7 +989,7 @@ export const stealthCloudBackupCore = async ({
       await yieldToUi();
       
       // Compute hashes
-      updateStatus(onStatus, `Hashing ${fileNum} of ${totalFiles}: ${filename || 'file'}...`, true);
+      updateStatus(onStatus, t('status.hashing', { current: fileNum, total: totalFiles, filename: filename || 'file' }), true);
       const { fileHash, perceptualHash } = await computeHashes(filePath, asset, assetInfo, isImage);
 
       // Yield after hashing
@@ -1006,7 +1007,7 @@ export const stealthCloudBackupCore = async ({
       await yieldToUi();
       
       // Upload
-      updateStatus(onStatus, `Uploading ${fileNum} of ${totalFiles}: ${filename || 'file'}...`, true);
+      updateStatus(onStatus, t('status.uploading', { current: fileNum, total: totalFiles, filename: filename || 'file' }), true);
       const result = await encryptAndUpload({
         asset, assetInfo, filePath, tmpCopied, tmpUri, originalSize, filename, manifestId,
         fileHash, perceptualHash, masterKey, config, SERVER_URL, fastMode
@@ -1049,7 +1050,7 @@ export const stealthCloudBackupCore = async ({
   }
 
   updateProgress(onProgress, 1.0, true);
-  updateStatus(onStatus, `Backup complete: ${uploaded} uploaded, ${skipped} skipped, ${failed} failed`, true);
+  updateStatus(onStatus, t('status.backupCompleteStats', { uploaded, skipped, failed }), true);
 
   return { uploaded, skipped, failed };
 };
@@ -1079,7 +1080,7 @@ export const stealthCloudBackupSelectedCore = async ({
 
   resetProgress();
   onProgress(0);
-  onStatus('Preparing backup...');
+  onStatus(t('status.backupPreparing'));
 
   const config = await getAuthHeaders();
   const SERVER_URL = getServerUrl();
@@ -1090,12 +1091,12 @@ export const stealthCloudBackupSelectedCore = async ({
     return { uploaded: 0, skipped: 0, failed: 0, notAllowed: true };
   }
 
-  onStatus('Loading encryption key...');
+  onStatus(t('status.loadingEncryptionKey'));
   const masterKey = await getStealthCloudMasterKey();
   await yieldToUi();
 
   // Fetch server manifests with metadata for fast dedup
-  onStatus('Fetching server state...');
+  onStatus(t('status.fetchingServerState'));
   updateProgress(onProgress, 0.02, true);
 
   let serverManifests = [];
@@ -1103,7 +1104,7 @@ export const stealthCloudBackupSelectedCore = async ({
     serverManifests = await fetchManifestsWithMeta(SERVER_URL, config, (fetched, total) => {
       const fetchProgress = 0.02 + (fetched / (total || fetched)) * 0.08;
       updateProgress(onProgress, fetchProgress);
-      updateStatus(onStatus, `Fetching ${fetched}${total > fetched ? ` of ${total}` : ''} server files...`);
+      updateStatus(onStatus, total > fetched ? t('status.fetchingServerFiles', { fetched, total }) : t('status.fetchingServerFilesSimple', { fetched }));
     });
   } catch (e) {
     console.warn('Failed to fetch server manifests:', e?.message);
@@ -1134,7 +1135,7 @@ export const stealthCloudBackupSelectedCore = async ({
     
     const fileProgress = 0.10 + (fileNum / totalFiles) * 0.90;
     updateProgress(onProgress, fileProgress);
-    updateStatus(onStatus, `Processing ${fileNum} of ${totalFiles}...`);
+    updateStatus(onStatus, t('status.processing', { current: fileNum, total: totalFiles }));
 
     if (i % 5 === 0) await yieldToUi();
 
@@ -1159,7 +1160,7 @@ export const stealthCloudBackupSelectedCore = async ({
       // Yield before hashing (CPU intensive)
       await yieldToUi();
       
-      updateStatus(onStatus, `Hashing ${fileNum} of ${totalFiles}: ${filename || 'file'}...`, true);
+      updateStatus(onStatus, t('status.hashing', { current: fileNum, total: totalFiles, filename: filename || 'file' }), true);
       const { fileHash, perceptualHash } = await computeHashes(filePath, asset, assetInfo, isImage);
 
       // Yield after hashing
@@ -1175,7 +1176,7 @@ export const stealthCloudBackupSelectedCore = async ({
       // Yield before upload (network + encryption intensive)
       await yieldToUi();
       
-      updateStatus(onStatus, `Uploading ${fileNum} of ${totalFiles}: ${filename || 'file'}...`, true);
+      updateStatus(onStatus, t('status.uploading', { current: fileNum, total: totalFiles, filename: filename || 'file' }), true);
       const result = await encryptAndUpload({
         asset, assetInfo, filePath, tmpCopied, tmpUri, originalSize, filename, manifestId,
         fileHash, perceptualHash, masterKey, config, SERVER_URL, fastMode

@@ -107,7 +107,8 @@
         }
       ],
       "./plugins/withCleartextTraffic.js",
-      "./plugins/withIosLocalNetworkPrompt.js"
+      "./plugins/withIosLocalNetworkPrompt.js",
+      "expo-localization"
     ],
     "extra": {
       "eas": {

@@ -20,6 +20,7 @@ import nacl from 'tweetnacl';
 import naclUtil from 'tweetnacl-util';
 import { sha256 } from 'js-sha256';
 
+import { t } from './i18n';
 import {
   sleep,
   withRetries,
@@ -97,7 +98,7 @@ const collectAllAssetsFromAllAlbums = async (onStatus, onProgress, progressStart
     totalCount = 1000;
   }
 
-  updateStatus(onStatus, `Sync: Scanning 0 of ${totalCount} local files...`, true);
+  updateStatus(onStatus, t('status.syncScanning', { current: 0, total: totalCount }), true);
   updateProgress(onProgress, progressStart, true);
 
   // Phase 1: Collect from main library (paged)
@@ -119,7 +120,7 @@ const collectAllAssetsFromAllAlbums = async (onStatus, onProgress, progressStart
     // Update progress
     const scanProgress = progressStart + (allAssets.length / Math.max(totalCount, 1)) * (progressEnd - progressStart) * 0.6;
     updateProgress(onProgress, Math.min(scanProgress, progressEnd));
-    updateStatus(onStatus, `Sync: Scanning ${allAssets.length} of ${totalCount} local files...`);
+    updateStatus(onStatus, t('status.syncScanning', { current: allAssets.length, total: totalCount }));
 
     after = page?.endCursor;
     if (!page?.hasNextPage) break;
@@ -130,7 +131,7 @@ const collectAllAssetsFromAllAlbums = async (onStatus, onProgress, progressStart
   // Phase 2: Scan all albums to catch Screenshots, Downloads, WhatsApp, user folders, etc.
   try {
     const albums = await MediaLibrary.getAlbumsAsync({ includeSmartAlbums: true });
-    updateStatus(onStatus, `Sync: Scanning ${albums.length} albums...`);
+    updateStatus(onStatus, t('status.syncScanningAlbums', { count: albums.length }));
     
     for (let i = 0; i < albums.length; i++) {
       const album = albums[i];
@@ -164,7 +165,7 @@ const collectAllAssetsFromAllAlbums = async (onStatus, onProgress, progressStart
         await quickYield();
         const albumProgress = progressStart + (progressEnd - progressStart) * (0.6 + 0.2 * (i / albums.length));
         updateProgress(onProgress, Math.min(albumProgress, progressEnd));
-        updateStatus(onStatus, `Sync: Scanning albums... ${allAssets.length} items found`);
+        updateStatus(onStatus, t('status.syncScanningAlbumsFound', { count: allAssets.length }));
       }
     }
   } catch (e) {
@@ -174,7 +175,7 @@ const collectAllAssetsFromAllAlbums = async (onStatus, onProgress, progressStart
   // Phase 3: Trigger iCloud/Google Cloud download for cloud-only items (iOS mainly)
   // Also store localUri back into asset objects for later hash computation
   if (Platform.OS === 'ios') {
-    updateStatus(onStatus, `Sync: Checking ${allAssets.length} items for cloud availability...`);
+    updateStatus(onStatus, t('status.syncCheckingCloud', { count: allAssets.length }));
     let cloudDownloadCount = 0;
     let localUriCount = 0;
     
@@ -203,7 +204,7 @@ const collectAllAssetsFromAllAlbums = async (onStatus, onProgress, progressStart
         const dlProgress = progressStart + (progressEnd - progressStart) * (0.8 + 0.2 * (i / allAssets.length));
         updateProgress(onProgress, Math.min(dlProgress, progressEnd));
         if (cloudDownloadCount > 0) {
-          updateStatus(onStatus, `Sync: Downloading ${cloudDownloadCount} items from iCloud...`);
+          updateStatus(onStatus, t('status.syncDownloadingICloud', { count: cloudDownloadCount }));
         }
       }
     }
@@ -471,7 +472,7 @@ const scanLocalPhotosForDedup = async (onStatus, onProgress, progressStart, prog
   const allAssets = await collectAllAssetsFromAllAlbums(onStatus, onProgress, progressStart, progressStart + (progressEnd - progressStart) * 0.7);
   
   // Build dedup sets from collected assets
-  updateStatus(onStatus, `Sync: Building dedup index from ${allAssets.length} files...`, true);
+  updateStatus(onStatus, t('status.syncBuildingIndex', { count: allAssets.length }), true);
   
   for (let i = 0; i < allAssets.length; i++) {
     const asset = allAssets[i];
@@ -513,14 +514,14 @@ const scanLocalPhotosForDedup = async (onStatus, onProgress, progressStart, prog
     if (i % 100 === 0) {
       const progress = progressStart + (progressEnd - progressStart) * (0.7 + 0.3 * (i / allAssets.length));
       updateProgress(onProgress, Math.min(progress, progressEnd));
-      updateStatus(onStatus, `Sync: Indexing ${i} of ${allAssets.length} local files...`);
+      updateStatus(onStatus, t('status.syncIndexing', { current: i, total: allAssets.length }));
       await quickYield();
     }
   }
 
   // Final progress update
   updateProgress(onProgress, progressEnd, true);
-  updateStatus(onStatus, `Sync: Indexed ${allAssets.length} local files`, true);
+  updateStatus(onStatus, t('status.syncIndexed', { count: allAssets.length }), true);
 
   console.log(`[Sync] Local scan: ${localSets.filenames.size} filenames, ${localSets.manifestIds.size} manifestIds`);
   return localSets;
@@ -546,7 +547,7 @@ const buildLocalHashIndex = async (resolveReadableFilePath, onStatus, onProgress
   
   // Build dedup sets from collected assets - compute hashes for cross-device dedup
   console.log(`[Sync] ${Platform.OS}: Starting hash computation for ${allAssets.length} assets`);
-  updateStatus(onStatus, `Sync: Building dedup index from ${allAssets.length} files...`, true);
+  updateStatus(onStatus, t('status.syncBuildingIndex', { count: allAssets.length }), true);
   
   let hashedCount = 0;
   let hashErrors = 0;
@@ -667,13 +668,13 @@ const buildLocalHashIndex = async (resolveReadableFilePath, onStatus, onProgress
     // Progress update every file (hashing can be slow for large files)
     const progress = progressStart + (progressEnd - progressStart) * (0.3 + 0.7 * (i / allAssets.length));
     updateProgress(onProgress, Math.min(progress, progressEnd));
-    updateStatus(onStatus, `Sync: Hashing ${i + 1} of ${allAssets.length}: ${filename || 'file'}`);
+    updateStatus(onStatus, t('status.syncHashing', { current: i + 1, total: allAssets.length, filename: filename || 'file' }));
     await quickYield();
   }
 
   // Final progress update
   updateProgress(onProgress, progressEnd, true);
-  updateStatus(onStatus, `Sync: Indexed ${allAssets.length} local files`, true);
+  updateStatus(onStatus, t('status.syncIndexed', { count: allAssets.length }), true);
 
   console.log(`[Sync] Local index: ${localSets.filenames.size} filenames, ${localSets.manifestIds.size} manifestIds, ${localSets.fileHashes.size} fileHashes, ${localSets.perceptualHashes.size} perceptualHashes (hashed=${hashedCount}, hashErrors=${hashErrors}, resolveErrors=${resolveErrors})`);
   return localSets;
@@ -709,21 +710,20 @@ export const stealthCloudRestoreCore = async ({
 }) => {
   resetProgress();
   
-  // ========== PHASE 1: Setup ==========
-  onStatus('Sync: Preparing...');
-  onProgress(0);
+  // ========== PHASE 1: Setup (0-1%) ==========
+  onStatus(t('status.syncPreparing'));
+  onProgress(0.01);
   await yieldToUi();
 
-  // ========== PHASE 2: Fetch Server Manifests with Metadata (0-5%) ==========
-  onStatus('Sync: Fetching server files...');
-  updateProgress(onProgress, 0.01, true);
+  // ========== PHASE 2: Fetch Server Manifests (1-5%) ==========
+  onStatus(t('status.fetchingServerState'));
 
   let serverManifests = [];
   try {
     serverManifests = await fetchManifestsWithMeta(SERVER_URL, config, (fetched, total) => {
       const progress = 0.01 + (fetched / (total || fetched)) * 0.04;
       updateProgress(onProgress, progress);
-      updateStatus(onStatus, `Sync: Fetching ${fetched}${total > fetched ? ` of ${total}` : ''} server files...`);
+      updateStatus(onStatus, total > fetched ? t('status.syncFetching', { fetched, total }) : t('status.syncFetchingSimple', { fetched }));
     });
   } catch (e) {
     console.error('Failed to fetch manifests:', e?.message);
@@ -740,25 +740,28 @@ export const stealthCloudRestoreCore = async ({
   }
 
   if (serverManifests.length === 0) {
+    // No backups - animate to 100%
+    for (let p = 0.05; p <= 1.0; p += 0.15) {
+      onProgress(Math.min(p, 1.0));
+      await sleep(40);
+    }
     onProgress(1);
     return { restored: 0, skipped: 0, failed: 0, noBackups: true };
   }
 
-  onStatus(`Sync: Found ${serverManifests.length} server files...`);
+  onStatus(t('status.syncFoundFiles', { count: serverManifests.length }));
   await yieldToUi();
 
-  // ========== PHASE 3: Scan Local Photos (5-15%) ==========
-  onStatus('Sync: Scanning local photos...');
-  updateProgress(onProgress, 0.05, true);
+  // ========== PHASE 3: Scan Local Photos (5-10%) ==========
+  onStatus(t('status.syncScanningLocal'));
 
-  const localSets = await buildLocalHashIndex(resolveReadableFilePath, onStatus, onProgress, 0.05, 0.15);
+  const localSets = await buildLocalHashIndex(resolveReadableFilePath, onStatus, onProgress, 0.05, 0.10);
   
-  updateProgress(onProgress, 0.15, true);
+  updateProgress(onProgress, 0.10, true);
   await yieldToUi();
 
-  // ========== PHASE 4: Filter Files to Download (15-20%) ==========
-  onStatus('Sync: Comparing files...');
-  updateProgress(onProgress, 0.15, true);
+  // ========== PHASE 4: Filter Files to Download (10-15%) ==========
+  onStatus(t('status.syncComparing', { current: 0, total: serverManifests.length }));
 
   const toDownload = [];
   let skipped = 0;
@@ -791,25 +794,28 @@ export const stealthCloudRestoreCore = async ({
     toDownload.push(manifest);
     
     if (i % 100 === 0) {
-      const progress = 0.15 + (i / serverManifests.length) * 0.05;
-      updateProgress(onProgress, progress);
-      updateStatus(onStatus, `Sync: Comparing ${i + 1} of ${serverManifests.length} files...`);
+      updateStatus(onStatus, t('status.syncComparing', { current: i + 1, total: serverManifests.length }));
       await quickYield();
     }
   }
   
   console.log(`[Sync] Comparison done: toDownload=${toDownload.length}, skipped=${skipped} (history=${historySkipped})`, skipReasons);
 
-  updateProgress(onProgress, 0.20, true);
-  onStatus(`Sync: ${toDownload.length} files to sync, ${skipped} already on device`);
-  await yieldToUi();
+  updateProgress(onProgress, 0.15, true);
 
   if (toDownload.length === 0) {
+    // All files already synced - animate progress 15% to 100% smoothly
+    onStatus(t('status.allFilesSynced', { count: skipped }));
+    for (let p = 0.20; p <= 1.0; p += 0.10) {
+      onProgress(Math.min(p, 1.0));
+      await sleep(30);
+    }
     onProgress(1);
+    await sleep(100);
     return { restored: 0, skipped, failed: 0, allSynced: true };
   }
 
-  // ========== PHASE 5: Download Each File (20-100%) ==========
+  // ========== PHASE 5: Download Each File (15-100%) ==========
   let restored = 0;
   let failed = 0;
   let historyWrites = 0;
@@ -831,10 +837,10 @@ export const stealthCloudRestoreCore = async ({
     const fileNum = i + 1;
     const mid = manifest.manifestId;
 
-    // Progress: 20-100%
-    const progress = 0.20 + (fileNum / toDownload.length) * 0.80;
+    // Progress: 15-100%
+    const progress = 0.15 + (fileNum / toDownload.length) * 0.85;
     updateProgress(onProgress, progress);
-    updateStatus(onStatus, `Sync: Downloading ${fileNum} of ${toDownload.length}: ${manifest.filename || 'file'}...`, true);
+    updateStatus(onStatus, t('status.syncDownloadingFile', { current: fileNum, total: toDownload.length, filename: manifest.filename || 'file' }), true);
 
     // Yield every few files
     if (i % 3 === 0) await yieldToUi();
@@ -1003,7 +1009,7 @@ export const stealthCloudRestoreCore = async ({
   }
 
   updateProgress(onProgress, 1.0, true);
-  updateStatus(onStatus, `Sync: Complete - ${restored} restored, ${skipped} skipped, ${failed} failed`, true);
+  updateStatus(onStatus, t('status.syncCompleteStats', { restored, skipped, failed }), true);
 
   return { restored, skipped, failed };
 };
@@ -1016,10 +1022,10 @@ export const stealthCloudRestoreCore = async ({
  * Optimized Local/Remote restore
  * 
  * Phases:
- * 1. Fetch server files (0-5%)
- * 2. Scan local photos (5-15%)
- * 3. Filter files to download (15-20%)
- * 4. Download and save each file (20-100%)
+ * 1. Fetch server files (progress hidden)
+ * 2. Scan local photos (progress hidden)
+ * 3. Filter files to download (progress hidden)
+ * 4. Download and save each file (0-100%)
  */
 export const localRemoteRestoreCore = async ({
   config,
@@ -1034,17 +1040,17 @@ export const localRemoteRestoreCore = async ({
 }) => {
   resetProgress();
   
-  // ========== PHASE 1: Fetch Server Files with Hash Metadata (0-5%) ==========
-  onStatus('Sync: Fetching server files...');
-  onProgress(0);
+  // ========== PHASE 1: Fetch Server Files (0-5%) ==========
+  onStatus(t('status.fetchingServerState'));
+  onProgress(0.01);
 
   let serverFiles = [];
   try {
     // Fetch with meta=true to get hash metadata for cross-device dedup
     serverFiles = await fetchServerFilesPaged(SERVER_URL, config, (fetched, total) => {
-      const progress = (fetched / (total || fetched)) * 0.05;
+      const progress = 0.01 + (fetched / (total || fetched)) * 0.04;
       updateProgress(onProgress, progress);
-      updateStatus(onStatus, `Sync: Fetching ${fetched}${total > fetched ? ` of ${total}` : ''} server files...`);
+      updateStatus(onStatus, total > fetched ? t('status.syncFetching', { fetched, total }) : t('status.syncFetchingSimple', { fetched }));
     }, true); // includeMeta=true
   } catch (e) {
     console.error('Failed to fetch server files:', e?.message);
@@ -1064,25 +1070,29 @@ export const localRemoteRestoreCore = async ({
   }
 
   if (serverFiles.length === 0) {
+    // No files - animate to 100%
+    for (let p = 0.05; p <= 1.0; p += 0.15) {
+      onProgress(Math.min(p, 1.0));
+      await sleep(40);
+    }
     onProgress(1);
     return { restored: 0, skipped: 0, failed: 0, noFiles: true };
   }
 
-  onStatus(`Sync: Found ${serverFiles.length} server files...`);
+  onStatus(t('status.syncFoundFiles', { count: serverFiles.length }));
   await yieldToUi();
 
-  // ========== PHASE 2: Scan Local Photos with Hash Computation (5-15%) ==========
-  onStatus('Sync: Scanning local photos...');
-  updateProgress(onProgress, 0.05, true);
+  // ========== PHASE 2: Scan Local Photos (5-10%) ==========
+  onStatus(t('status.syncScanningLocal'));
 
   // Use buildLocalHashIndex for perceptual hash matching (handles iOS file renaming)
-  const localSets = await buildLocalHashIndex(resolveReadableFilePath, onStatus, onProgress, 0.05, 0.15);
+  const localSets = await buildLocalHashIndex(resolveReadableFilePath, onStatus, onProgress, 0.05, 0.10);
   
-  updateProgress(onProgress, 0.15, true);
+  updateProgress(onProgress, 0.10, true);
   await yieldToUi();
 
-  // ========== PHASE 3: Filter Files to Download (15-20%) ==========
-  onStatus('Sync: Comparing files...');
+  // ========== PHASE 3: Filter Files to Download (10-15%) ==========
+  onStatus(t('status.syncComparing', { current: 0, total: serverFiles.length }));
   
   // Debug: count server files with hashes
   const serverWithPhash = serverFiles.filter(f => f?.perceptualHash).length;
@@ -1176,16 +1186,22 @@ export const localRemoteRestoreCore = async ({
   }
 
   console.log(`[Sync] Comparison done: toDownload=${toDownload.length}, skipped=${skipped}`, skipReasons);
-  updateProgress(onProgress, 0.20, true);
-  onStatus(`Sync: ${toDownload.length} files to sync, ${skipped} already on device`);
-  await yieldToUi();
+
+  updateProgress(onProgress, 0.15, true);
 
   if (toDownload.length === 0) {
+    // All files already synced - animate progress 15% to 100% smoothly
+    onStatus(t('status.allFilesSynced', { count: skipped }));
+    for (let p = 0.20; p <= 1.0; p += 0.10) {
+      onProgress(Math.min(p, 1.0));
+      await sleep(30);
+    }
     onProgress(1);
+    await sleep(100);
     return { restored: 0, skipped, failed: 0, allSynced: true, serverTotal: serverFiles.length };
   }
 
-  // ========== PHASE 4: Download Each File (20-100%) ==========
+  // ========== PHASE 4: Download Each File (15-100%) ==========
   let restored = 0;
   let failed = 0;
   
@@ -1301,9 +1317,10 @@ export const localRemoteRestoreCore = async ({
       failed++;
     } finally {
       processed++;
-      const progress = 0.20 + (processed / toDownload.length) * 0.80;
+      // Progress: 15-100%
+      const progress = 0.15 + (processed / toDownload.length) * 0.85;
       updateProgress(onProgress, progress);
-      updateStatus(onStatus, `Sync: Downloading ${processed} of ${toDownload.length}...`);
+      updateStatus(onStatus, t('status.syncDownloadingProgress', { current: processed, total: toDownload.length }));
     }
   }));
 
@@ -1325,7 +1342,7 @@ export const localRemoteRestoreCore = async ({
   }
 
   updateProgress(onProgress, 1.0, true);
-  updateStatus(onStatus, `Sync: Complete - ${restored} restored, ${skipped} skipped, ${failed} failed`, true);
+  updateStatus(onStatus, t('status.syncCompleteStats', { restored, skipped, failed }), true);
 
   return { restored, skipped, failed, serverTotal: serverFiles.length };
 };

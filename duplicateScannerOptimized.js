@@ -18,7 +18,7 @@ import * as MediaLibrary from 'expo-media-library';
 import * as FileSystem from 'expo-file-system';
 import { sha256 } from 'js-sha256';
 import naclUtil from 'tweetnacl-util';
-
+import { t } from './i18n';
 const { PixelHash, MediaDelete } = NativeModules;
 
 // ============================================================================
@@ -358,7 +358,7 @@ const collectAssetsPaged = async ({
     totalCount = 1000;
   }
 
-  updateStatus(onStatus, `${statusPrefix}: Collecting 0 of ${totalCount} items...`, true);
+  updateStatus(onStatus, t('status.scanningCollectingProgress', { current: 0, total: totalCount }), true);
   updateProgress(onProgress, progressStart, true);
 
   while (true) {
@@ -381,7 +381,7 @@ const collectAssetsPaged = async ({
     // Update progress
     const progress = progressStart + (allAssets.length / Math.max(totalCount, 1)) * (progressEnd - progressStart);
     updateProgress(onProgress, Math.min(progress, progressEnd));
-    updateStatus(onStatus, `${statusPrefix}: Collecting ${allAssets.length} of ${totalCount} items...`);
+    updateStatus(onStatus, t('status.scanningCollectingProgress', { current: allAssets.length, total: totalCount }));
 
     await yieldToUi();
 
@@ -461,7 +461,7 @@ export const scanExactDuplicates = async ({
   lastStatusUpdate = 0;
 
   // ========== PHASE 1: Collect Assets (0-10%) ==========
-  updateStatus(onStatus, 'Scanning: Collecting photos & videos...', true);
+  updateStatus(onStatus, t('status.scanningCollecting'), true);
   updateProgress(onProgress, 0, true);
 
   const { assets: allAssets, aborted: collectAborted } = await collectAssetsPaged({
@@ -487,7 +487,7 @@ export const scanExactDuplicates = async ({
   }
 
   // ========== PHASE 2: Hash Files (10-90%) ==========
-  updateStatus(onStatus, `Scanning: Analyzing ${totalAssets} items...`, true);
+  updateStatus(onStatus, t('status.scanningAnalyzingTotal', { total: totalAssets }), true);
   updateProgress(onProgress, 0.10, true);
 
   const allHashedItems = []; // Collect all items with hashes for Union-Find clustering
@@ -510,7 +510,7 @@ export const scanExactDuplicates = async ({
     if (i % 5 === 0) {
       const fileProgress = 0.10 + (i / totalAssets) * 0.80;
       updateProgress(onProgress, fileProgress);
-      updateStatus(onStatus, `Scanning: Analyzing ${i + 1} of ${totalAssets}...`);
+      updateStatus(onStatus, t('status.scanningAnalyzingProgress', { current: i + 1, total: totalAssets }));
       if (i % 25 === 0) await yieldToUi();
     }
 
@@ -636,7 +636,7 @@ export const scanExactDuplicates = async ({
   }
 
   // ========== PHASE 3: Group Duplicates using Union-Find (90-95%) ==========
-  updateStatus(onStatus, 'Scanning: Finding duplicate groups...', true);
+  updateStatus(onStatus, t('status.scanningFindingGroups'), true);
   updateProgress(onProgress, 0.90, true);
   await yieldToUi();
 
@@ -738,13 +738,14 @@ export const scanExactDuplicates = async ({
   }
 
   // ========== PHASE 4: Finalize (95-100%) ==========
+  updateStatus(onStatus, t('status.scanningFinalizing'), true);
   updateProgress(onProgress, 0.95, true);
   await yieldToUi();
   
   // Small delay before final result for smooth UX
   await new Promise(r => setTimeout(r, 200));
   
-  updateStatus(onStatus, duplicateGroups.length > 0 ? `Scanning: Found ${duplicateGroups.length} duplicate groups` : 'Scanning: No duplicates found', true);
+  updateStatus(onStatus, duplicateGroups.length > 0 ? t('status.scanningFoundDuplicates', { count: duplicateGroups.length }) : t('status.scanningNoDuplicates'), true);
   updateProgress(onProgress, 1, true);
 
   console.log('[DupScanner] Exact scan complete:', {
@@ -809,7 +810,7 @@ export const scanSimilarPhotos = async ({
 
   // ========== PHASE 1: Collect Assets (0-10%) ==========
   if (onCollecting) onCollecting();
-  updateStatus(onStatus, 'Scanning: Collecting photos & videos...', true);
+  updateStatus(onStatus, t('status.scanningCollecting'), true);
   updateProgress(onProgress, 0, true);
 
   const { assets: allAssets, aborted: collectAborted } = await collectAssetsPaged({
@@ -847,7 +848,7 @@ export const scanSimilarPhotos = async ({
   }
 
   // ========== PHASE 2: Hash Files (10-60%) ==========
-  updateStatus(onStatus, `Scanning: Analyzing ${totalAssets} items...`, true);
+  updateStatus(onStatus, t('status.scanningAnalyzingTotal', { total: totalAssets }), true);
   updateProgress(onProgress, 0.10, true);
 
   const items = [];
@@ -866,7 +867,7 @@ export const scanSimilarPhotos = async ({
     if (i % 5 === 0) {
       const fileProgress = 0.10 + (i / totalAssets) * 0.50;
       updateProgress(onProgress, fileProgress);
-      updateStatus(onStatus, `Scanning: Analyzing ${i + 1} of ${totalAssets}...`);
+      updateStatus(onStatus, t('status.scanningAnalyzingProgress', { current: i + 1, total: totalAssets }));
       if (i % 25 === 0) await yieldToUi();
     }
 

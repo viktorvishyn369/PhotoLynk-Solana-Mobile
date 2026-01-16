@@ -21,6 +21,7 @@ import {
   Linking,
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
+import { t } from './i18n';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const isTablet = Math.min(SCREEN_WIDTH, SCREEN_HEIGHT) >= 600;
@@ -143,7 +144,7 @@ const PlanCard = ({ gb, price, isSelected, disabled, soldOut, onPress }) => (
     <Text style={[styles.planCardPrice, isSelected && styles.planCardPriceSelected]}>
       {price || '—'}
     </Text>
-    <Text style={styles.planCardMeta}>per month</Text>
+    <Text style={styles.planCardMeta}>{t('login.perMonth')}</Text>
     {soldOut && (
       <View style={styles.soldOutBadge}>
         <Text style={styles.soldOutText}>SOLD OUT</Text>
@@ -220,32 +221,32 @@ export const LoginScreen = ({
             <Image source={appIcon} style={styles.appIcon} />
             <View style={styles.headerTitleWrap}>
               <Text style={styles.title}>PhotoLynk</Text>
-              <Text style={styles.subtitle}>Secure Cloud Backup</Text>
+              <Text style={styles.subtitle}>{t('app.tagline')}</Text>
             </View>
           </View>
         </View>
 
         {/* Server Selection */}
-        <Text style={styles.sectionTitle}>Choose Server</Text>
+        <Text style={styles.sectionTitle}>{t('login.chooseServer')}</Text>
         <Card>
           <ServerOption
             icon="cloud"
-            label="StealthCloud"
-            badge="7 DAYS FREE"
+            label={t('settings.stealthcloud')}
+            badge={t('login.stealthcloudBadge')}
             isSelected={serverType === 'stealthcloud'}
             onPress={() => setServerType('stealthcloud')}
           />
           <View style={styles.divider} />
           <ServerOption
             icon="wifi"
-            label="Local Network"
+            label={t('login.localNetwork')}
             isSelected={serverType === 'local'}
             onPress={() => setServerType('local')}
           />
           <View style={styles.divider} />
           <ServerOption
             icon="globe"
-            label="Remote Server"
+            label={t('settings.remoteServer')}
             isSelected={serverType === 'remote'}
             onPress={() => setServerType('remote')}
           />
@@ -256,7 +257,7 @@ export const LoginScreen = ({
           <View style={styles.serverHint}>
             <Feather name="shield" size={scale(16)} color="#03E1FF" />
             <Text style={styles.serverHintText}>
-              Zero-knowledge encrypted cloud. The server stores your backups but cannot view them.
+              {t('login.stealthcloudHint')}
             </Text>
           </View>
         )}
@@ -266,7 +267,7 @@ export const LoginScreen = ({
             <View style={styles.inputRow}>
               <InputField
                 icon="wifi"
-                placeholder="Enter local server IP"
+                placeholder={t('login.enterLocalIp')}
                 value={localHost}
                 onChangeText={(t) => setLocalHost(normalizeHostInput(t))}
                 style={{ flex: 1, marginRight: scaleSpacing(10) }}
@@ -275,10 +276,10 @@ export const LoginScreen = ({
                 <Feather name="maximize" size={scale(20)} color="#FFFFFF" />
               </TouchableOpacity>
             </View>
-            <Text style={styles.inputHint}>Enter IP manually or scan QR from server tray app</Text>
+            <Text style={styles.inputHint}>{t('login.localIpHint')}</Text>
             <TouchableOpacity style={styles.quickSetupLinkInline} onPress={openQuickSetupGuide}>
               <Feather name="book-open" size={scale(14)} color="#03E1FF" />
-              <Text style={styles.quickSetupTextInline}>Quick Setup Guide</Text>
+              <Text style={styles.quickSetupTextInline}>{t('login.quickSetupGuide')}</Text>
             </TouchableOpacity>
           </Card>
         )}
@@ -287,14 +288,14 @@ export const LoginScreen = ({
           <Card style={{ marginTop: scaleSpacing(16) }}>
             <InputField
               icon="globe"
-              placeholder="Enter remote domain (e.g. remote.example.com)"
+              placeholder={t('login.enterRemoteDomain')}
               value={remoteHost}
               onChangeText={(t) => setRemoteHost(normalizeHostInput(t))}
             />
-            <Text style={styles.inputHint}>Use your HTTPS domain for secure connection</Text>
+            <Text style={styles.inputHint}>{t('login.remoteDomainHint')}</Text>
             <TouchableOpacity style={styles.quickSetupLinkInline} onPress={openQuickSetupGuide}>
               <Feather name="book-open" size={scale(14)} color="#03E1FF" />
-              <Text style={styles.quickSetupTextInline}>Quick Setup Guide</Text>
+              <Text style={styles.quickSetupTextInline}>{t('login.quickSetupGuide')}</Text>
             </TouchableOpacity>
           </Card>
         )}
@@ -302,10 +303,10 @@ export const LoginScreen = ({
         {/* Plan Selection (StealthCloud Register only) */}
         {serverType === 'stealthcloud' && authMode === 'register' && (
           <>
-            <Text style={styles.sectionTitle}>Choose Plan</Text>
+            <Text style={styles.sectionTitle}>{t('login.choosePlan')}</Text>
             <Card>
               <View style={styles.planHeader}>
-                <Text style={styles.planHeaderText}>7-day free trial • Cancel anytime</Text>
+                <Text style={styles.planHeaderText}>{t('login.freeTrialCancel')}</Text>
                 {(stealthCapacityLoading || plansLoading) && (
                   <ActivityIndicator size="small" color="#03E1FF" />
                 )}
@@ -331,7 +332,7 @@ export const LoginScreen = ({
                 })}
               </View>
               {stealthCapacityError && (
-                <Text style={styles.planHint}>Capacity check unavailable. You can still choose a plan.</Text>
+                <Text style={styles.planHint}>{t('login.capacityCheckUnavailable')}</Text>
               )}
             </Card>
           </>
@@ -339,13 +340,13 @@ export const LoginScreen = ({
 
         {/* Credentials */}
         <Text style={styles.sectionTitle}>
-          {authMode === 'forgot' ? 'Reset Password' : 'Credentials'}
+          {authMode === 'forgot' ? t('auth.resetPassword') : t('login.credentials')}
         </Text>
         <Card>
           {authMode !== 'forgot' && (
             <InputField
               icon="mail"
-              placeholder="Email (part of encryption key)"
+              placeholder={t('login.emailPlaceholder')}
               value={email}
               onChangeText={setEmail}
               keyboardType="email-address"
@@ -357,7 +358,7 @@ export const LoginScreen = ({
           {(authMode === 'login' || authMode === 'register') && (
             <InputField
               icon="lock"
-              placeholder="Password (reset on this device only)"
+              placeholder={t('login.passwordPlaceholder')}
               value={password}
               onChangeText={setPassword}
               secureTextEntry
@@ -370,7 +371,7 @@ export const LoginScreen = ({
           {authMode === 'register' && (
             <InputField
               icon="lock"
-              placeholder="Confirm Password"
+              placeholder={t('auth.confirmPassword')}
               value={confirmPassword}
               onChangeText={setConfirmPassword}
               secureTextEntry
@@ -383,11 +384,11 @@ export const LoginScreen = ({
           {authMode === 'forgot' && (
             <>
               <Text style={styles.forgotHint}>
-                If you created your account on this device, you can reset your password below.
+                {t('login.forgotHint')}
               </Text>
               <InputField
                 icon="lock"
-                placeholder="New Password (min 6 characters)"
+                placeholder={t('login.newPasswordPlaceholder')}
                 value={newPassword}
                 onChangeText={setNewPassword}
                 secureTextEntry
@@ -410,10 +411,10 @@ export const LoginScreen = ({
               {termsAccepted && <Feather name="check" size={scale(14)} color="#FFFFFF" />}
             </View>
             <Text style={styles.termsText}>
-              I agree to the{' '}
-              <Text style={styles.termsLink} onPress={handleOpenTerms}>Terms of Service</Text>
-              {' '}and{' '}
-              <Text style={styles.termsLink} onPress={handleOpenPrivacy}>Privacy Policy</Text>
+              {t('login.agreeToThe')}{' '}
+              <Text style={styles.termsLink} onPress={handleOpenTerms}>{t('settings.termsOfService')}</Text>
+              {' '}{t('common.and')}{' '}
+              <Text style={styles.termsLink} onPress={handleOpenPrivacy}>{t('settings.privacyPolicy')}</Text>
             </Text>
           </TouchableOpacity>
         )}
@@ -423,18 +424,18 @@ export const LoginScreen = ({
           {authMode === 'login' && (
             <>
               <PrimaryButton
-                title={loading ? authLoadingLabel : 'Login'}
+                title={loading ? authLoadingLabel : t('auth.login')}
                 onPress={() => handleAuth('login')}
                 loading={loading}
                 icon="log-in"
               />
               <View style={styles.authLinks}>
-                <LinkButton title="Create Account" onPress={() => {
+                <LinkButton title={t('auth.createAccount')} onPress={() => {
                   setAuthMode('register');
                   setConfirmPassword('');
                   setTermsAccepted(false);
                 }} color="#03E1FF" />
-                <LinkButton title="Forgot Password?" onPress={() => setAuthMode('forgot')} color="#888888" />
+                <LinkButton title={t('auth.forgotPassword')} onPress={() => setAuthMode('forgot')} color="#888888" />
               </View>
             </>
           )}
@@ -442,14 +443,14 @@ export const LoginScreen = ({
           {authMode === 'register' && (
             <>
               <PrimaryButton
-                title={loading ? 'Creating account...' : 'Create Account'}
+                title={loading ? t('auth.registering') : t('auth.createAccount')}
                 onPress={() => handleAuth('register')}
                 loading={loading}
                 disabled={!termsAccepted}
                 icon="user-plus"
               />
               <SecondaryButton
-                title="Back to Login"
+                title={t('login.backToLogin')}
                 onPress={() => {
                   setAuthMode('login');
                   setConfirmPassword('');
@@ -463,13 +464,13 @@ export const LoginScreen = ({
           {authMode === 'forgot' && (
             <>
               <PrimaryButton
-                title={loading ? authLoadingLabel : 'Reset Password'}
+                title={loading ? authLoadingLabel : t('auth.resetPassword')}
                 onPress={handleResetPassword}
                 loading={loading}
                 icon="refresh-cw"
               />
               <SecondaryButton
-                title="Back to Login"
+                title={t('login.backToLogin')}
                 onPress={() => {
                   setAuthMode('login');
                   setNewPassword('');
@@ -483,7 +484,7 @@ export const LoginScreen = ({
         {/* Footer */}
         <View style={styles.footer}>
           <Feather name="shield" size={scale(14)} color="#666666" />
-          <Text style={styles.footerText}>End-to-end encrypted • Device-bound security</Text>
+          <Text style={styles.footerText}>{t('login.footerText')}</Text>
         </View>
       </ScrollView>
     </KeyboardAvoidingView>
@@ -653,7 +654,7 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingVertical: scaleSpacing(16),
     paddingRight: scaleSpacing(16),
-    fontSize: scale(16),
+    fontSize: scale(13),
     color: '#FFFFFF',
   },
   inputRow: {

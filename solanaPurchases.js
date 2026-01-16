@@ -48,7 +48,7 @@ const STEALTHCLOUD_BASE_URL = 'https://stealthlynk.io';
 // App identity for Mobile Wallet Adapter
 const APP_IDENTITY = {
   name: 'PhotoLynk',
-  uri: 'https://photolynk.io',
+  uri: 'https://stealthlynk.io',
   icon: 'favicon.ico',
 };
 
@@ -405,16 +405,17 @@ export const purchaseWithSol = async (tierGb, authToken, duration = 'monthly') =
       };
     }
   } catch (e) {
-    if (e.message?.includes('User rejected') || e.message?.includes('cancelled')) {
+    // User cancelled or rejected the transaction
+    if (e.message?.includes('User rejected') || e.message?.includes('cancelled') || e.message?.includes('CancellationException')) {
       return { success: false, error: 'cancelled', userCancelled: true };
     }
     // Check if we got a txSignature before the error (timeout after send)
     if (e.message?.includes('timeout') || e.message?.includes('TimeoutException')) {
       console.log('Transaction may have been sent, check wallet for confirmation');
-      return { success: false, error: 'Transaction timeout - please check your wallet and try Restore Purchases', timeout: true };
+      return { success: false, errorKey: 'transactionTimeout', timeout: true };
     }
     console.error('Payment failed:', e);
-    return { success: false, error: e.message || 'Payment failed' };
+    return { success: false, errorKey: 'paymentFailed' };
   }
 };
 
@@ -486,6 +487,7 @@ export const getSubscriptionStatus = async (token, deviceUuid) => {
       usedBytes: data.usedBytes || 0,
       remainingBytes: data.remainingBytes || 0,
       quotaBytes: data.quotaBytes || 0,
+      purchasedVia: subscription.purchased_via || subscription.purchasedVia || null,
     };
   } catch (e) {
     // Silently fail - don't spam console with subscription errors

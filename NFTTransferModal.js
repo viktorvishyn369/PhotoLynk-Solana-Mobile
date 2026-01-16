@@ -17,6 +17,7 @@ import {
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import NFTOperations from './nftOperations';
+import { t } from './i18n';
 
 // ============================================================================
 // COLORS
@@ -186,7 +187,7 @@ const NFTTransferModal = ({
         <View style={styles.modalContainer}>
           {/* Header */}
           <View style={styles.header}>
-            <Text style={styles.headerTitle}>Transfer NFT</Text>
+            <Text style={styles.headerTitle}>{t('nftTransfer.title')}</Text>
             <TouchableOpacity onPress={handleClose} disabled={transferring}>
               <Feather name="x" size={24} color={COLORS.text} />
             </TouchableOpacity>
@@ -223,7 +224,7 @@ const NFTTransferModal = ({
                 styles.methodTabText,
                 transferMethod === 'address' && styles.methodTabTextActive
               ]}>
-                Wallet Address
+                {t('nftTransfer.walletAddress')}
               </Text>
             </TouchableOpacity>
             
@@ -241,7 +242,7 @@ const NFTTransferModal = ({
                 styles.methodTabText,
                 transferMethod === 'domain' && styles.methodTabTextActive
               ]}>
-                Seeker ID
+                {t('nftTransfer.seekerId')}
               </Text>
             </TouchableOpacity>
           </View>
@@ -250,24 +251,24 @@ const NFTTransferModal = ({
           <View style={styles.inputContainer}>
             {transferMethod === 'address' ? (
               <>
-                <Text style={styles.inputLabel}>Recipient Solana Address</Text>
+                <Text style={styles.inputLabel}>{t('nftTransfer.recipientAddress')}</Text>
                 <TextInput
                   style={styles.textInput}
                   value={recipientAddress}
                   onChangeText={setRecipientAddress}
-                  placeholder="Enter Solana wallet address..."
+                  placeholder={t('nftTransfer.enterWalletAddress')}
                   placeholderTextColor={COLORS.textSecondary}
                   autoCapitalize="none"
                   autoCorrect={false}
                   editable={!transferring}
                 />
                 <Text style={styles.inputHint}>
-                  The recipient's Solana wallet address (32-44 characters)
+                  {t('nftTransfer.walletAddressHint')}
                 </Text>
               </>
             ) : (
               <>
-                <Text style={styles.inputLabel}>Recipient Seeker ID (.skr)</Text>
+                <Text style={styles.inputLabel}>{t('nftTransfer.recipientSeekerId')}</Text>
                 <View style={styles.domainInputRow}>
                   <TextInput
                     style={[styles.textInput, styles.domainInput]}
@@ -276,7 +277,7 @@ const NFTTransferModal = ({
                       setRecipientDomain(text);
                       setResolvedAddress(null);
                     }}
-                    placeholder="e.g., alice.skr or alice"
+                    placeholder={t('nftTransfer.seekerIdPlaceholder')}
                     placeholderTextColor={COLORS.textSecondary}
                     autoCapitalize="none"
                     autoCorrect={false}
@@ -303,7 +304,7 @@ const NFTTransferModal = ({
                   </View>
                 )}
                 <Text style={styles.inputHint}>
-                  Enter a Seeker ID (e.g., alice.skr) or .sol domain
+                  {t('nftTransfer.seekerIdHint')}
                 </Text>
               </>
             )}
@@ -321,7 +322,7 @@ const NFTTransferModal = ({
           <View style={styles.warningContainer}>
             <Feather name="alert-triangle" size={16} color={COLORS.warning} />
             <Text style={styles.warningText}>
-              NFT transfers are permanent and cannot be reversed. Make sure you have the correct recipient address.
+              {t('nftTransfer.warningMessage')}
             </Text>
           </View>
           
@@ -332,7 +333,7 @@ const NFTTransferModal = ({
               onPress={handleClose}
               disabled={transferring}
             >
-              <Text style={styles.cancelButtonText}>Cancel</Text>
+              <Text style={styles.cancelButtonText}>{t('common.cancel')}</Text>
             </TouchableOpacity>
             
             <TouchableOpacity
@@ -345,7 +346,7 @@ const NFTTransferModal = ({
               ) : (
                 <>
                   <Feather name="send" size={18} color="#fff" />
-                  <Text style={styles.transferButtonText}>Transfer</Text>
+                  <Text style={styles.transferButtonText}>{t('nftTransfer.transfer')}</Text>
                 </>
               )}
             </TouchableOpacity>
@@ -381,9 +382,11 @@ const styles = StyleSheet.create({
     borderBottomColor: COLORS.border,
   },
   headerTitle: {
+    flex: 1,
     fontSize: 18,
     fontWeight: '600',
     color: COLORS.text,
+    marginHorizontal: 8,
   },
   nftPreview: {
     flexDirection: 'row',

@@ -319,7 +319,7 @@ export const validateToken = async ({ storedToken, storedEmail, storedUserId, uu
     let savedPassword = null;
     const savedPasswordEmail = await SecureStore.getItemAsync(SAVED_PASSWORD_EMAIL_KEY);
     if (savedPasswordEmail === storedEmail) {
-      onStatus?.('Unlock to sign in...');
+      onStatus?.(t('auth.unlockToSignIn'));
       const storedWithBiometric = Platform.OS === 'ios' ||
         (await SecureStore.getItemAsync('password_stored_with_biometric')) === 'true';
       
@@ -391,7 +391,7 @@ export const attemptBiometricReauth = async ({ storedEmail, baseUrl, getDeviceUU
   }
 
   try {
-    onStatus?.('Unlock to sign in...');
+    onStatus?.(t('auth.unlockToSignIn'));
     let savedPassword = null;
     let biometricCancelled = false;
 

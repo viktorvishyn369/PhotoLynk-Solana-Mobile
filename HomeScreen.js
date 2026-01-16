@@ -16,6 +16,7 @@ import {
   ScrollView,
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
+import { t } from './i18n';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const shortSide = Math.min(SCREEN_WIDTH, SCREEN_HEIGHT);
@@ -75,13 +76,15 @@ export const HomeScreen = ({
   const serverLabel = serverType === 'stealthcloud' ? 'StealthCloud' : serverType === 'remote' ? 'Remote Server' : 'Local Server';
   const serverIcon = serverType === 'stealthcloud' ? 'cloud' : serverType === 'remote' ? 'globe' : 'wifi';
   
-  // Status parsing
-  const isIdle = status.startsWith('Idle');
-  const isBackingUp = status.includes('Backup') || status.includes('Uploading') || status.includes('Processing') || status.includes('Hashing') || status.includes('Preparing');
-  const isSyncing = status.includes('Sync') || status.includes('Downloading') || status.includes('Restoring') || status.includes('Decrypting');
-  const isCleaning = status.includes('Comparing') || status.includes('Cleaning') || status.includes('Scanning') || status.includes('Identical') || status.includes('Similar');
-  const isMintingNFT = status.includes('NFT:') || status.includes('Minting') || status.includes('Arweave');
-  const isFetching = status.includes('Fetching') || status.includes('Loading') || status.includes('Requesting');
+  // Status detection based on progressAction (language-independent)
+  // Only show specific action states when progressAction is explicitly set
+  const isBackingUp = progressAction === 'backup';
+  const isSyncing = progressAction === 'sync';
+  const isCleaning = progressAction === 'cleanup';
+  const isMintingNFT = progressAction === 'nft';
+  // Idle is the default - show Ready unless a specific action is in progress
+  const isIdle = !isBackingUp && !isSyncing && !isCleaning && !isMintingNFT;
+  const isFetching = loading && isIdle;
   
   const progressPercent = Math.min(Math.max(progress, 0), 1) * 100;
   // Hide progress bar during fetching/preparing phases, show during actual work (including 100%)
@@ -140,7 +143,7 @@ export const HomeScreen = ({
 
           {/* Status Text - Large and Prominent */}
           <Text style={[styles.heroStatusText, { color: statusColor }]}>
-            {isIdle ? 'Ready' : isMintingNFT ? 'Minting NFT' : isCleaning ? 'Scanning' : isSyncing ? 'Syncing' : 'Backing Up'}
+            {isIdle ? t('home.ready') : isMintingNFT ? t('home.mintingNft') : isCleaning ? t('home.scanning') : isSyncing ? t('home.syncing') : t('home.backingUp')}
           </Text>
 
           {/* Progress Ring/Bar */}
@@ -178,8 +181,8 @@ export const HomeScreen = ({
                     <Feather name="upload-cloud" size={scale(28)} color="#000000" />
                   </View>
                   <View style={styles.primaryActionText}>
-                    <Text style={[styles.primaryActionTitle, { color: '#000000' }]}>Backup All</Text>
-                    <Text style={[styles.primaryActionSubtitle, { color: 'rgba(0,0,0,0.6)' }]}>Upload photos to cloud</Text>
+                    <Text style={[styles.primaryActionTitle, { color: '#000000' }]}>{t('home.backupAll')}</Text>
+                    <Text style={[styles.primaryActionSubtitle, { color: 'rgba(0,0,0,0.6)' }]}>{t('home.uploadToCloud')}</Text>
                   </View>
                   <Feather name="chevron-right" size={scale(24)} color="rgba(0,0,0,0.4)" />
                 </View>
@@ -193,7 +196,7 @@ export const HomeScreen = ({
               activeOpacity={0.8}
             >
               <Feather name="check-square" size={scale(22)} color={COLORS.primary} />
-              <Text style={[styles.secondaryActionText, { color: COLORS.primary }]}>Select</Text>
+              <Text style={[styles.secondaryActionText, { color: COLORS.primary }]}>{t('home.select')}</Text>
             </TouchableOpacity>
           </View>
 
@@ -211,8 +214,8 @@ export const HomeScreen = ({
                     <Feather name="download-cloud" size={scale(28)} color="#000000" />
                   </View>
                   <View style={styles.primaryActionText}>
-                    <Text style={[styles.primaryActionTitle, { color: '#000000' }]}>Sync All</Text>
-                    <Text style={[styles.primaryActionSubtitle, { color: 'rgba(0,0,0,0.6)' }]}>Download from cloud</Text>
+                    <Text style={[styles.primaryActionTitle, { color: '#000000' }]}>{t('home.syncAll')}</Text>
+                    <Text style={[styles.primaryActionSubtitle, { color: 'rgba(0,0,0,0.6)' }]}>{t('home.downloadFromCloud')}</Text>
                   </View>
                   <Feather name="chevron-right" size={scale(24)} color="rgba(0,0,0,0.4)" />
                 </View>
@@ -226,7 +229,7 @@ export const HomeScreen = ({
               activeOpacity={0.8}
             >
               <Feather name="check-square" size={scale(22)} color={COLORS.secondary} />
-              <Text style={[styles.secondaryActionText, { color: COLORS.secondary }]}>Select</Text>
+              <Text style={[styles.secondaryActionText, { color: COLORS.secondary }]}>{t('home.select')}</Text>
             </TouchableOpacity>
           </View>
 
@@ -241,8 +244,8 @@ export const HomeScreen = ({
               <View style={[styles.cleanBtnIcon, { backgroundColor: `${COLORS.accent}20` }]}>
                 <Feather name="copy" size={scale(24)} color={COLORS.accent} />
               </View>
-              <Text style={styles.cleanBtnTitle}>Identical</Text>
-              <Text style={styles.cleanBtnSubtitle}>Exact duplicates</Text>
+              <Text style={styles.cleanBtnTitle}>{t('home.identical')}</Text>
+              <Text style={styles.cleanBtnSubtitle}>{t('home.exactDuplicates')}</Text>
             </TouchableOpacity>
 
             <TouchableOpacity 
@@ -254,13 +257,13 @@ export const HomeScreen = ({
               <View style={[styles.cleanBtnIcon, { backgroundColor: `${COLORS.accent}20` }]}>
                 <Feather name="layers" size={scale(24)} color={COLORS.accent} />
               </View>
-              <Text style={styles.cleanBtnTitle}>Similar</Text>
-              <Text style={styles.cleanBtnSubtitle}>Near-matches</Text>
+              <Text style={styles.cleanBtnTitle}>{t('home.similar')}</Text>
+              <Text style={styles.cleanBtnSubtitle}>{t('home.nearMatches')}</Text>
             </TouchableOpacity>
           </View>
 
           {/* Section Label */}
-          <Text style={styles.sectionLabel}>CLEAN DUPLICATES</Text>
+          <Text style={styles.sectionLabel}>{t('home.cleanDuplicates')}</Text>
 
           {/* NFT ROW - Same style as Backup/Sync */}
           <View style={styles.actionRow}>
@@ -276,8 +279,8 @@ export const HomeScreen = ({
                     <Feather name="hexagon" size={scale(28)} color="#FFFFFF" />
                   </View>
                   <View style={styles.primaryActionText}>
-                    <Text style={[styles.primaryActionTitle, { color: '#FFFFFF' }]}>NFT your Memories</Text>
-                    <Text style={[styles.primaryActionSubtitle, { color: 'rgba(255,255,255,0.7)' }]}>Own your photos forever</Text>
+                    <Text style={[styles.primaryActionTitle, { color: '#FFFFFF' }]}>{t('home.nftMemories')}</Text>
+                    <Text style={[styles.primaryActionSubtitle, { color: 'rgba(255,255,255,0.7)' }]}>{t('home.ownPhotosForever')}</Text>
                   </View>
                   <Feather name="chevron-right" size={scale(24)} color="rgba(255,255,255,0.5)" />
                 </View>
@@ -291,12 +294,12 @@ export const HomeScreen = ({
               activeOpacity={0.8}
             >
               <Feather name="image" size={scale(22)} color="#9945FF" />
-              <Text style={[styles.secondaryActionText, { color: '#9945FF' }]}>Album</Text>
+              <Text style={[styles.secondaryActionText, { color: '#9945FF' }]}>{t('home.album')}</Text>
             </TouchableOpacity>
           </View>
 
           {/* Section Label */}
-          <Text style={styles.sectionLabel}>SOLANA NFT</Text>
+          <Text style={styles.sectionLabel}>{t('home.solanaNft')}</Text>
         </View>
       </View>
 
@@ -314,7 +317,7 @@ export const HomeScreen = ({
             {completionMessage ? (
               <Text style={styles.completionMessage}>{completionMessage}</Text>
             ) : null}
-            <Text style={styles.completionDismissHint}>Tap to dismiss</Text>
+            <Text style={styles.completionDismissHint}>{t('home.tapToDismiss')}</Text>
           </View>
         </TouchableOpacity>
       )}

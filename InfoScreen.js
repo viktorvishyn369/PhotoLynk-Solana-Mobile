@@ -19,6 +19,7 @@ import {
   Clipboard,
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
+import { t } from './i18n';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const isTablet = Math.min(SCREEN_WIDTH, SCREEN_HEIGHT) >= 600;
@@ -106,7 +107,7 @@ const UsageStat = ({ label, value, color }) => (
 );
 
 // Plan Card Component
-const PlanCard = ({ gb, price, isCurrent, onPress, disabled, glassModeEnabled }) => (
+const PlanCard = ({ gb, price, isCurrent, onPress, disabled, glassModeEnabled, currentLabel, perMonthLabel }) => (
   <TouchableOpacity
     style={[
       styles.planCard,
@@ -125,7 +126,7 @@ const PlanCard = ({ gb, price, isCurrent, onPress, disabled, glassModeEnabled })
       {price}
     </Text>
     <Text style={styles.planCardMeta}>
-      {isCurrent ? 'Current' : 'per month'}
+      {isCurrent ? currentLabel : perMonthLabel}
     </Text>
   </TouchableOpacity>
 );
@@ -151,19 +152,25 @@ export const InfoScreen = ({
   const handleCopyDeviceId = () => {
     if (deviceUuid) {
       Clipboard.setString(deviceUuid);
-      showDarkAlert('Copied!', 'Device ID copied to clipboard');
+      showDarkAlert(t('info.copied'), t('info.deviceIdCopied'));
     }
   };
 
   const handleOpenGitHub = () => {
     Linking.openURL('https://github.com/viktorvishyn369/PhotoLynk').catch(() => {
-      showDarkAlert('Error', 'Could not open link');
+      showDarkAlert(t('alerts.error'), t('alerts.couldNotOpenLink'));
     });
   };
 
   const handleOpenDeleteAccount = () => {
     Linking.openURL('https://viktorvishyn369.github.io/PhotoLynk/delete-account.html').catch(() => {
-      showDarkAlert('Error', 'Could not open link');
+      showDarkAlert(t('alerts.error'), t('alerts.couldNotOpenLink'));
+    });
+  };
+
+  const handleOpenSupport = () => {
+    Linking.openURL('mailto:support@stealthlynk.io?subject=PhotoLynk%20Support').catch(() => {
+      showDarkAlert(t('alerts.error'), t('alerts.couldNotOpenLink'));
     });
   };
 
@@ -188,12 +195,12 @@ export const InfoScreen = ({
 
   const getStatusText = (subStatus, sub, isExpired, isGrace) => {
     if (subStatus === 'active') {
-      return sub.expiresAt ? `Active until ${new Date(sub.expiresAt).toLocaleDateString()}` : 'Active';
+      return sub.expiresAt ? `${t('info.activeUntil')} ${new Date(sub.expiresAt).toLocaleDateString()}` : t('info.active');
     }
-    if (subStatus === 'trial') return '7-Day Free Trial';
-    if (subStatus === 'grace') return `Expired (${GRACE_PERIOD_DAYS} days to sync)`;
-    if (subStatus === 'grace_expired') return 'Grace Period Ended';
-    if (subStatus === 'trial_expired') return 'Trial Expired';
+    if (subStatus === 'trial') return t('info.freeTrialStatus');
+    if (subStatus === 'grace') return t('info.expiredGraceDays');
+    if (subStatus === 'grace_expired') return t('info.gracePeriodEnded');
+    if (subStatus === 'trial_expired') return t('info.trialExpired');
     return '—';
   };
 
@@ -210,9 +217,9 @@ export const InfoScreen = ({
       {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity onPress={onBack} style={styles.backButton}>
-          <Text style={styles.backButtonText}>Back</Text>
+          <Text style={styles.backButtonText}>{t('common.back')}</Text>
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Info</Text>
+        <Text style={styles.headerTitle}>{t('info.title')}</Text>
         <View style={{ width: scaleSpacing(60) }} />
       </View>
 
@@ -222,12 +229,15 @@ export const InfoScreen = ({
         showsVerticalScrollIndicator={false}
       >
         {/* App Info - Two column layout */}
-        <Text style={styles.sectionTitle}>App</Text>
+        <Text style={styles.sectionTitle}>{t('info.app')}</Text>
         <Card glassModeEnabled={glassModeEnabled}>
           <View style={styles.appInfoGrid}>
             <View style={styles.appInfoItem}>
               <Feather name="smartphone" size={scale(16)} color="#888888" />
-              <Text style={styles.appInfoLabel}>{appDisplayName}</Text>
+              <View>
+                <Text style={styles.appInfoLabel}>{appDisplayName}</Text>
+                <Text style={styles.appInfoSubtitle}>stealthlynk.io</Text>
+              </View>
             </View>
             <View style={styles.appInfoItem}>
               <Feather name="tag" size={scale(16)} color="#888888" />
@@ -253,12 +263,12 @@ export const InfoScreen = ({
         {/* StealthCloud Storage */}
         {serverType === 'stealthcloud' && (
           <>
-            <Text style={styles.sectionTitle}>StealthCloud Storage</Text>
+            <Text style={styles.sectionTitle}>{t('info.stealthcloudStorage')}</Text>
             <Card glassModeEnabled={glassModeEnabled}>
               {stealthUsageLoading && (
                 <View style={styles.loadingContainer}>
                   <ActivityIndicator size="small" color="#03E1FF" />
-                  <Text style={styles.loadingText}>Loading usage...</Text>
+                  <Text style={styles.loadingText}>{t('info.loadingUsage')}</Text>
                 </View>
               )}
 
@@ -272,14 +282,14 @@ export const InfoScreen = ({
               {usageData && (
                 <>
                   <View style={styles.usageGrid}>
-                    <UsageStat label="Plan" value={usageData.planGb ? `${usageData.planGb} GB` : '—'} />
+                    <UsageStat label={t('info.plan')} value={usageData.planGb ? `${usageData.planGb} GB` : '—'} />
                     <UsageStat 
-                      label="Status" 
+                      label={t('info.status')} 
                       value={getStatusText(usageData.subStatus, usageData.sub, usageData.isExpired, usageData.isGrace)}
                       color={getStatusColor(usageData.isExpired, usageData.isGrace)}
                     />
-                    <UsageStat label="Used" value={formatBytesHumanDecimal(usageData.usedBytes)} />
-                    <UsageStat label="Remaining" value={formatBytesHumanDecimal(usageData.remainingBytes)} />
+                    <UsageStat label={t('info.used')} value={formatBytesHumanDecimal(usageData.usedBytes)} />
+                    <UsageStat label={t('info.remaining')} value={formatBytesHumanDecimal(usageData.remainingBytes)} />
                   </View>
 
                   {(usageData.isGrace || usageData.isExpired) && (
@@ -287,8 +297,8 @@ export const InfoScreen = ({
                       <Feather name="alert-triangle" size={scale(16)} color="#F59E0B" />
                       <Text style={styles.warningText}>
                         {usageData.isGrace && !usageData.isExpired
-                          ? `Your subscription expired. You have ${GRACE_PERIOD_DAYS} days to sync your data.`
-                          : 'Your subscription has expired. Renew to continue backups.'}
+                          ? t('info.subscriptionExpiredGrace')
+                          : t('info.subscriptionExpiredRenew')}
                       </Text>
                     </View>
                   )}
@@ -296,19 +306,19 @@ export const InfoScreen = ({
                   {/* Cross-platform payment notice - only show for Apple/Google Pay subscriptions (not Solana) */}
                   {(() => {
                     const sub = stealthUsage?.subscription || {};
-                    const serverPaymentType = sub.paymentType || sub.payment_type;
+                    const purchasedVia = sub.purchased_via || sub.purchasedVia || sub.paymentType || sub.payment_type;
                     const hasPlan = usageData.planGb;
                     const isActive = usageData.subStatus === 'active' || usageData.subStatus === 'trial';
                     
                     // Only show notice for Apple Pay or Google Play subscriptions (not Solana)
                     // Solana payments don't need a "switch to SOL" message since they're already using SOL
-                    if (serverPaymentType && (serverPaymentType === 'apple' || serverPaymentType === 'google') && hasPlan && isActive) {
-                      const paymentLabel = serverPaymentType === 'apple' ? 'Apple App Store' : 'Google Play Store';
+                    if (purchasedVia && (purchasedVia === 'apple' || purchasedVia === 'google') && hasPlan && isActive) {
+                      const paymentLabel = purchasedVia === 'apple' ? 'App Store' : 'Google Play';
                       return (
                         <View style={styles.infoBanner}>
                           <Feather name="info" size={scale(16)} color="#03E1FF" />
                           <Text style={styles.infoText}>
-                            Subscription via {paymentLabel}. To switch to SOL, let it expire first.
+                            {t('info.subscriptionViaPlatform', { platform: paymentLabel })}
                           </Text>
                         </View>
                       );
@@ -320,7 +330,7 @@ export const InfoScreen = ({
             </Card>
 
             {/* Subscription Plans */}
-            <Text style={styles.sectionTitle}>Manage Subscription</Text>
+            <Text style={styles.sectionTitle}>{t('info.manageSubscription')}</Text>
             <Card glassModeEnabled={glassModeEnabled}>
               <View style={styles.planGrid}>
                 {STEALTH_PLAN_TIERS.map((gb) => {
@@ -338,6 +348,8 @@ export const InfoScreen = ({
                       onPress={() => openPaywall(gb)}
                       disabled={purchaseLoading}
                       glassModeEnabled={glassModeEnabled}
+                      currentLabel={t('info.current')}
+                      perMonthLabel={t('info.perMonth')}
                     />
                   );
                 })}
@@ -347,7 +359,7 @@ export const InfoScreen = ({
         )}
 
         {/* Resources */}
-        <Text style={styles.sectionTitle}>Resources</Text>
+        <Text style={styles.sectionTitle}>{t('info.resources')}</Text>
         <View style={styles.resourcesRow}>
           <TouchableOpacity
             style={styles.resourceCard}
@@ -355,10 +367,20 @@ export const InfoScreen = ({
             activeOpacity={0.7}
           >
             <View style={styles.resourceCardIcon}>
-              <Feather name="github" size={scale(20)} color="#03E1FF" />
+              <Feather name="github" size={scale(18)} color="#03E1FF" />
             </View>
-            <Text style={styles.resourceCardTitle}>GitHub</Text>
-            <Feather name="external-link" size={scale(12)} color="#666666" />
+            <Text style={styles.resourceCardTitle} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>{t('info.github')}</Text>
+          </TouchableOpacity>
+          
+          <TouchableOpacity
+            style={styles.resourceCard}
+            onPress={handleOpenSupport}
+            activeOpacity={0.7}
+          >
+            <View style={[styles.resourceCardIcon, { backgroundColor: 'rgba(16, 185, 129, 0.15)' }]}>
+              <Feather name="mail" size={scale(18)} color="#10B981" />
+            </View>
+            <Text style={styles.resourceCardTitle} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>{t('info.support')}</Text>
           </TouchableOpacity>
           
           <TouchableOpacity
@@ -367,10 +389,9 @@ export const InfoScreen = ({
             activeOpacity={0.7}
           >
             <View style={[styles.resourceCardIcon, { backgroundColor: 'rgba(239, 68, 68, 0.15)' }]}>
-              <Feather name="trash-2" size={scale(20)} color="#EF4444" />
+              <Feather name="trash-2" size={scale(18)} color="#EF4444" />
             </View>
-            <Text style={styles.resourceCardTitle}>Delete Account</Text>
-            <Feather name="external-link" size={scale(12)} color="#666666" />
+            <Text style={styles.resourceCardTitle} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>{t('info.deleteAccount')}</Text>
           </TouchableOpacity>
         </View>
 
@@ -466,6 +487,12 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     color: '#FFFFFF',
   },
+  appInfoSubtitle: {
+    fontSize: scale(11),
+    fontWeight: '400',
+    color: '#666666',
+    marginTop: scaleSpacing(1),
+  },
   deviceIdRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -510,32 +537,35 @@ const styles = StyleSheet.create({
   // Resources Row
   resourcesRow: {
     flexDirection: 'row',
-    gap: scaleSpacing(10),
+    flexWrap: 'wrap',
+    gap: scaleSpacing(8),
   },
   resourceCard: {
     flex: 1,
-    flexDirection: 'row',
+    minWidth: scale(90),
+    flexDirection: 'column',
     alignItems: 'center',
     backgroundColor: '#1A1A1A',
     borderRadius: scale(12),
     borderWidth: 1,
     borderColor: '#2A2A2A',
-    padding: scaleSpacing(12),
-    gap: scaleSpacing(10),
+    paddingVertical: scaleSpacing(12),
+    paddingHorizontal: scaleSpacing(8),
+    gap: scaleSpacing(6),
   },
   resourceCardIcon: {
-    width: scale(36),
-    height: scale(36),
-    borderRadius: scale(10),
+    width: scale(32),
+    height: scale(32),
+    borderRadius: scale(8),
     backgroundColor: 'rgba(59, 130, 246, 0.15)',
     justifyContent: 'center',
     alignItems: 'center',
   },
   resourceCardTitle: {
-    flex: 1,
-    fontSize: scale(13),
+    fontSize: scale(11),
     fontWeight: '600',
     color: '#FFFFFF',
+    textAlign: 'center',
   },
   // Loading & Error
   loadingContainer: {

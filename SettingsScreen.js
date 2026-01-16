@@ -4,7 +4,7 @@
  * Professional Settings UI - Clean, minimal, premium feel
  */
 
-import React from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
@@ -17,6 +17,7 @@ import {
   Dimensions,
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
+import { t, SUPPORTED_LANGUAGES, isUsingEnglish, setUseEnglish, getSystemLanguage, getCurrentLanguage } from './i18n';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const isTablet = Math.min(SCREEN_WIDTH, SCREEN_HEIGHT) >= 600;
@@ -132,7 +133,19 @@ export const SettingsScreen = ({
   onQrScan,
   normalizeHostInput,
   SecureStore,
+  currentLanguage,
+  onLanguageChange,
 }) => {
+  const [useEnglish, setUseEnglishState] = useState(isUsingEnglish());
+  const systemLang = getSystemLanguage();
+  const systemLangInfo = SUPPORTED_LANGUAGES.find(l => l.code === systemLang);
+  const currentLangInfo = SUPPORTED_LANGUAGES.find(l => l.code === currentLanguage);
+
+  const handleLanguageToggle = async (value) => {
+    setUseEnglishState(value);
+    await setUseEnglish(value);
+    onLanguageChange(value ? 'en' : systemLang);
+  };
 
   const handleServerTypeChange = async (type) => {
     if (type === 'stealthcloud') {
@@ -160,9 +173,9 @@ export const SettingsScreen = ({
       {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity onPress={onBack} style={styles.backButton}>
-          <Text style={styles.backButtonText}>Back</Text>
+          <Text style={styles.backButtonText}>{t('common.back')}</Text>
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Settings</Text>
+        <Text style={styles.headerTitle}>{t('settings.title')}</Text>
         <View style={{ width: scaleSpacing(60) }} />
       </View>
 
@@ -172,12 +185,12 @@ export const SettingsScreen = ({
         showsVerticalScrollIndicator={false}
       >
         {/* Server Selection */}
-        <Text style={styles.sectionTitle}>Server</Text>
+        <Text style={styles.sectionTitle}>{t('settings.server')}</Text>
         <Card glassModeEnabled={glassModeEnabled}>
           <ServerOption
             icon="cloud"
-            label="StealthCloud"
-            description="Secure cloud backup"
+            label={t('settings.stealthcloud')}
+            description={t('settings.stealthcloudDesc')}
             isSelected={serverType === 'stealthcloud'}
             onPress={() => handleServerTypeChange('stealthcloud')}
             glassModeEnabled={glassModeEnabled}
@@ -185,8 +198,8 @@ export const SettingsScreen = ({
           <View style={styles.divider} />
           <ServerOption
             icon="wifi"
-            label="Local Server"
-            description="Same WiFi network"
+            label={t('settings.localServer')}
+            description={t('settings.localServerDesc')}
             isSelected={serverType === 'local'}
             onPress={() => handleServerTypeChange('local')}
             glassModeEnabled={glassModeEnabled}
@@ -194,8 +207,8 @@ export const SettingsScreen = ({
           <View style={styles.divider} />
           <ServerOption
             icon="globe"
-            label="Remote Server"
-            description="Internet connection"
+            label={t('settings.remoteServer')}
+            description={t('settings.remoteServerDesc')}
             isSelected={serverType === 'remote'}
             onPress={() => handleServerTypeChange('remote')}
             glassModeEnabled={glassModeEnabled}
@@ -205,10 +218,10 @@ export const SettingsScreen = ({
         {/* Server Configuration */}
         {serverType === 'local' && (
           <>
-            <Text style={styles.sectionTitle}>Local Server</Text>
+            <Text style={styles.sectionTitle}>{t('settings.localServer')}</Text>
             <Card glassModeEnabled={glassModeEnabled}>
               <View style={styles.inputContainer}>
-                <Text style={styles.inputLabel}>Server IP Address</Text>
+                <Text style={styles.inputLabel}>{t('settings.serverIpAddress')}</Text>
                 <View style={styles.inputRow}>
                   <TextInput
                     style={styles.textInput}
@@ -225,7 +238,7 @@ export const SettingsScreen = ({
                 </View>
               </View>
               <ActionButton
-                title="Save & Connect"
+                title={t('settings.saveAndConnect')}
                 onPress={handleSaveSettings}
                 glassModeEnabled={glassModeEnabled}
               />
@@ -235,10 +248,10 @@ export const SettingsScreen = ({
 
         {serverType === 'remote' && (
           <>
-            <Text style={styles.sectionTitle}>Remote Server</Text>
+            <Text style={styles.sectionTitle}>{t('settings.remoteServer')}</Text>
             <Card glassModeEnabled={glassModeEnabled}>
               <View style={styles.inputContainer}>
-                <Text style={styles.inputLabel}>Server Address</Text>
+                <Text style={styles.inputLabel}>{t('settings.serverAddress')}</Text>
                 <TextInput
                   style={[styles.textInput, { flex: 0 }]}
                   placeholder="your-server.com or IP address"
@@ -250,7 +263,7 @@ export const SettingsScreen = ({
                 />
               </View>
               <ActionButton
-                title="Save & Connect"
+                title={t('settings.saveAndConnect')}
                 onPress={handleSaveSettings}
                 glassModeEnabled={glassModeEnabled}
               />
@@ -267,12 +280,12 @@ export const SettingsScreen = ({
         )}
 
         {/* Preferences */}
-        <Text style={styles.sectionTitle}>Preferences</Text>
+        <Text style={styles.sectionTitle}>{t('settings.preferences')}</Text>
         <Card glassModeEnabled={glassModeEnabled}>
           <ToggleSetting
             icon="zap"
-            title="Fast Mode"
-            subtitle={fastModeEnabled ? 'Higher speed, more battery usage' : 'Balanced performance'}
+            title={t('settings.fastMode')}
+            subtitle={fastModeEnabled ? t('settings.fastModeOnDesc') : t('settings.fastModeOffDesc')}
             value={fastModeEnabled}
             onValueChange={persistFastModeEnabled}
             glassModeEnabled={glassModeEnabled}
@@ -290,12 +303,42 @@ export const SettingsScreen = ({
           */}
         </Card>
 
+        {/* Language */}
+        <Text style={styles.sectionTitle}>{t('settings.language')}</Text>
+        <Card glassModeEnabled={glassModeEnabled}>
+          <View style={[styles.settingRow, glassModeEnabled && styles.settingRowGlass]}>
+            <View style={styles.settingIcon}>
+              <Text style={{ fontSize: scale(20) }}>🌐</Text>
+            </View>
+            <View style={styles.settingContent}>
+              <Text style={styles.settingTitle}>{t('settings.useEnglish')}</Text>
+              <Text style={styles.settingSubtitle}>
+                {useEnglish 
+                  ? t('settings.currentlyEnglish')
+                  : `${t('settings.currentlySystem')}: ${systemLangInfo?.nativeName || 'English'}`
+                }
+              </Text>
+            </View>
+            <Switch
+              value={useEnglish}
+              onValueChange={handleLanguageToggle}
+              trackColor={{ false: '#333', true: '#4CAF50' }}
+              thumbColor={useEnglish ? '#fff' : '#888'}
+            />
+          </View>
+          <View style={styles.languageNote}>
+            <Text style={styles.languageNoteText}>
+              {t('settings.englishDefaultNote')}
+            </Text>
+          </View>
+        </Card>
+
         {/* Danger Zone */}
-        <Text style={[styles.sectionTitle, { color: '#EF4444' }]}>Danger Zone</Text>
+        <Text style={[styles.sectionTitle, { color: '#EF4444' }]}>{t('settings.dangerZone')}</Text>
         <Card glassModeEnabled={glassModeEnabled} style={styles.dangerCard}>
           <ActionButton
-            title="Delete All Server Data"
-            subtitle="This cannot be undone"
+            title={t('settings.deleteAllServerData')}
+            subtitle={t('settings.cannotBeUndone')}
             onPress={serverType === 'stealthcloud' ? purgeStealthCloudData : purgeClassicServerData}
             danger
             disabled={loading}
@@ -530,5 +573,16 @@ const styles = StyleSheet.create({
   connectionText: {
     fontSize: scale(13),
     color: '#666666',
+  },
+  // Language Note
+  languageNote: {
+    paddingHorizontal: scaleSpacing(16),
+    paddingBottom: scaleSpacing(12),
+    paddingTop: scaleSpacing(4),
+  },
+  languageNoteText: {
+    fontSize: scale(11),
+    color: '#666666',
+    fontStyle: 'italic',
   },
 });

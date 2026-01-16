@@ -21,6 +21,7 @@ import {
 } from 'react-native';
 import * as MediaLibrary from 'expo-media-library';
 import { Feather } from '@expo/vector-icons';
+import { t } from './i18n';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const THUMBNAIL_SIZE = (SCREEN_WIDTH - 48) / 3; // 3 columns with padding
@@ -370,8 +371,13 @@ const NFTPhotoPicker = ({
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
           keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
         >
-          <View style={styles.mintConfirmModal}>
-              <Text style={styles.modalTitle}>Create NFT</Text>
+          <ScrollView 
+            style={styles.mintConfirmModal}
+            contentContainerStyle={styles.mintConfirmContent}
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+          >
+              <Text style={styles.modalTitle}>{t('nftMint.createNft')}</Text>
               
               {selectedPhoto && (
                 <Image
@@ -382,12 +388,12 @@ const NFTPhotoPicker = ({
               )}
               
               <View style={styles.inputContainer}>
-                <Text style={styles.inputLabel}>NFT Name</Text>
+                <Text style={styles.inputLabel}>{t('nftMint.nftName')}</Text>
                 <TextInput
                   style={styles.textInput}
                   value={nftName}
                   onChangeText={setNftName}
-                  placeholder="Enter NFT name..."
+                  placeholder={t('nftMint.enterNftName')}
                   placeholderTextColor={COLORS.textSecondary}
                   maxLength={50}
                   returnKeyType="next"
@@ -396,12 +402,12 @@ const NFTPhotoPicker = ({
               </View>
               
               <View style={styles.inputContainer}>
-                <Text style={styles.inputLabel}>Description (optional)</Text>
+                <Text style={styles.inputLabel}>{t('nftMint.descriptionOptional')}</Text>
                 <TextInput
                   style={[styles.textInput, styles.textArea]}
                   value={nftDescription}
                   onChangeText={setNftDescription}
-                  placeholder="Enter description..."
+                  placeholder={t('nftMint.enterDescription')}
                   placeholderTextColor={COLORS.textSecondary}
                   multiline
                   numberOfLines={3}
@@ -414,7 +420,7 @@ const NFTPhotoPicker = ({
           
               {/* Storage option selector */}
               <View style={styles.storageSection}>
-                <Text style={styles.storageSectionTitle}>Image Storage</Text>
+                <Text style={styles.storageSectionTitle}>{t('nftMint.imageStorage')}</Text>
                 
                 {/* IPFS Option */}
                 <TouchableOpacity 
@@ -426,10 +432,10 @@ const NFTPhotoPicker = ({
                     <Feather name="globe" size={20} color={storageOption === 'ipfs' ? COLORS.primary : COLORS.textSecondary} />
                     <View style={styles.storageOptionText}>
                       <Text style={[styles.storageOptionTitle, storageOption === 'ipfs' && styles.storageOptionTitleSelected]}>
-                        IPFS (Decentralized)
+                        {t('nftMint.ipfsDecentralized')}
                       </Text>
                       <Text style={styles.storageOptionDesc}>
-                        Permanent, public storage • $0.50 fee
+                        {t('nftMint.ipfsDesc')}
                       </Text>
                     </View>
                   </View>
@@ -457,12 +463,12 @@ const NFTPhotoPicker = ({
                         storageOption === 'cloud' && styles.storageOptionTitleSelected,
                         !cloudEligible && styles.storageOptionTitleDisabled,
                       ]}>
-                        StealthCloud (Your Storage)
+                        {t('nftMint.stealthCloudStorage')}
                       </Text>
                       <Text style={[styles.storageOptionDesc, !cloudEligible && styles.storageOptionDescDisabled]}>
                         {cloudEligible 
-                          ? 'Uses your plan space • $0.20 fee'
-                          : checkingCloud ? 'Checking...' : cloudReason || 'No active plan'}
+                          ? t('nftMint.stealthCloudDesc')
+                          : checkingCloud ? t('nftMint.checking') : cloudReason || t('nftMint.noActivePlan')}
                       </Text>
                     </View>
                   </View>
@@ -485,9 +491,9 @@ const NFTPhotoPicker = ({
                 <View style={styles.privacyToggleLeft}>
                   <Feather name="shield" size={18} color={stripExif ? COLORS.accent : COLORS.textSecondary} />
                   <View style={styles.privacyToggleText}>
-                    <Text style={styles.privacyToggleTitle}>Remove private data</Text>
+                    <Text style={styles.privacyToggleTitle}>{t('nftMint.removePrivateData')}</Text>
                     <Text style={styles.privacyToggleDesc}>
-                      Strips date, location, device info from photo
+                      {t('nftMint.stripsPrivateData')}
                     </Text>
                   </View>
                 </View>
@@ -499,8 +505,10 @@ const NFTPhotoPicker = ({
               <View style={styles.infoBox}>
                 <Feather name="info" size={16} color={COLORS.primary} />
                 <Text style={styles.infoText}>
-                  Your photo will be stored on {storageOption === 'cloud' ? 'StealthCloud' : 'IPFS'} and minted as an NFT on Solana.
-                  {stripExif && ' Private data will be removed.'}
+                  {storageOption === 'cloud' 
+                    ? t('nftMint.infoStealthCloud') 
+                    : t('nftMint.infoIpfs')}
+                  {stripExif && ` ${t('nftMint.privateDataRemoved')}`}
                 </Text>
               </View>
               
@@ -509,17 +517,17 @@ const NFTPhotoPicker = ({
                 style={styles.cancelButton}
                 onPress={() => setShowMintConfirm(false)}
               >
-                <Text style={styles.cancelButtonText}>Cancel</Text>
+                <Text style={styles.cancelButtonText}>{t('common.cancel')}</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={styles.mintButton}
                 onPress={handleMintConfirm}
               >
                 <Feather name="zap" size={18} color="#fff" />
-                <Text style={styles.mintButtonText}>Mint NFT</Text>
+                <Text style={styles.mintButtonText}>{t('nftMint.mintNft')}</Text>
               </TouchableOpacity>
             </View>
-          </View>
+          </ScrollView>
         </KeyboardAvoidingView>
       </TouchableWithoutFeedback>
     </Modal>
@@ -540,14 +548,14 @@ const NFTPhotoPicker = ({
           <TouchableOpacity onPress={onClose} style={styles.closeButton}>
             <Feather name="x" size={24} color={COLORS.text} />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Select Photo for NFT</Text>
+          <Text style={styles.headerTitle}>{t('nftMint.selectPhotoForNft')}</Text>
           <TouchableOpacity
             style={[styles.nextButton, !selectedPhoto && styles.nextButtonDisabled]}
             onPress={() => selectedPhoto && setShowMintConfirm(true)}
             disabled={!selectedPhoto}
           >
             <Text style={[styles.nextButtonText, !selectedPhoto && styles.nextButtonTextDisabled]}>
-              Next
+              {t('nftMint.next')}
             </Text>
           </TouchableOpacity>
         </View>
@@ -644,9 +652,11 @@ const styles = StyleSheet.create({
     padding: 8,
   },
   headerTitle: {
+    flex: 1,
     fontSize: 18,
     fontWeight: '600',
     color: COLORS.text,
+    marginHorizontal: 8,
   },
   nextButton: {
     paddingHorizontal: 16,
@@ -775,17 +785,21 @@ const styles = StyleSheet.create({
   // Mint confirmation modal
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.8)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 16,
+    backgroundColor: '#000000',
+    justifyContent: 'flex-start',
+    paddingTop: Platform.OS === 'ios' ? 60 : 40,
+    paddingHorizontal: 16,
+    paddingBottom: 20,
   },
   mintConfirmModal: {
+    flex: 1,
     width: '100%',
     maxWidth: 400,
-    backgroundColor: COLORS.surface,
-    borderRadius: 16,
-    padding: 20,
+    alignSelf: 'center',
+  },
+  mintConfirmContent: {
+    flexGrow: 1,
+    paddingBottom: 20,
   },
   modalTitle: {
     fontSize: 18,
@@ -796,49 +810,49 @@ const styles = StyleSheet.create({
   },
   previewImage: {
     width: '100%',
-    height: 150,
-    borderRadius: 10,
-    marginBottom: 12,
+    height: 120,
+    borderRadius: 8,
+    marginBottom: 10,
   },
   inputContainer: {
-    marginBottom: 16,
+    marginBottom: 10,
   },
   inputLabel: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '600',
     color: COLORS.text,
-    marginBottom: 8,
+    marginBottom: 6,
   },
   textInput: {
     backgroundColor: COLORS.surfaceLight,
     borderRadius: 8,
-    padding: 12,
+    padding: 10,
     color: COLORS.text,
-    fontSize: 16,
+    fontSize: 14,
     borderWidth: 1,
     borderColor: COLORS.border,
   },
   textArea: {
-    height: 80,
+    height: 56,
     textAlignVertical: 'top',
   },
   storageSection: {
-    marginBottom: 12,
+    marginBottom: 10,
   },
   storageSectionTitle: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '600',
     color: COLORS.text,
-    marginBottom: 8,
+    marginBottom: 6,
   },
   storageOption: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     backgroundColor: COLORS.surfaceLight,
-    borderRadius: 10,
-    padding: 12,
-    marginBottom: 8,
+    borderRadius: 8,
+    padding: 10,
+    marginBottom: 6,
     borderWidth: 2,
     borderColor: 'transparent',
   },
@@ -903,9 +917,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     backgroundColor: COLORS.surfaceLight,
-    borderRadius: 10,
-    padding: 14,
-    marginBottom: 12,
+    borderRadius: 8,
+    padding: 10,
+    marginBottom: 10,
   },
   privacyToggleLeft: {
     flexDirection: 'row',
