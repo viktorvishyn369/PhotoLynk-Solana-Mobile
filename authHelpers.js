@@ -228,29 +228,39 @@ export const handleCredentialsChange = async (previousEmail, normalizedEmail, ca
 
 /**
  * Checks for first launch after reinstall and clears old credentials.
+ * Uses SecureStore (keychain) for the marker since it persists across app updates.
+ * Only returns true on genuine first install (no existing credentials).
  * @returns {Promise<boolean>} True if first launch after reinstall
  */
 export const checkFirstLaunchAfterReinstall = async () => {
-  const firstLaunchMarker = `${FileSystem.documentDirectory}app_initialized.txt`;
+  const MARKER_KEY = 'app_initialized_v2';
   
   try {
-    const markerExists = await FileSystem.getInfoAsync(firstLaunchMarker);
-    if (!markerExists.exists) {
-      console.log('[FirstLaunch] Detected first launch after reinstall - clearing old credentials');
-
-      // Clear all auth-related SecureStore items
-      await SecureStore.deleteItemAsync('auth_token').catch(() => {});
-      await SecureStore.deleteItemAsync('user_id').catch(() => {});
-      await SecureStore.deleteItemAsync('user_email').catch(() => {});
-      await SecureStore.deleteItemAsync('device_uuid').catch(() => {});
-      await SecureStore.deleteItemAsync(SAVED_PASSWORD_KEY).catch(() => {});
-      await SecureStore.deleteItemAsync(SAVED_PASSWORD_EMAIL_KEY).catch(() => {});
-
-      // Create marker file
-      await FileSystem.writeAsStringAsync(firstLaunchMarker, new Date().toISOString());
-      console.log('[FirstLaunch] Credentials cleared, marker created');
-      return true;
+    // Check if marker exists in SecureStore (persists across updates)
+    const markerExists = await SecureStore.getItemAsync(MARKER_KEY);
+    
+    if (markerExists) {
+      // Marker exists - not a first launch, credentials should be intact
+      return false;
     }
+    
+    // No marker - check if this is a true first install or just missing marker
+    // If credentials exist, this is an existing user (marker was missing due to migration)
+    const existingToken = await SecureStore.getItemAsync('auth_token');
+    const existingEmail = await SecureStore.getItemAsync('user_email');
+    const existingPassword = await SecureStore.getItemAsync(SAVED_PASSWORD_KEY);
+    
+    if (existingToken || existingEmail || existingPassword) {
+      // Credentials exist - this is an existing user, just create the marker
+      console.log('[FirstLaunch] Existing credentials found - creating marker without clearing');
+      await SecureStore.setItemAsync(MARKER_KEY, new Date().toISOString());
+      return false;
+    }
+    
+    // No marker AND no credentials - true first install
+    console.log('[FirstLaunch] True first install detected - creating marker');
+    await SecureStore.setItemAsync(MARKER_KEY, new Date().toISOString());
+    return true;
   } catch (e) {
     console.log('[FirstLaunch] Error checking/creating marker:', e?.message);
   }

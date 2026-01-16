@@ -179,12 +179,6 @@ export const localRemoteBackupCore = async ({
       for (const asset of pageAssets) {
         if (excludedIds.has(asset.id)) continue;
         checkedCount += 1;
-        // Analyzing phase: 5-20% progress
-        throttledStatus(onStatus, t('status.analyzing', { current: checkedCount, total: totalCount || '?' }));
-        if (totalCount) {
-          const analyzeProgress = 0.05 + (checkedCount / totalCount) * 0.15;
-          throttledProgress(onProgress, analyzeProgress);
-        }
 
         let actualFilename = normalizeFilenameForCompare(asset && asset.filename ? asset.filename : null);
         if (Platform.OS === 'ios' || !actualFilename) {
@@ -197,6 +191,13 @@ export const localRemoteBackupCore = async ({
         }
 
         if (!actualFilename) continue;
+
+        // Scanning phase: 5-20% progress - show filename
+        throttledStatus(onStatus, t('status.analyzing', { current: checkedCount, total: totalCount || '?', filename: actualFilename }));
+        if (totalCount) {
+          const analyzeProgress = 0.05 + (checkedCount / totalCount) * 0.15;
+          throttledProgress(onProgress, analyzeProgress);
+        }
 
         if (duplicateFilenames[actualFilename]) {
           duplicateFilenames[actualFilename]++;
@@ -435,7 +436,8 @@ export const localRemoteBackupCore = async ({
         processedCount++;
         // Upload phase: 20-100% progress
         const uploadProgress = 0.2 + (processedCount / toUpload.length) * 0.8;
-        throttledStatus(onStatus, t('status.backingUp', { current: processedCount, total: toUpload.length }));
+        const displayFilename = asset.filename || 'file';
+        throttledStatus(onStatus, t('status.backingUp', { current: processedCount, total: toUpload.length, filename: displayFilename }));
         throttledProgress(onProgress, uploadProgress);
       }
     }));
@@ -558,10 +560,6 @@ export const localRemoteBackupSelectedCore = async ({
     const toUpload = [];
     for (let i = 0; i < list.length; i++) {
       const asset = list[i];
-      // Analyzing phase: 5-20% progress
-      const analyzeProgress = 0.05 + ((i + 1) / list.length) * 0.15;
-      throttledStatus(onStatus, t('status.analyzing', { current: i + 1, total: list.length }));
-      throttledProgress(onProgress, analyzeProgress);
       if (excludedIds.has(asset.id)) continue;
 
       let actualFilename = normalizeFilenameForCompare(asset && asset.filename ? asset.filename : null);
@@ -575,6 +573,11 @@ export const localRemoteBackupSelectedCore = async ({
       }
 
       if (!actualFilename) continue;
+
+      // Scanning phase: 5-20% progress - show filename
+      const analyzeProgress = 0.05 + ((i + 1) / list.length) * 0.15;
+      throttledStatus(onStatus, t('status.analyzing', { current: i + 1, total: list.length, filename: actualFilename }));
+      throttledProgress(onProgress, analyzeProgress);
       if (serverFiles.has(actualFilename)) continue;
       toUpload.push(asset);
     }
@@ -607,12 +610,13 @@ export const localRemoteBackupSelectedCore = async ({
         if (ensureAutoUploadPolicyAllowsWorkIfBackgrounded && !(await ensureAutoUploadPolicyAllowsWorkIfBackgrounded())) {
           break;
         }
+        const assetInfo = await MediaLibrary.getAssetInfoAsync(asset.id);
+        const displayFilename = assetInfo.filename || asset.filename || 'file';
+
         // Upload phase: 20-100% progress
         const uploadProgress = 0.2 + ((i + 1) / toUpload.length) * 0.8;
-        throttledStatus(onStatus, t('status.backingUp', { current: i + 1, total: toUpload.length }));
+        throttledStatus(onStatus, t('status.backingUp', { current: i + 1, total: toUpload.length, filename: displayFilename }));
         throttledProgress(onProgress, uploadProgress);
-
-        const assetInfo = await MediaLibrary.getAssetInfoAsync(asset.id);
         const resolved = await resolveReadableFilePath({ assetId: asset.id, assetInfo });
         const filePath = resolved && resolved.filePath ? resolved.filePath : null;
         if (!filePath) {
