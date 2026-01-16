@@ -217,7 +217,7 @@
     "fetchingServerFilesSimple": "Získání souborů serveru {{fetched}}...",
     "backingUp": "Zálohování {{current}} z {{total}}...",
     "uploading": "Nahrávání {{current}} z {{total}}: {{filename}}",
-    "backupCompleteStats": "Zálohování dokončeno: {{uploaded}} nahráno, {{skipped}} přeskočeno, {{failed}} neúspěšně, {{failed}} neúspěšně",
+    "backupCompleteStats": "Zálohování dokončeno: {{uploaded}} nahráno, {{skipped}} přeskočeno, {{failed}} neúspěšně",
     "processing": "Zpracování {{current}} z {{total}}...",
     "syncScanning": "Synchronizace: Skenování {{current}} místních souborů {{total}}...",
     "syncScanningAlbums": "Synchronizace: Skenování alb {{count}}...",
