@@ -9,6 +9,7 @@ import axios from 'axios';
 import { v5 as uuidv5 } from 'uuid';
 import { normalizeEmailForDeviceUuid, normalizeHostInput, computeServerUrl } from './utils';
 import { computeIosHardwareId, computeAndroidHardwareId } from './deviceId';
+import { t } from './i18n';
 
 // Constants
 export const SAVED_PASSWORD_KEY = 'user_password_v1';
