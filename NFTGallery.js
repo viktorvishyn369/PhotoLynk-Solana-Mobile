@@ -347,9 +347,9 @@ const NFTGallery = ({
       
       {/* Main card */}
       <View style={styles.cardMain}>
-        {item.imageUrl ? (
+        {(item.imageUrl || item.arweaveUrl) ? (
           <Image
-            source={{ uri: item.imageUrl }}
+            source={{ uri: item.imageUrl || item.arweaveUrl }}
             style={styles.nftImage}
             resizeMode="cover"
           />
@@ -403,9 +403,9 @@ const NFTGallery = ({
             </View>
             
             {/* Image */}
-            {selectedNFT.imageUrl ? (
+            {(selectedNFT.imageUrl || selectedNFT.arweaveUrl) ? (
               <Image
-                source={{ uri: selectedNFT.imageUrl }}
+                source={{ uri: selectedNFT.imageUrl || selectedNFT.arweaveUrl }}
                 style={styles.detailImage}
                 resizeMode="contain"
               />
@@ -500,11 +500,12 @@ const NFTGallery = ({
             {/* Action buttons */}
             <View style={styles.actionButtons}>
               <TouchableOpacity
-                style={styles.actionButton}
-                onPress={() => openLink(NFTOperations.getExplorerUrl(selectedNFT.txSignature))}
+                style={[styles.actionButton, !selectedNFT.txSignature && styles.actionButtonDisabled]}
+                onPress={() => selectedNFT.txSignature && openLink(NFTOperations.getExplorerUrl(selectedNFT.txSignature))}
+                disabled={!selectedNFT.txSignature}
               >
-                <Feather name="external-link" size={16} color={COLORS.text} />
-                <Text style={styles.actionButtonText}>{t('nftAlbum.explorer')}</Text>
+                <Feather name="external-link" size={16} color={selectedNFT.txSignature ? COLORS.text : COLORS.textSecondary} />
+                <Text style={[styles.actionButtonText, !selectedNFT.txSignature && styles.actionButtonTextDisabled]}>{t('nftAlbum.explorer')}</Text>
               </TouchableOpacity>
               
               <TouchableOpacity
@@ -1264,6 +1265,12 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: COLORS.text,
     fontWeight: '500',
+  },
+  actionButtonDisabled: {
+    opacity: 0.5,
+  },
+  actionButtonTextDisabled: {
+    color: COLORS.textSecondary,
   },
   transferButton: {
     flexDirection: 'row',

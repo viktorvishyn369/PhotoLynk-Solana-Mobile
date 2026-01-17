@@ -6,6 +6,7 @@ import { Platform } from 'react-native';
 import * as FileSystem from 'expo-file-system';
 import * as SecureStore from 'expo-secure-store';
 import * as MediaLibrary from 'expo-media-library';
+import * as ImageManipulator from 'expo-image-manipulator';
 import axios from 'axios';
 
 // ============================================================================
@@ -461,11 +462,7 @@ export const stripExifFromImage = async (filePath) => {
     
     // For React Native, the simplest approach is to use expo-image-manipulator
     // which re-encodes the image and strips EXIF in the process
-    let ImageManipulator;
-    try {
-      ImageManipulator = require('expo-image-manipulator');
-    } catch (e) {
-      // Fallback: just copy the file (EXIF won't be stripped but at least it works)
+    if (!ImageManipulator || !ImageManipulator.manipulateAsync) {
       console.log('[NFT] expo-image-manipulator not available, using fallback');
       return { success: true, cleanPath: filePath, stripped: false };
     }
@@ -624,12 +621,14 @@ export const uploadToStealthCloud = async (filePath, config) => {
     const result = await response.json();
     
     if (result.success) {
-      console.log('[NFT] Uploaded to StealthCloud:', result.publicUrl);
+      // Use fallback URL with full base URL since nft.stealthlynk.io subdomain may not be configured
+      const fullFallbackUrl = `${config.baseUrl}${result.fallbackUrl}`;
+      console.log('[NFT] Uploaded to StealthCloud:', fullFallbackUrl);
       return {
         success: true,
-        arweaveUrl: result.publicUrl, // Use same field name for compatibility
+        arweaveUrl: fullFallbackUrl, // Use fallback URL for reliable access
         publicUrl: result.publicUrl,
-        fallbackUrl: result.fallbackUrl,
+        fallbackUrl: fullFallbackUrl,
         imageId: result.imageId,
         size: result.size,
       };
