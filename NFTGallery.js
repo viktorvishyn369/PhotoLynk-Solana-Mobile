@@ -347,9 +347,9 @@ const NFTGallery = ({
       
       {/* Main card */}
       <View style={styles.cardMain}>
-        {(item.imageUrl || item.arweaveUrl) ? (
+        {(item.imageUrl || item.arweaveUrl || item.metadataUrl) ? (
           <Image
-            source={{ uri: item.imageUrl || item.arweaveUrl }}
+            source={{ uri: item.imageUrl || item.arweaveUrl || item.metadataUrl }}
             style={styles.nftImage}
             resizeMode="cover"
           />
@@ -403,9 +403,9 @@ const NFTGallery = ({
             </View>
             
             {/* Image */}
-            {(selectedNFT.imageUrl || selectedNFT.arweaveUrl) ? (
+            {(selectedNFT.imageUrl || selectedNFT.arweaveUrl || selectedNFT.metadataUrl) ? (
               <Image
-                source={{ uri: selectedNFT.imageUrl || selectedNFT.arweaveUrl }}
+                source={{ uri: selectedNFT.imageUrl || selectedNFT.arweaveUrl || selectedNFT.metadataUrl }}
                 style={styles.detailImage}
                 resizeMode="contain"
               />
