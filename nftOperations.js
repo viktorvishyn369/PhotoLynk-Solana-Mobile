@@ -557,6 +557,20 @@ export const uploadToStealthCloud = async (filePath, config) => {
     if (!headers.Authorization) {
       return { success: false, error: 'Not logged in to StealthCloud' };
     }
+    // Ensure device UUID header is present (server requires X-Device-UUID)
+    if (!headers['X-Device-UUID'] && !headers['x-device-uuid']) {
+      try {
+        const storedUuid = await SecureStore.getItemAsync('device_uuid');
+        if (storedUuid) {
+          headers['X-Device-UUID'] = storedUuid;
+        }
+      } catch (e) {
+        // ignore
+      }
+      if (!headers['X-Device-UUID']) {
+        return { success: false, error: 'Device UUID missing. Please login again.' };
+      }
+    }
     
     // Read file as base64
     const fileBase64 = await FileSystem.readAsStringAsync(filePath, {
