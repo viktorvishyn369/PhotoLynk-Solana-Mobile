@@ -8,6 +8,7 @@ import * as SecureStore from 'expo-secure-store';
 import * as MediaLibrary from 'expo-media-library';
 import * as ImageManipulator from 'expo-image-manipulator';
 import axios from 'axios';
+import { getDeviceUUID, SAVED_PASSWORD_KEY } from './authHelpers';
 
 // ============================================================================
 // SOLANA IMPORTS
@@ -559,6 +560,7 @@ export const uploadToStealthCloud = async (filePath, config) => {
     }
     // Ensure device UUID header is present (server requires X-Device-UUID)
     if (!headers['X-Device-UUID'] && !headers['x-device-uuid']) {
+      // 1) Try persisted device_uuid
       try {
         const storedUuid = await SecureStore.getItemAsync('device_uuid');
         if (storedUuid) {
@@ -567,6 +569,21 @@ export const uploadToStealthCloud = async (filePath, config) => {
       } catch (e) {
         // ignore
       }
+
+      // 2) If still missing, derive from email+password (same as login path)
+      if (!headers['X-Device-UUID']) {
+        try {
+          const email = await SecureStore.getItemAsync('user_email');
+          const password = await SecureStore.getItemAsync(SAVED_PASSWORD_KEY);
+          if (email && password) {
+            const derived = await getDeviceUUID(email, password);
+            if (derived) headers['X-Device-UUID'] = derived;
+          }
+        } catch (e) {
+          // ignore
+        }
+      }
+
       if (!headers['X-Device-UUID']) {
         return { success: false, error: 'Device UUID missing. Please login again.' };
       }
