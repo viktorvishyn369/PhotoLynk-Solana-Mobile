@@ -373,7 +373,7 @@
     "couldNotScan": "Kunne ikke scanne wallet for NFT'er",
     "couldNotOpenLink": "Kunne ikke åbne link",
     "clearAllNfts": "Ryd alle NFT'er",
-    "clearAllNftsMessage": "Dette vil fjerne alle NFT'er fra det lokale lager. Dette er kun til test og påvirker ikke blockchainen.",
+    "clearAllNftsMessage": "Dette vil slette alle NFT'er fra albummet. De forbliver på blockchainen og kan gendannes ved at scanne din wallet igen.",
     "clear": "Klar",
     "nftOwner": "NFT EJER",
     "description": "BESKRIVELSE",
@@ -382,10 +382,15 @@
     "verifiedOnSolana": "Bekræftet på Solana",
     "notFoundOnChain": "Ikke fundet på kæden",
     "verifyOnChain": "Bekræft på kæden",
-    "explorer": "Udforsker",
     "solscan": "Solscan",
     "ipfs": "IPFS",
-    "transferNft": "Overførsel NFT"
+    "transferNft": "Overførsel NFT",
+    "standard": "Standard",
+    "compressed": "Komprimeret",
+    "uniqueToken": "Unik token",
+    "sharedTree": "Delt træ",
+    "standardNft": "Standard NFT",
+    "compressedNft": "Komprimeret NFT"
   },
   "similarPhotos": {
     "title": "Lignende fotos",
@@ -397,6 +402,19 @@
     "delete": "Sletning",
     "keepAllNext": "Behold alle → Næste",
     "keepAllDone": "Behold alt og færdig"
+  },
+  "nftWelcome": {
+    "title": "Velkommen til NFT-oprettelse",
+    "whatIsNft": "Hvad er en NFT?",
+    "whatIsNftDesc": "En NFT (Non-Fungible Token) er et unikt digitalt ejerskabscertifikat gemt på blockchain. Når du opretter et foto som NFT, skaber du permanent bevis på, at du ejer dette digitale aktiv.",
+    "publicWarning": "Offentlig og permanent",
+    "publicWarningDesc": "Dit foto vil blive gemt online og være synligt for alle. Undgå personlige eller følsomme billeder. Når de er oprettet, kan NFT'er ikke slettes fra blockchain.",
+    "sizeRecommendation": "Billedstørrelse er vigtig",
+    "sizeRecommendationDesc": "Mindre billeder (under 2MB) indlæses hurtigere i albummet. Store filer kan tage længere tid at vise på grund af netværksforhold, men din NFT er altid sikker på blockchain.",
+    "loadingNote": "Om billedindlæsning",
+    "loadingNoteDesc": "Hvis et billede ikke vises med det samme, så fortvivl ikke — din NFT eksisterer og er sikker. Midlertidige indlæsningsproblemer kan opstå på grund af netværksbelastning eller gateway-forsinkelser.",
+    "gotIt": "Forstået",
+    "dontShowAgain": "Vis ikke igen"
   },
   "nftMint": {
     "createNft": "Opret NFT",
@@ -438,7 +456,13 @@
     "seekerIdPlaceholder": "f.eks. alice.skr eller alice",
     "seekerIdHint": "Indtast et Seeker-ID (f.eks. alice.skr) eller et .sol-domæne",
     "warningMessage": "NFT-overførsler er permanente og kan ikke tilbageføres. Sørg for, at du har den korrekte modtageradresse.",
-    "transfer": "Overførsel"
+    "transfer": "Overførsel",
+    "confirmTransfer": "Bekræft overførsel",
+    "confirmTransferMessage": "Er du sikker på, at du vil overføre \"{{name}}\" til {{recipient}}?",
+    "cannotBeUndone": "Denne handling kan ikke fortrydes.",
+    "transferSuccessful": "Overførsel gennemført",
+    "transferSuccessMessage": "Din NFT er blevet overført!",
+    "transaction": "Transaktion"
   },
   "duplicates": {
     "title": "Rens duplikater",

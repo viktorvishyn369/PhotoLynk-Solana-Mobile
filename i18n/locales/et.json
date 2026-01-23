@@ -373,7 +373,7 @@
     "couldNotScan": "Ei saanud rahakotti NFT-de jaoks skaneerida",
     "couldNotOpenLink": "Ei saanud linki avada",
     "clearAllNfts": "Tühjenda kõik NFT-d",
-    "clearAllNftsMessage": "See eemaldab kõik NFT-d kohalikust salvestusruumist. See on ainult testimiseks ja ei mõjuta plokiahelat.",
+    "clearAllNftsMessage": "See kustutab kõik NFT-d albumist. Need jäävad plokiahelasse ja neid saab taastada rahakoti uuesti skanneerimisega.",
     "clear": "Selge",
     "nftOwner": "NFT OWNER",
     "description": "KIRJELDUS",
@@ -382,10 +382,15 @@
     "verifiedOnSolana": "Kontrollitud Solana kohta",
     "notFoundOnChain": "Ei leitud ketis",
     "verifyOnChain": "Kontrollida ahelas",
-    "explorer": "Explorer",
     "solscan": "Solscan",
     "ipfs": "IPFS",
-    "transferNft": "Ülekanne NFT"
+    "transferNft": "Ülekanne NFT",
+    "standard": "Standard",
+    "compressed": "Kokkusurutud",
+    "uniqueToken": "Unikaalne token",
+    "sharedTree": "Jagatud puu",
+    "standardNft": "Standard NFT",
+    "compressedNft": "Kokkusurutud NFT"
   },
   "similarPhotos": {
     "title": "Sarnased fotod",
@@ -396,7 +401,20 @@
     "keepThisPhoto": "Hoidke seda fotot",
     "delete": "Kustuta",
     "keepAllNext": "Hoidke kõik → Järgmine",
-    "keepAllDone": "Keep All & Done"
+    "keepAllDone": "Hoidke kõik ja valmis"
+  },
+  "nftWelcome": {
+    "title": "Tere tulemast NFT loomisse",
+    "whatIsNft": "Mis on NFT?",
+    "whatIsNftDesc": "NFT (mittevahetatav token) on unikaalne digitaalne omanditunnistus, mis on salvestatud plokiahelasse. Kui loote foto NFT-na, loote püsiva tõendi, et omate seda digitaalset vara.",
+    "publicWarning": "Avalik ja püsiv",
+    "publicWarningDesc": "Teie foto salvestatakse võrgus ja on kõigile nähtav. Vältige isiklikke või tundlikke pilte. Kui NFT on loodud, ei saa seda plokiahelast kustutada.",
+    "sizeRecommendation": "Pildi suurus on oluline",
+    "sizeRecommendationDesc": "Väiksemad pildid (alla 2MB) laadivad albumis kiiremini. Suured failid võivad võrguolude tõttu kuvamiseks kauem aega võtta, kuid teie NFT on plokiahelas alati turvaline.",
+    "loadingNote": "Piltide laadimisest",
+    "loadingNoteDesc": "Kui pilt kohe ei ilmu, ärge muretsege — teie NFT on olemas ja turvaline. Ajutised laadimisprobleemid võivad tekkida võrgu ülekoormatuse või lüüsi viivituste tõttu.",
+    "gotIt": "Selge",
+    "dontShowAgain": "Ära näita enam"
   },
   "nftMint": {
     "createNft": "Loo NFT",
@@ -438,7 +456,13 @@
     "seekerIdPlaceholder": "nt alice.skr või alice",
     "seekerIdHint": "Sisestage otsija ID (nt alice.skr) või .sol domeen.",
     "warningMessage": "NFT-ülekanded on alalised ja neid ei saa tagasi pöörata. Veenduge, et teil on õige saaja aadress.",
-    "transfer": "Ülekanne"
+    "transfer": "Ülekanne",
+    "confirmTransfer": "Kinnita ülekanne",
+    "confirmTransferMessage": "Kas olete kindel, et soovite \"{{name}}\" üle kanda aadressile {{recipient}}?",
+    "cannotBeUndone": "Seda toimingut ei saa tagasi võtta.",
+    "transferSuccessful": "Ülekanne õnnestus",
+    "transferSuccessMessage": "Teie NFT on edukalt üle kantud!",
+    "transaction": "Tehing"
   },
   "duplicates": {
     "title": "Puhastage duplikaadid",

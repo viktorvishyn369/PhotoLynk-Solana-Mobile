@@ -373,7 +373,7 @@
     "couldNotScan": "Nem tudta beolvasni a pénztárcát NFT-kért",
     "couldNotOpenLink": "Nem tudta megnyitni a linket",
     "clearAllNfts": "Minden NFT törlése",
-    "clearAllNftsMessage": "Ez eltávolítja az összes NFT-t a helyi tárolóból. Ez csak tesztelésre szolgál, és nem befolyásolja a blokkláncot.",
+    "clearAllNftsMessage": "Ez törli az összes NFT-t az albumból. A blokkláncon maradnak, és a pénztárca újraszkennelésével visszaállíthatók.",
     "clear": "Tiszta",
     "nftOwner": "NFT TULAJDONOS",
     "description": "LEÍRÁS",
@@ -382,10 +382,15 @@
     "verifiedOnSolana": "Ellenőrzött Solana",
     "notFoundOnChain": "Nem található a láncon",
     "verifyOnChain": "Ellenőrizze a láncot",
-    "explorer": "Explorer",
     "solscan": "Solscan",
     "ipfs": "IPFS",
-    "transferNft": "Transzfer NFT"
+    "transferNft": "Transzfer NFT",
+    "standard": "Szabványos",
+    "compressed": "Tömörített",
+    "uniqueToken": "Egyedi token",
+    "sharedTree": "Megosztott fa",
+    "standardNft": "Szabványos NFT",
+    "compressedNft": "Tömörített NFT"
   },
   "similarPhotos": {
     "title": "Hasonló fotók",
@@ -438,7 +443,13 @@
     "seekerIdPlaceholder": "pl. alice.skr vagy alice",
     "seekerIdHint": "Adja meg a kereső azonosítóját (pl. alice.skr) vagy a .sol tartományt.",
     "warningMessage": "Az NFT átutalások véglegesek és nem vonhatók vissza. Győződjön meg róla, hogy a helyes címzett címe szerepel.",
-    "transfer": "Transzfer"
+    "transfer": "Átutalás",
+    "confirmTransfer": "Átvitel megerősítése",
+    "confirmTransferMessage": "Biztosan át szeretné vinni a(z) \"{{name}}\" elemet a következő címre: {{recipient}}?",
+    "cannotBeUndone": "Ez a művelet nem vonható vissza.",
+    "transferSuccessful": "Átvitel sikeres",
+    "transferSuccessMessage": "Az NFT sikeresen átvitelre került!",
+    "transaction": "Tranzakció"
   },
   "duplicates": {
     "title": "Duplikátumok tisztítása",

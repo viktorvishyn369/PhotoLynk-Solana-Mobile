@@ -80,7 +80,7 @@ export const localRemoteBackupCore = async ({
   onStatus(t('status.backupPreparing'));
   onProgress(0);
 
-  const permission = await MediaLibrary.requestPermissionsAsync();
+  const permission = await MediaLibrary.requestPermissionsAsync(false, ['photo', 'video']);
   if (!permission || permission.status !== 'granted') {
     return { permissionDenied: true };
   }
@@ -501,7 +501,7 @@ export const localRemoteBackupSelectedCore = async ({
     return { noSelection: true };
   }
 
-  const permission = await MediaLibrary.requestPermissionsAsync();
+  const permission = await MediaLibrary.requestPermissionsAsync(false, ['photo', 'video']);
   if (!permission || permission.status !== 'granted') {
     return { permissionDenied: true };
   }

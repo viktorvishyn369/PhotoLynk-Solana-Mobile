@@ -14,6 +14,8 @@ import {
   StyleSheet,
   Dimensions,
   ScrollView,
+  Platform,
+  StatusBar,
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { t } from './i18n';
@@ -335,8 +337,8 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: scaleSpacing(20),
-    paddingTop: Math.min(56, SCREEN_HEIGHT * 0.04 + 16),
-    paddingBottom: scaleSpacing(8),
+    paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 24) + 8 : Math.min(56, SCREEN_HEIGHT * 0.04 + 16),
+    paddingBottom: 4,
   },
   headerLeft: {
     flex: 1,
@@ -376,7 +378,7 @@ const styles = StyleSheet.create({
   // Hero Status Section
   heroSection: {
     alignItems: 'center',
-    paddingVertical: scaleSpacing(12),
+    paddingVertical: 8,
     paddingHorizontal: scaleSpacing(16),
     position: 'relative',
   },
@@ -453,9 +455,9 @@ const styles = StyleSheet.create({
   actionsSection: {
     flex: 1,
     paddingHorizontal: scaleSpacing(16),
-    gap: scaleSpacing(12),
+    gap: scaleSpacing(10),
     justifyContent: 'flex-end',
-    paddingBottom: scaleSpacing(20),
+    paddingBottom: Platform.OS === 'android' ? 60 : scaleSpacing(20),
   },
   actionRow: {
     flexDirection: 'row',

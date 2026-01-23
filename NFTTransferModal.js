@@ -14,6 +14,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   Alert,
+  ScrollView,
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import NFTOperations from './nftOperations';
@@ -56,6 +57,8 @@ const NFTTransferModal = ({
   const [resolving, setResolving] = useState(false);
   const [resolvedAddress, setResolvedAddress] = useState(null);
   const [error, setError] = useState(null);
+  const [confirmAlert, setConfirmAlert] = useState(null);
+  const [successAlert, setSuccessAlert] = useState(null);
   
   // Validate Solana address
   const isValidSolanaAddress = (address) => {
@@ -118,19 +121,18 @@ const NFTTransferModal = ({
     
     const recipient = transferMethod === 'address' ? recipientAddress : recipientDomain;
     
-    // Confirm transfer
-    Alert.alert(
-      'Confirm Transfer',
-      `Are you sure you want to transfer "${nft?.name}" to ${recipient}?\n\nThis action cannot be undone.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Transfer', style: 'destructive', onPress: executeTransfer },
-      ]
-    );
+    // Show dark themed confirmation alert
+    setConfirmAlert({
+      title: t('nftTransfer.confirmTransfer'),
+      message: t('nftTransfer.confirmTransferMessage', { name: nft?.name, recipient }),
+      onConfirm: executeTransfer,
+      onCancel: () => setConfirmAlert(null),
+    });
   };
   
   // Execute the transfer
   const executeTransfer = async () => {
+    setConfirmAlert(null); // Close confirmation alert
     setTransferring(true);
     setError(null);
     
@@ -140,24 +142,29 @@ const NFTTransferModal = ({
         ? recipientAddress.trim() 
         : recipientDomain.trim();
       
+      console.log('[NFTTransfer] Starting transfer to:', recipient);
       const result = await NFTOperations.transferNFT(nft.mintAddress, recipient);
+      console.log('[NFTTransfer] Result:', result);
+      
+      setTransferring(false); // Stop loading before showing alert
       
       if (result.success) {
-        Alert.alert(
-          'Transfer Successful',
-          `Your NFT has been transferred successfully!\n\nTransaction: ${result.txSignature?.slice(0, 20)}...`,
-          [{ text: 'OK', onPress: () => {
-            onTransferComplete?.(result);
+        // Show dark themed success alert
+        setSuccessAlert({
+          txSignature: result.txSignature,
+          onDismiss: () => {
+            setSuccessAlert(null);
             onClose?.();
-          }}]
-        );
+            onTransferComplete?.(result);
+          },
+        });
       } else {
         setError(result.error || 'Transfer failed');
       }
     } catch (e) {
-      setError(e.message || 'Transfer failed');
-    } finally {
+      console.error('[NFTTransfer] Error:', e);
       setTransferring(false);
+      setError(e.message || 'Transfer failed');
     }
   };
   
@@ -193,6 +200,12 @@ const NFTTransferModal = ({
             </TouchableOpacity>
           </View>
           
+          <ScrollView 
+            style={styles.scrollContent}
+            contentContainerStyle={styles.scrollContentContainer}
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+          >
           {/* NFT Preview */}
           <View style={styles.nftPreview}>
             <Image
@@ -325,6 +338,7 @@ const NFTTransferModal = ({
               {t('nftTransfer.warningMessage')}
             </Text>
           </View>
+          </ScrollView>
           
           {/* Buttons */}
           <View style={styles.buttonContainer}>
@@ -352,6 +366,51 @@ const NFTTransferModal = ({
             </TouchableOpacity>
           </View>
         </View>
+        
+        {/* Dark themed confirmation alert */}
+        {confirmAlert && (
+          <View style={styles.alertOverlay}>
+            <View style={styles.alertContainer}>
+              <Text style={styles.alertTitle}>{confirmAlert.title}</Text>
+              <Text style={styles.alertMessage}>{confirmAlert.message}</Text>
+              <Text style={styles.alertWarning}>{t('nftTransfer.cannotBeUndone')}</Text>
+              <View style={styles.alertButtons}>
+                <TouchableOpacity
+                  style={styles.alertCancelButton}
+                  onPress={confirmAlert.onCancel}
+                >
+                  <Text style={styles.alertCancelText}>{t('common.cancel')}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.alertConfirmButton}
+                  onPress={confirmAlert.onConfirm}
+                >
+                  <Text style={styles.alertConfirmText}>{t('nftTransfer.transfer')}</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        )}
+        
+        {/* Dark themed success alert */}
+        {successAlert && (
+          <View style={styles.alertOverlay}>
+            <View style={styles.alertContainer}>
+              <Feather name="check-circle" size={48} color={COLORS.accent} style={{ alignSelf: 'center', marginBottom: 16 }} />
+              <Text style={styles.alertTitle}>{t('nftTransfer.transferSuccessful')}</Text>
+              <Text style={styles.alertMessage}>{t('nftTransfer.transferSuccessMessage')}</Text>
+              <Text style={styles.txSignature}>{t('nftTransfer.transaction')}: {successAlert.txSignature?.slice(0, 24)}...</Text>
+              <View style={[styles.alertButtons, { marginTop: 20 }]}>
+                <TouchableOpacity
+                  style={[styles.alertConfirmButton, { backgroundColor: COLORS.accent }]}
+                  onPress={successAlert.onDismiss}
+                >
+                  <Text style={styles.alertConfirmText}>{t('common.ok')}</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        )}
       </KeyboardAvoidingView>
     </Modal>
   );
@@ -372,6 +431,13 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.surface,
     borderRadius: 16,
     overflow: 'hidden',
+    maxHeight: '90%',
+  },
+  scrollContent: {
+    flexGrow: 0,
+  },
+  scrollContentContainer: {
+    paddingBottom: 8,
   },
   header: {
     flexDirection: 'row',
@@ -571,6 +637,82 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
     color: '#fff',
+  },
+  // Dark themed alert styles
+  alertOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.85)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  alertContainer: {
+    backgroundColor: COLORS.surface,
+    borderRadius: 16,
+    padding: 24,
+    width: '100%',
+    maxWidth: 320,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  alertTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: COLORS.text,
+    textAlign: 'center',
+    marginBottom: 12,
+  },
+  alertMessage: {
+    fontSize: 14,
+    color: COLORS.textSecondary,
+    textAlign: 'center',
+    lineHeight: 20,
+    marginBottom: 8,
+  },
+  alertWarning: {
+    fontSize: 12,
+    color: COLORS.warning,
+    textAlign: 'center',
+    marginBottom: 20,
+  },
+  alertButtons: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  alertCancelButton: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 8,
+    backgroundColor: COLORS.surfaceLight,
+    alignItems: 'center',
+  },
+  alertCancelText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: COLORS.text,
+  },
+  alertConfirmButton: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 8,
+    backgroundColor: COLORS.error,
+    alignItems: 'center',
+  },
+  alertConfirmText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#fff',
+  },
+  txSignature: {
+    fontSize: 12,
+    color: COLORS.textSecondary,
+    textAlign: 'center',
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    marginTop: 8,
   },
 });
 

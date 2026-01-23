@@ -373,7 +373,7 @@
     "couldNotScan": "Nu s-a putut scana portofelul pentru NFT-uri",
     "couldNotOpenLink": "Nu s-a putut deschide link-ul",
     "clearAllNfts": "Ștergeți toate NFT",
-    "clearAllNftsMessage": "Acest lucru va elimina toate NFT-urile din stocarea locală. Acest lucru este doar pentru testare și nu afectează blockchain-ul.",
+    "clearAllNftsMessage": "Aceasta va șterge toate NFT-urile din album. Ele rămân pe blockchain și pot fi restaurate prin rescanarea portofelului.",
     "clear": "Clar",
     "nftOwner": "PROPRIETAR NFT",
     "description": "DESCRIERE",
@@ -382,10 +382,15 @@
     "verifiedOnSolana": "Verificat pe Solana",
     "notFoundOnChain": "Nu se găsește pe lanț",
     "verifyOnChain": "Verificare pe lanț",
-    "explorer": "Explorator",
     "solscan": "Solscan",
     "ipfs": "IPFS",
-    "transferNft": "Transfer NFT"
+    "transferNft": "Transfer NFT",
+    "standard": "Standard",
+    "compressed": "Comprimat",
+    "uniqueToken": "Token unic",
+    "sharedTree": "Arbore partajat",
+    "standardNft": "NFT Standard",
+    "compressedNft": "NFT Comprimat"
   },
   "similarPhotos": {
     "title": "Fotografii similare",
@@ -438,7 +443,13 @@
     "seekerIdPlaceholder": "de exemplu, alice.skr sau alice",
     "seekerIdHint": "Introduceți un Seeker ID (de exemplu, alice.skr) sau un domeniu .sol",
     "warningMessage": "Transferurile NFT sunt permanente și nu pot fi anulate. Asigurați-vă că aveți adresa corectă a destinatarului.",
-    "transfer": "Transfer"
+    "transfer": "Transfer",
+    "confirmTransfer": "Confirmați transferul",
+    "confirmTransferMessage": "Sunteți sigur că doriți să transferați \"{{name}}\" către {{recipient}}?",
+    "cannotBeUndone": "Această acțiune nu poate fi anulată.",
+    "transferSuccessful": "Transfer reușit",
+    "transferSuccessMessage": "NFT-ul dvs. a fost transferat cu succes!",
+    "transaction": "Tranzacție"
   },
   "duplicates": {
     "title": "Curățați duplicatele",

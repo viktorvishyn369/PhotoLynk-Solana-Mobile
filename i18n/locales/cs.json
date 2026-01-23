@@ -373,7 +373,7 @@
     "couldNotScan": "Nelze skenovat peněženku pro NFT",
     "couldNotOpenLink": "Nelze otevřít odkaz",
     "clearAllNfts": "Vymazat všechny NFT",
-    "clearAllNftsMessage": "Tím se odstraní všechny NFT z místního úložiště. Toto slouží pouze k testování a nemá vliv na blockchain.",
+    "clearAllNftsMessage": "Tím se odstraní všechny NFT z alba. Zůstanou na blockchainu a lze je obnovit opětovným skenováním peněženky.",
     "clear": "Přehledně",
     "nftOwner": "VLASTNÍK NFT",
     "description": "POPIS",
@@ -382,10 +382,15 @@
     "verifiedOnSolana": "Ověřeno na Solaně",
     "notFoundOnChain": "Nenalezeno v řetězci",
     "verifyOnChain": "Ověření na řetězci",
-    "explorer": "Explorer",
     "solscan": "Solscan",
     "ipfs": "IPFS",
-    "transferNft": "Převod NFT"
+    "transferNft": "Převod NFT",
+    "standard": "Standardní",
+    "compressed": "Komprimovaný",
+    "uniqueToken": "Unikátní token",
+    "sharedTree": "Sdílený strom",
+    "standardNft": "Standardní NFT",
+    "compressedNft": "Komprimovaný NFT"
   },
   "similarPhotos": {
     "title": "Podobné fotografie",
@@ -438,7 +443,13 @@
     "seekerIdPlaceholder": "např. alice.skr nebo alice",
     "seekerIdHint": "Zadejte ID hledače (např. alice.skr) nebo doménu .sol.",
     "warningMessage": "Převody NFT jsou trvalé a nelze je zrušit. Ujistěte se, že máte správnou adresu příjemce.",
-    "transfer": "Přenos"
+    "transfer": "Převod",
+    "confirmTransfer": "Potvrdit převod",
+    "confirmTransferMessage": "Opravdu chcete převést \"{{name}}\" na {{recipient}}?",
+    "cannotBeUndone": "Tuto akci nelze vrátit zpět.",
+    "transferSuccessful": "Převod úspěšný",
+    "transferSuccessMessage": "Váš NFT byl úspěšně převeden!",
+    "transaction": "Transakce"
   },
   "duplicates": {
     "title": "Čištění duplicit",

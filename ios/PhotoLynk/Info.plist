@@ -19,7 +19,7 @@
     <key>CFBundlePackageType</key>
     <string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.1.1</string>
+    <string>1.5.0</string>
     <key>CFBundleSignature</key>
     <string>????</string>
     <key>CFBundleURLTypes</key>
@@ -32,7 +32,7 @@
       </dict>
     </array>
     <key>CFBundleVersion</key>
-    <string>1.1.5</string>
+    <string>13</string>
     <key>ITSAppUsesNonExemptEncryption</key>
     <false/>
     <key>LSMinimumSystemVersion</key>
@@ -52,17 +52,15 @@
       <string>_http._tcp</string>
     </array>
     <key>NSCameraUsageDescription</key>
-    <string>Allow $(PRODUCT_NAME) to access your camera</string>
+    <string>Allow PhotoLynk to use the camera to scan QR codes for server pairing.</string>
     <key>NSFaceIDUsageDescription</key>
-    <string>Allow $(PRODUCT_NAME) to access your Face ID biometric data.</string>
+    <string>PhotoLynk uses Face ID to unlock your account for quick auto-login without entering your password.</string>
     <key>NSLocalNetworkUsageDescription</key>
-    <string>PhotoLynk needs access to your local network to connect to your PhotoLynk server and the development bundler.</string>
-    <key>NSMicrophoneUsageDescription</key>
-    <string>Allow $(PRODUCT_NAME) to access your microphone</string>
+    <string>PhotoLynk needs access to your local network to discover and connect to your PhotoLynk server for photo backup.</string>
     <key>NSPhotoLibraryAddUsageDescription</key>
-    <string>Allow PhotoLynk to save photos.</string>
+    <string>PhotoLynk saves photos and videos you restore or export from your backup back into your library.</string>
     <key>NSPhotoLibraryUsageDescription</key>
-    <string>Allow PhotoLynk to access your photos.</string>
+    <string>PhotoLynk needs read access to choose photos and videos to back up from your device to your PhotoLynk account.</string>
     <key>UIBackgroundModes</key>
     <array>
       <string>fetch</string>

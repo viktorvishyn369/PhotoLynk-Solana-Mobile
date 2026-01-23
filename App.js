@@ -1449,7 +1449,7 @@ export default function App() {
   // stealthCloudUploadEncryptedChunk is now imported from backupManager.js
 
   const stealthCloudBackupSelected = async ({ assets }) => {
-    const permission = await MediaLibrary.requestPermissionsAsync();
+    const permission = await MediaLibrary.requestPermissionsAsync(false, ['photo', 'video']);
     if (!permission || permission.status !== 'granted') {
       showDarkAlert(t('alerts.permissionNeeded'), t('alerts.permissionNeededMessage'));
       return;
@@ -1721,7 +1721,7 @@ export default function App() {
     if (!reset && !backupPickerHasNext) return;
     setBackupPickerLoading(true);
     try {
-      const permission = await MediaLibrary.requestPermissionsAsync();
+      const permission = await MediaLibrary.requestPermissionsAsync(false, ['photo', 'video']);
       if (permission.status !== 'granted') { showDarkAlert(t('alerts.permissionNeeded'), t('alerts.permissionNeededMessage')); return; }
       const first = 18; // 18 files per batch for thumbnails
       const after = reset ? null : backupPickerAfter;
@@ -1930,7 +1930,7 @@ export default function App() {
     }
   };
   
-  const handleMintNFT = async ({ asset, filePath, name, description, stripExif, storageOption, serverConfig }) => {
+  const handleMintNFT = async ({ asset, filePath, name, description, stripExif, storageOption, nftType, serverConfig, costEstimate: passedCostEstimate }) => {
     if (!asset || !filePath) {
       showDarkAlert(t('alerts.error'), t('alerts.selectItemsMessage'));
       return;
@@ -1946,22 +1946,53 @@ export default function App() {
       // Initialize NFT module
       await NFTOperations.initializeNFT();
       
-      // Estimate cost first
-      const fileInfo = await FileSystem.getInfoAsync(filePath);
-      const costEstimate = await NFTOperations.estimateNFTMintCost(fileInfo.size || 100000);
-      
-      // Determine commission based on storage option
+      // Use the cost estimate passed from NFTPhotoPicker (already calculated with correct file size)
       const useCloud = storageOption === 'cloud';
-      const commissionUsd = useCloud 
-        ? NFTOperations.NFT_FEES.APP_COMMISSION_CLOUD_USD 
-        : NFTOperations.NFT_FEES.APP_COMMISSION_IPFS_USD;
-      const storageLabel = useCloud ? 'StealthCloud' : 'IPFS';
+      const useCompressed = nftType === 'compressed';
+      const costEstimate = passedCostEstimate || await NFTOperations.estimateNFTMintCost(
+        (await FileSystem.getInfoAsync(filePath)).size || (2 * 1024 * 1024), 
+        storageOption, 
+        useCompressed
+      );
       
-      // Show cost confirmation
+      // Determine commission based on NFT type AND storage option
+      let commissionUsd;
+      if (useCompressed) {
+        commissionUsd = useCloud 
+          ? NFTOperations.NFT_FEES.APP_COMMISSION_CNFT_CLOUD_USD 
+          : NFTOperations.NFT_FEES.APP_COMMISSION_CNFT_IPFS_USD;
+      } else {
+        commissionUsd = useCloud 
+          ? NFTOperations.NFT_FEES.APP_COMMISSION_STANDARD_CLOUD_USD 
+          : NFTOperations.NFT_FEES.APP_COMMISSION_STANDARD_IPFS_USD;
+      }
+      const storageLabel = useCloud ? 'StealthCloud' : 'IPFS';
+      const nftTypeLabel = useCompressed ? t('nftMint.compressedNft') : t('nftMint.standardNft');
+      
+      // Build detailed cost breakdown matching NFTPhotoPicker
+      const breakdown = costEstimate.breakdown;
+      let costLines = [];
+      if (!useCloud && breakdown.arweaveImage.usd > 0) {
+        costLines.push(`• ${t('nftMint.imageUpload')}: $${breakdown.arweaveImage.usd.toFixed(3)}`);
+      }
+      if (breakdown.arweaveMetadata.usd > 0) {
+        costLines.push(`• ${t('nftMint.metadataUpload')}: $${breakdown.arweaveMetadata.usd.toFixed(3)}`);
+      }
+      if (!useCompressed && breakdown.solanaRent.usd > 0) {
+        costLines.push(`• ${t('nftMint.solanaRent')}: $${breakdown.solanaRent.usd.toFixed(2)}`);
+      }
+      if (!useCompressed && breakdown.metaplexFee.usd > 0) {
+        costLines.push(`• ${t('nftMint.metaplexFee')}: $${breakdown.metaplexFee.usd.toFixed(2)}`);
+      }
+      if (breakdown.transactionFee.usd > 0) {
+        costLines.push(`• ${t('nftMint.networkFee')}: <$0.01`);
+      }
+      costLines.push(`• ${t('nftMint.photoLynkFee')}: $${breakdown.appCommission.usd.toFixed(2)}`);
+      
       const confirmMint = await new Promise((resolve) => {
         setCustomAlert({
           title: t('nftMint.confirmMinting'),
-          message: `${t('nftMint.estimatedCost')}: ${costEstimate.total.solFormatted} SOL (${costEstimate.total.usdFormatted})\n\n${t('nftMint.thisIncludes')}:\n• ${storageLabel} ${t('nftMint.storage')}\n• ${t('nftMint.solanaRent')}\n• ${t('nftMint.appCommission')}: $${commissionUsd.toFixed(2)}\n\n${t('nftMint.proceedWithMinting')}`,
+          message: `${nftTypeLabel} • ${storageLabel}\n\n${t('nftMint.total')}: ${costEstimate.total.usdFormatted} (${costEstimate.total.solFormatted} SOL)\n\n${t('nftMint.breakdown')}:\n${costLines.join('\n')}\n\n${t('nftMint.proceedWithMinting')}`,
           buttons: [
             { text: t('common.cancel'), style: 'cancel', onPress: () => resolve(false) },
             { text: t('nftMint.mintNft'), onPress: () => resolve(true) },
@@ -1985,9 +2016,32 @@ export default function App() {
         description,
         stripExif,
         storageOption,
+        nftType: nftType || 'compressed', // Default to compressed if not specified
         serverConfig,
         onProgress: (p) => setProgress(p),
-        onStatus: (s) => setStatus(`NFT: ${s}`),
+        onStatus: (s) => {
+          // Translate NFT status messages
+          const statusMap = {
+            'Preparing NFT...': t('nftStatus.preparing'),
+            'Estimating costs...': t('nftStatus.estimatingCosts'),
+            'Connecting wallet...': t('nftStatus.connectingWallet'),
+            'Removing private data...': t('nftStatus.removingPrivateData'),
+            'Uploading to StealthCloud...': t('nftStatus.uploadingStealthCloud'),
+            'Uploading to IPFS...': t('nftStatus.uploadingIpfs'),
+            'Creating thumbnail...': t('nftStatus.creatingThumbnail'),
+            'Computing integrity proof...': t('nftStatus.computingIntegrity'),
+            'Building metadata...': t('nftStatus.buildingMetadata'),
+            'Creating NFT on Solana...': t('nftStatus.creatingOnSolana'),
+            'Minting compressed NFT...': t('nftStatus.mintingCompressed'),
+            'Signing transaction...': t('nftStatus.signingTransaction'),
+            'Confirming transaction...': t('nftStatus.confirmingTransaction'),
+            'Finalizing...': t('nftStatus.finalizing'),
+            'NFT minted successfully!': t('nftStatus.mintedSuccessfully'),
+            'Minting failed': t('nftStatus.mintingFailed'),
+          };
+          const translated = statusMap[s] || s;
+          setStatus(`NFT: ${translated}`);
+        },
       });
       
       if (result.success) {
@@ -1995,10 +2049,17 @@ export default function App() {
         await sleep(400);
         showCompletionTickBriefly(t('results.nftMinted'));
         
-        // Show success with explorer link
+        // Show success with different info for cNFT vs standard NFT
+        const isCompressed = result.isCompressed || result.mintAddress?.startsWith('cnft_');
+        const nftTypeLabel = isCompressed ? t('nftMint.compressedNft') : t('nftMint.standardNft');
+        const addressLabel = isCompressed ? t('nftMint.assetId') : t('nftMint.mintAddress');
+        const explorerNote = isCompressed 
+          ? t('nftMint.viewInGalleryXray')
+          : t('nftMint.viewInGalleryExplorer');
+        
         showDarkAlert(
-          'NFT Created!',
-          `Your photo NFT "${name}" has been minted on Solana.\n\nMint Address:\n${result.mintAddress?.slice(0, 20)}...\n\nView in your NFT Gallery or check on Solana Explorer.`
+          t('nftMint.nftCreated', { type: nftTypeLabel }),
+          `${t('nftMint.photoMintedOnSolana', { name })}\n\n${addressLabel}:\n${result.mintAddress?.slice(0, 20)}...\n\n${explorerNote}`
         );
       } else {
         showDarkAlert(t('alerts.error'), result.error || t('alerts.error'));
@@ -2059,7 +2120,7 @@ export default function App() {
     resetSyncPickerState(); setSyncPickerOpen(true); setSyncPickerLoading(true);
     try {
       // Ensure media library permission before listing local assets
-      const permission = await MediaLibrary.requestPermissionsAsync();
+      const permission = await MediaLibrary.requestPermissionsAsync(false, ['photo', 'video']);
       if (!permission || permission.status !== 'granted') {
         showDarkAlert(t('alerts.syncListFailed'), t('alerts.syncListFailedPermission'));
         setSyncPickerOpen(false);
@@ -2717,7 +2778,7 @@ export default function App() {
     setProgressAction('sync');
     setStatus(t('status.syncPreparing'));
 
-    const permission = await MediaLibrary.requestPermissionsAsync();
+    const permission = await MediaLibrary.requestPermissionsAsync(false, ['photo', 'video']);
     if (permission.status !== 'granted') {
       showDarkAlert(t('alerts.permissionRequired'), t('alerts.permissionRequiredSync'));
       setLoadingSafe(false);
@@ -3064,19 +3125,32 @@ export default function App() {
         platform: Platform.OS,
       });
 
-      // iOS Local Network Permission: Pre-trigger permission before actual auth request
-      // This prevents the auth request from failing while the permission popup is shown
+      // iOS Local Network Permission: Pre-trigger permission and wait for it to be granted
+      // iOS doesn't immediately grant network access after user taps "Allow" - need to retry
       if (Platform.OS === 'ios' && (effectiveType === 'local' || effectiveType === 'remote')) {
         setAuthLoadingLabel(t('auth.checkingNetwork'));
-        try {
-          // Small HEAD request to trigger iOS Local Network permission popup
-          // Use a short timeout - we don't care if it succeeds, just need to trigger the popup
-          await axios.head(authBaseUrl + '/api/health', { timeout: 3000 }).catch(() => {});
-          // Give user time to respond to the permission popup
-          await new Promise(resolve => setTimeout(resolve, 1500));
-        } catch (e) {
-          // Ignore errors - the permission popup may have been shown
-          console.log('[Auth] Network pre-check completed (permission may have been requested)');
+        const healthUrl = authBaseUrl + '/api/health';
+        let networkReady = false;
+        
+        // Try up to 5 times with 1 second delay - gives user time to respond to popup
+        // and allows iOS to fully enable network access after permission is granted
+        for (let attempt = 0; attempt < 5; attempt++) {
+          try {
+            await axios.head(healthUrl, { timeout: 3000 });
+            networkReady = true;
+            console.log('[Auth] Network access confirmed on attempt', attempt + 1);
+            break;
+          } catch (e) {
+            console.log('[Auth] Network check attempt', attempt + 1, 'failed:', e?.message || 'unknown');
+            // Wait before retry - gives user time to tap "Allow" on permission popup
+            if (attempt < 4) {
+              await new Promise(resolve => setTimeout(resolve, 1000));
+            }
+          }
+        }
+        
+        if (!networkReady) {
+          console.log('[Auth] Network pre-check failed after 5 attempts, proceeding anyway');
         }
       }
 
@@ -3652,7 +3726,7 @@ export default function App() {
     setBackgroundWarnEligibleSafe(false); // Don't warn during permission prompts
     setWasBackgroundedDuringWorkSafe(false);
 
-    const permission = await MediaLibrary.requestPermissionsAsync();
+    const permission = await MediaLibrary.requestPermissionsAsync(false, ['photo', 'video']);
     if (permission.status !== 'granted') {
       showDarkAlert(t('alerts.permissionRequired'), t('alerts.permissionRequiredSync'));
       setLoadingSafe(false);
@@ -4262,7 +4336,7 @@ export default function App() {
                 const priceStr = plan ? plan.priceString : '—';
                 const currentPlan = stealthUsage?.planGb || stealthUsage?.plan_gb;
                 const isCurrent = currentPlan === gb;
-                const canSubscribe = !purchaseLoading && !isCurrent && plan && priceStr && priceStr !== '—';
+                const canSubscribe = !purchaseLoading && plan && priceStr && priceStr !== '—';
                 const title = gb === 1000 ? t('subscription.storage1000Monthly') : t('subscription.storageGbMonthly', { gb });
 
                 return (

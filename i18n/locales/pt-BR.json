@@ -373,7 +373,7 @@
     "couldNotScan": "Não foi possível verificar se há NFTs na carteira",
     "couldNotOpenLink": "Não foi possível abrir o link",
     "clearAllNfts": "Limpar todos os NFTs",
-    "clearAllNftsMessage": "Isso removerá todos os NFTs do armazenamento local. Isso serve apenas para testes e não afeta o blockchain.",
+    "clearAllNftsMessage": "Isso excluirá todos os NFTs do álbum. Eles permanecem no blockchain e podem ser restaurados escaneando sua carteira novamente.",
     "clear": "Limpo",
     "nftOwner": "NFT PROPRIETÁRIO",
     "description": "DESCRIÇÃO",
@@ -382,10 +382,15 @@
     "verifiedOnSolana": "Verificado em Solana",
     "notFoundOnChain": "Não encontrado na corrente",
     "verifyOnChain": "Verificar na cadeia",
-    "explorer": "Explorador",
     "solscan": "Solscan",
     "ipfs": "IPFS",
-    "transferNft": "Transferência NFT"
+    "transferNft": "Transferência NFT",
+    "standard": "Padrão",
+    "compressed": "Comprimido",
+    "uniqueToken": "Token único",
+    "sharedTree": "Árvore compartilhada",
+    "standardNft": "NFT Padrão",
+    "compressedNft": "NFT Comprimido"
   },
   "similarPhotos": {
     "title": "Fotos semelhantes",
@@ -438,7 +443,13 @@
     "seekerIdPlaceholder": "Por exemplo, alice.skr ou alice",
     "seekerIdHint": "Insira uma ID do Seeker (por exemplo, alice.skr) ou um domínio .sol",
     "warningMessage": "As transferências NFT são permanentes e não podem ser revertidas. Certifique-se de ter o endereço correto do destinatário.",
-    "transfer": "Transferência"
+    "transfer": "Transferência",
+    "confirmTransfer": "Confirmar transferência",
+    "confirmTransferMessage": "Tem certeza de que deseja transferir \"{{name}}\" para {{recipient}}?",
+    "cannotBeUndone": "Esta ação não pode ser desfeita.",
+    "transferSuccessful": "Transferência bem-sucedida",
+    "transferSuccessMessage": "Seu NFT foi transferido com sucesso!",
+    "transaction": "Transação"
   },
   "duplicates": {
     "title": "Limpar duplicatas",

@@ -373,7 +373,7 @@
     "couldNotScan": "Tidak dapat memindai dompet untuk NFT",
     "couldNotOpenLink": "Tidak dapat membuka tautan",
     "clearAllNfts": "Hapus Semua NFT",
-    "clearAllNftsMessage": "Ini akan menghapus semua NFT dari penyimpanan lokal. Ini hanya untuk pengujian dan tidak memengaruhi blockchain.",
+    "clearAllNftsMessage": "Ini akan menghapus semua NFT dari album. Mereka tetap ada di blockchain dan dapat dipulihkan dengan memindai ulang dompet Anda.",
     "clear": "Jelas",
     "nftOwner": "PEMILIK NFT",
     "description": "DESKRIPSI",
@@ -382,10 +382,15 @@
     "verifiedOnSolana": "Terverifikasi di Solana",
     "notFoundOnChain": "Tidak ditemukan pada rantai",
     "verifyOnChain": "Verifikasi di Rantai",
-    "explorer": "Penjelajah",
     "solscan": "Solscan",
     "ipfs": "IPFS",
-    "transferNft": "Transfer NFT"
+    "transferNft": "Transfer NFT",
+    "standard": "Standar",
+    "compressed": "Terkompresi",
+    "uniqueToken": "Token unik",
+    "sharedTree": "Pohon bersama",
+    "standardNft": "NFT Standar",
+    "compressedNft": "NFT Terkompresi"
   },
   "similarPhotos": {
     "title": "Foto serupa",
@@ -438,7 +443,13 @@
     "seekerIdPlaceholder": "misalnya, alice.skr atau alice",
     "seekerIdHint": "Masukkan ID Pencari (mis., alice.skr) atau domain .sol",
     "warningMessage": "Transfer NFT bersifat permanen dan tidak dapat dibatalkan. Pastikan Anda memiliki alamat penerima yang benar.",
-    "transfer": "Transfer"
+    "transfer": "Transfer",
+    "confirmTransfer": "Konfirmasi Transfer",
+    "confirmTransferMessage": "Apakah Anda yakin ingin mentransfer \"{{name}}\" ke {{recipient}}?",
+    "cannotBeUndone": "Tindakan ini tidak dapat dibatalkan.",
+    "transferSuccessful": "Transfer Berhasil",
+    "transferSuccessMessage": "NFT Anda telah berhasil ditransfer!",
+    "transaction": "Transaksi"
   },
   "duplicates": {
     "title": "Bersihkan Duplikat",

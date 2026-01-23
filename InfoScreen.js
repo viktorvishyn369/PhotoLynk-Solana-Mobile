@@ -17,6 +17,7 @@ import {
   ActivityIndicator,
   Linking,
   Clipboard,
+  StatusBar,
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { t } from './i18n';
@@ -414,8 +415,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: scaleSpacing(20),
-    paddingTop: Math.min(60, SCREEN_HEIGHT * 0.04 + 20),
-    paddingBottom: scaleSpacing(16),
+    paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 24) + 8 : Math.min(60, SCREEN_HEIGHT * 0.04 + 20),
+    paddingBottom: Platform.OS === 'android' ? 8 : scaleSpacing(16),
     backgroundColor: '#0A0A0A',
   },
   headerTitle: {
@@ -438,6 +439,7 @@ const styles = StyleSheet.create({
   scrollContent: {
     paddingHorizontal: scaleSpacing(20),
     paddingTop: scaleSpacing(8),
+    paddingBottom: Platform.OS === 'android' ? 60 : scaleSpacing(20),
   },
   sectionTitle: {
     fontSize: scale(13),

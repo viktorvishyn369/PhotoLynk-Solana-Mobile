@@ -21,8 +21,53 @@ import {
   ScrollView,
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
+import * as FileSystem from 'expo-file-system';
 import NFTOperations from './nftOperations';
 import { t } from './i18n';
+
+// Image cache directory and index file
+const IMAGE_CACHE_DIR = `${FileSystem.cacheDirectory}nft_images/`;
+const CACHE_INDEX_FILE = `${FileSystem.documentDirectory}nft_image_cache_index.json`;
+
+// In-memory cache of local paths (CID -> local file path)
+const imageCache = new Map();
+let cacheLoaded = false;
+
+// Load cache index from disk on startup
+const loadCacheIndex = async () => {
+  if (cacheLoaded) return;
+  try {
+    const info = await FileSystem.getInfoAsync(CACHE_INDEX_FILE);
+    if (info.exists) {
+      const data = await FileSystem.readAsStringAsync(CACHE_INDEX_FILE);
+      const index = JSON.parse(data);
+      // Verify each cached file still exists
+      for (const [cid, path] of Object.entries(index)) {
+        const fileInfo = await FileSystem.getInfoAsync(path);
+        if (fileInfo.exists) {
+          imageCache.set(cid, path);
+        }
+      }
+      console.log(`[NFTCache] Loaded ${imageCache.size} cached images`);
+    }
+  } catch (e) {
+    console.log('[NFTCache] Could not load cache index:', e.message);
+  }
+  cacheLoaded = true;
+};
+
+// Save cache index to disk
+const saveCacheIndex = async () => {
+  try {
+    const index = Object.fromEntries(imageCache);
+    await FileSystem.writeAsStringAsync(CACHE_INDEX_FILE, JSON.stringify(index));
+  } catch (e) {
+    console.log('[NFTCache] Could not save cache index:', e.message);
+  }
+};
+
+// Initialize cache on module load
+loadCacheIndex();
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -34,7 +79,7 @@ const COLORS = {
   background: '#0a0a0a',
   surface: '#1a1a1a',
   surfaceLight: '#2a2a2a',
-  primary: '#6366f1',
+  primary: '#9945FF',
   secondary: '#8b5cf6',
   accent: '#22c55e',
   text: '#ffffff',
@@ -43,6 +88,309 @@ const COLORS = {
   error: '#ef4444',
   warning: '#f59e0b',
   solana: '#9945FF',
+};
+
+// IPFS Gateway configuration with fallbacks
+// Ordered by reliability: primary gateway first, fallbacks after
+const IPFS_GATEWAYS = [
+  'https://dweb.link/ipfs/',         // Protocol Labs CDN - most reliable
+  'https://w3s.link/ipfs/',          // Web3.Storage - good for cNFTs
+  'https://nftstorage.link/ipfs/',   // NFT.Storage - designed for NFTs
+  'https://cloudflare-ipfs.com/ipfs/', // Cloudflare - fast CDN
+];
+
+// Extract CID from any IPFS URL
+const extractIPFSCid = (url) => {
+  if (!url) return null;
+  // Match /ipfs/CID pattern
+  const match = url.match(/\/ipfs\/([a-zA-Z0-9]+)/);
+  return match ? match[1] : null;
+};
+
+// Get fast image URL - rewrites Pinata to faster gateway
+const getFastImageUrl = (url, gatewayIndex = 0) => {
+  if (!url) return url;
+  
+  // Don't rewrite StealthCloud or Arweave URLs
+  if (url.includes('stealthlynk.io') || url.includes('arweave.net') || url.includes('irys.xyz')) {
+    return url;
+  }
+  
+  const cid = extractIPFSCid(url);
+  if (cid && gatewayIndex < IPFS_GATEWAYS.length) {
+    return `${IPFS_GATEWAYS[gatewayIndex]}${cid}`;
+  }
+  return url;
+};
+
+// NFT Image component with StealthCloud priority, retries, then fallback to original IPFS
+const MAX_STEALTHCLOUD_RETRIES = 2;
+const MAX_IPFS_RETRY_CYCLES = 1; // Single cycle - if all 4 gateways fail, content is likely unpinned
+
+// Check if URL is StealthCloud
+const isStealthCloudUrl = (url) => {
+  if (!url) return false;
+  return url.includes('stealthlynk.io') || url.includes('nft.stealthlynk.io');
+};
+
+const NFTImageWithFallback = ({ url, originalUrl, style, isDetail = false }) => {
+  const [currentSource, setCurrentSource] = useState('primary'); // 'primary' or 'fallback'
+  const [retryCount, setRetryCount] = useState(0);
+  const [gatewayIndex, setGatewayIndex] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [failed, setFailed] = useState(false);
+  const [memoryRetries, setMemoryRetries] = useState(0);
+  const [cachedPath, setCachedPath] = useState(null);
+  const [effectiveUrl, setEffectiveUrl] = useState(url);
+  const imageRef = React.useRef(null);
+  const retryTimerRef = React.useRef(null);
+  
+  // Check for cached image on mount and validate URL
+  React.useEffect(() => {
+    const checkCacheAndUrl = async () => {
+      // If URL is a local file path, check if it exists
+      if (url && (url.startsWith('file://') || url.startsWith('/'))) {
+        try {
+          const info = await FileSystem.getInfoAsync(url.replace('file://', ''));
+          if (!info.exists && originalUrl) {
+            // Local file doesn't exist, use originalUrl (StealthCloud/IPFS)
+            console.log('[NFTImage] Local file missing, using originalUrl');
+            setEffectiveUrl(originalUrl);
+            return;
+          }
+        } catch (e) {
+          if (originalUrl) {
+            setEffectiveUrl(originalUrl);
+            return;
+          }
+        }
+      }
+      setEffectiveUrl(url);
+      
+      // Check IPFS cache
+      const cid = extractIPFSCid(url) || extractIPFSCid(originalUrl);
+      if (cid) {
+        // Check in-memory cache first
+        if (imageCache.has(cid)) {
+          setCachedPath(imageCache.get(cid));
+          return;
+        }
+        // Check disk cache
+        try {
+          const localPath = `${IMAGE_CACHE_DIR}${cid}.jpg`;
+          const info = await FileSystem.getInfoAsync(localPath);
+          if (info.exists) {
+            imageCache.set(cid, localPath);
+            setCachedPath(localPath);
+          }
+        } catch (e) {
+          // Cache check failed, will load from network
+        }
+      }
+    };
+    checkCacheAndUrl();
+  }, [url, originalUrl]);
+  
+  // Early return if no URL provided - show placeholder
+  if (!url && !originalUrl) {
+    return (
+      <View style={[style, { justifyContent: 'center', alignItems: 'center', backgroundColor: COLORS.surface }]}>
+        <Feather name="image" size={24} color={COLORS.textSecondary} />
+      </View>
+    );
+  }
+  
+  const isStealthCloud = isStealthCloudUrl(effectiveUrl);
+  const fallbackUrl = originalUrl || effectiveUrl;
+  const cid = extractIPFSCid(currentSource === 'fallback' ? fallbackUrl : effectiveUrl);
+  const isIPFS = !!cid;
+  
+  // Determine which URL to use
+  const getImageUrl = () => {
+    if (currentSource === 'primary') {
+      // Primary: use the effective URL (validated/corrected)
+      // If it's an IPFS URL, use gateway rotation
+      const cidFromUrl = extractIPFSCid(effectiveUrl);
+      if (cidFromUrl) {
+        const gatewayUrl = getFastImageUrl(effectiveUrl, gatewayIndex);
+        return retryCount > 0 ? `${gatewayUrl}${gatewayUrl.includes('?') ? '&' : '?'}r=${retryCount}` : gatewayUrl;
+      }
+      // StealthCloud or local path - use directly
+      const baseUrl = effectiveUrl;
+      return retryCount > 0 ? `${baseUrl}${baseUrl.includes('?') ? '&' : '?'}r=${retryCount}` : baseUrl;
+    } else {
+      // Fallback: use original IPFS URL with gateway
+      const cidFromFallback = extractIPFSCid(fallbackUrl);
+      if (cidFromFallback) {
+        const gatewayUrl = getFastImageUrl(fallbackUrl, gatewayIndex);
+        return retryCount > 0 ? `${gatewayUrl}${gatewayUrl.includes('?') ? '&' : '?'}r=${retryCount}` : gatewayUrl;
+      }
+      return fallbackUrl;
+    }
+  };
+  
+  const finalUrl = getImageUrl();
+  
+  const handleError = (e) => {
+    const errorMsg = e?.nativeEvent?.error || 'unknown';
+    
+    // Check for memory errors - wait and retry instead of failing immediately
+    if (errorMsg.includes('Pool hard cap') || errorMsg.includes('memory')) {
+      if (memoryRetries < 5) {
+        console.log('[NFTImage] Memory full, waiting to retry...', memoryRetries + 1);
+        setMemoryRetries(prev => prev + 1);
+        // Wait 5 seconds for memory to free up, then retry
+        retryTimerRef.current = setTimeout(() => {
+          setRetryCount(prev => prev + 1);
+        }, 5000);
+        return;
+      } else {
+        console.log('[NFTImage] Memory exhausted after retries');
+        setFailed(true);
+        setLoading(false);
+        return;
+      }
+    }
+    
+    if (currentSource === 'primary') {
+      // Primary source (StealthCloud or direct URL)
+      if (isStealthCloud) {
+        if (retryCount < MAX_STEALTHCLOUD_RETRIES - 1) {
+          // Retry StealthCloud up to 3 times
+          console.log('[NFTImage] StealthCloud retry', retryCount + 1);
+          setRetryCount(prev => prev + 1);
+        } else if (fallbackUrl && fallbackUrl !== url && extractIPFSCid(fallbackUrl)) {
+          // StealthCloud failed, try IPFS fallback if available
+          console.log('[NFTImage] StealthCloud failed, trying IPFS fallback');
+          setCurrentSource('fallback');
+          setRetryCount(0);
+          setGatewayIndex(0);
+        } else {
+          // No fallback, fail
+          console.log('[NFTImage] StealthCloud failed, no fallback');
+          setFailed(true);
+          setLoading(false);
+        }
+      } else if (isIPFS || extractIPFSCid(url)) {
+        // IPFS URL - try different gateways with delay
+        console.log('[NFTImage] IPFS gateway retry', gatewayIndex + 1, 'cycle', retryCount);
+        // Wait 10 seconds before trying next gateway (large files need time)
+        retryTimerRef.current = setTimeout(() => {
+          if (gatewayIndex < IPFS_GATEWAYS.length - 1) {
+            setGatewayIndex(prev => prev + 1);
+          } else if (retryCount < MAX_IPFS_RETRY_CYCLES) {
+            setGatewayIndex(0);
+            setRetryCount(prev => prev + 1);
+          } else {
+            setFailed(true);
+            setLoading(false);
+          }
+        }, 10000); // 10 second delay between gateway attempts
+      } else if (fallbackUrl && fallbackUrl !== url && extractIPFSCid(fallbackUrl)) {
+        // Switch to fallback (original IPFS) only if it has a valid CID
+        console.log('[NFTImage] Switching to fallback IPFS');
+        setCurrentSource('fallback');
+        setRetryCount(0);
+        setGatewayIndex(0);
+      } else {
+        // No fallback available
+        setFailed(true);
+        setLoading(false);
+      }
+    } else {
+      // Fallback source (IPFS gateways)
+      const cidFromFallback = extractIPFSCid(fallbackUrl);
+      if (cidFromFallback && gatewayIndex < IPFS_GATEWAYS.length - 1) {
+        setGatewayIndex(prev => prev + 1);
+      } else if (cidFromFallback && retryCount < MAX_IPFS_RETRY_CYCLES) {
+        // Start new gateway cycle
+        setGatewayIndex(0);
+        setRetryCount(prev => prev + 1);
+      } else {
+        // All fallbacks exhausted
+        console.log('[NFTImage] All sources failed');
+        setFailed(true);
+        setLoading(false);
+      }
+    }
+  };
+  
+  // Reset state when URL changes
+  React.useEffect(() => {
+    if (retryTimerRef.current) {
+      clearTimeout(retryTimerRef.current);
+    }
+    setCurrentSource('primary');
+    setRetryCount(0);
+    setGatewayIndex(0);
+    setLoading(true);
+    setFailed(false);
+    setMemoryRetries(0);
+  }, [url]);
+  
+  // Cleanup on unmount
+  React.useEffect(() => {
+    return () => {
+      if (retryTimerRef.current) {
+        clearTimeout(retryTimerRef.current);
+      }
+      imageRef.current = null;
+    };
+  }, []);
+  
+  if (failed) {
+    return (
+      <View style={[style, { justifyContent: 'center', alignItems: 'center', backgroundColor: COLORS.surface }]}>
+        <Feather name="image" size={24} color={COLORS.textSecondary} />
+      </View>
+    );
+  }
+  
+  // Save image to cache after successful load
+  const handleLoadSuccess = async () => {
+    setLoading(false);
+    
+    // Cache IPFS images to disk for persistence
+    const cid = extractIPFSCid(finalUrl);
+    if (cid && !cachedPath && !imageCache.has(cid)) {
+      try {
+        // Ensure cache directory exists
+        await FileSystem.makeDirectoryAsync(IMAGE_CACHE_DIR, { intermediates: true }).catch(() => {});
+        
+        // Download and save to cache
+        const localPath = `${IMAGE_CACHE_DIR}${cid}.jpg`;
+        await FileSystem.downloadAsync(finalUrl, localPath);
+        imageCache.set(cid, localPath);
+        // Persist cache index to survive app restarts
+        saveCacheIndex();
+        console.log('[NFTImage] Cached:', cid);
+      } catch (e) {
+        // Cache save failed, not critical
+      }
+    }
+  };
+  
+  // Use cached path if available
+  const displayUrl = cachedPath || finalUrl;
+  
+  return (
+    <View style={style}>
+      {loading && (
+        <View style={[style, { position: 'absolute', justifyContent: 'center', alignItems: 'center', backgroundColor: COLORS.surface, zIndex: 1 }]}>
+          <ActivityIndicator size={isDetail ? 'large' : 'small'} color={COLORS.primary} />
+        </View>
+      )}
+      <Image
+        ref={imageRef}
+        source={{ uri: displayUrl, cache: 'force-cache' }}
+        style={style}
+        resizeMode={isDetail ? 'contain' : 'cover'}
+        onLoadStart={() => setLoading(true)}
+        onLoad={handleLoadSuccess}
+        onError={handleError}
+      />
+    </View>
+  );
 };
 
 // ============================================================================
@@ -57,7 +405,7 @@ const SORT_OPTIONS = [
   { key: 'name_desc', labelKey: 'nftAlbum.nameZA', icon: 'type' },
 ];
 
-const ITEMS_PER_PAGE = 6;
+const ITEMS_PER_PAGE = 4;  // 2x2 grid - show 4 cards per page
 
 const NFTGallery = ({
   visible,
@@ -78,8 +426,8 @@ const NFTGallery = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState('date_desc');
   const [showSortMenu, setShowSortMenu] = useState(false);
-  const [displayCount, setDisplayCount] = useState(ITEMS_PER_PAGE);
-  const [showOnlyPhotoLynk, setShowOnlyPhotoLynk] = useState(true); // Default: show only PhotoLynk NFTs
+  const [currentPage, setCurrentPage] = useState(0); // Page-based pagination
+  const [nftFilter, setNftFilter] = useState('all'); // 'all', 'standard', 'compressed'
   
   // Custom dark alert state
   const [darkAlert, setDarkAlert] = useState(null);
@@ -122,7 +470,7 @@ const NFTGallery = ({
       
       const storedNFTs = await NFTOperations.getStoredNFTs();
       setNfts(storedNFTs);
-      setDisplayCount(ITEMS_PER_PAGE);
+      setCurrentPage(0); // Reset to first page
     } catch (e) {
       console.error('[NFTGallery] Load error:', e);
     } finally {
@@ -222,21 +570,22 @@ const NFTGallery = ({
     }
   };
   
-  // Check if NFT was created with PhotoLynk
-  const isPhotoLynkNFT = (nft) => {
-    const name = (nft.name || '').toLowerCase();
-    const desc = (nft.description || '').toLowerCase();
-    return name.includes('photolynk') || desc.includes('photolynk') || desc.includes('created with photolynk');
+  // Check if NFT is compressed (cNFT)
+  const isCompressedNFT = (nft) => {
+    return nft.isCompressed || nft.mintAddress?.startsWith('cnft_');
   };
   
   // Filtered and sorted NFTs
   const filteredNFTs = useMemo(() => {
     let result = [...nfts];
     
-    // Apply PhotoLynk filter (default: show only PhotoLynk NFTs)
-    if (showOnlyPhotoLynk) {
-      result = result.filter(isPhotoLynkNFT);
+    // Apply NFT type filter
+    if (nftFilter === 'standard') {
+      result = result.filter(nft => !isCompressedNFT(nft));
+    } else if (nftFilter === 'compressed') {
+      result = result.filter(nft => isCompressedNFT(nft));
     }
+    // 'all' shows everything
     
     // Apply search filter
     if (searchQuery.trim()) {
@@ -264,19 +613,30 @@ const NFTGallery = ({
     });
     
     return result;
-  }, [nfts, searchQuery, sortBy, showOnlyPhotoLynk]);
+  }, [nfts, searchQuery, sortBy, nftFilter]);
   
-  // Paginated NFTs
+  // Paginated NFTs - show only current page (4 items)
+  const totalPages = Math.ceil(filteredNFTs.length / ITEMS_PER_PAGE);
   const displayedNFTs = useMemo(() => {
-    return filteredNFTs.slice(0, displayCount);
-  }, [filteredNFTs, displayCount]);
+    const start = currentPage * ITEMS_PER_PAGE;
+    return filteredNFTs.slice(start, start + ITEMS_PER_PAGE);
+  }, [filteredNFTs, currentPage]);
   
-  // Show more handler
-  const handleShowMore = () => {
-    setDisplayCount(prev => prev + ITEMS_PER_PAGE);
+  // Pagination handlers
+  const goToNextPage = () => {
+    if (currentPage < totalPages - 1) {
+      setCurrentPage(prev => prev + 1);
+    }
   };
   
-  const hasMore = displayCount < filteredNFTs.length;
+  const goToPrevPage = () => {
+    if (currentPage > 0) {
+      setCurrentPage(prev => prev - 1);
+    }
+  };
+  
+  const hasPrev = currentPage > 0;
+  const hasNext = currentPage < totalPages - 1;
   
   // Refresh NFTs (sync from server)
   const onRefresh = async () => {
@@ -285,7 +645,7 @@ const NFTGallery = ({
     setRefreshing(false);
   };
   
-  // Clear all NFTs (for testing)
+  // Clear local album (NFTs remain on blockchain)
   const clearAllNFTs = async () => {
     showDarkAlert(
       t('nftAlbum.clearAllNfts'),
@@ -311,7 +671,8 @@ const NFTGallery = ({
     setVerificationResult(null);
     
     try {
-      const result = await NFTOperations.verifyNFTOnChain(nft.mintAddress);
+      // Pass txSignature as fallback for old cNFTs without valid asset IDs
+      const result = await NFTOperations.verifyNFTOnChain(nft.mintAddress, nft.txSignature);
       setVerificationResult(result);
     } catch (e) {
       setVerificationResult({ verified: false, error: e.message });
@@ -322,6 +683,10 @@ const NFTGallery = ({
   
   // Open external link
   const openLink = (url) => {
+    if (!url) {
+      showDarkAlert(t('common.error'), 'URL not available');
+      return;
+    }
     Linking.openURL(url).catch(e => {
       showDarkAlert(t('common.error'), t('nftAlbum.couldNotOpenLink'));
     });
@@ -347,11 +712,11 @@ const NFTGallery = ({
       
       {/* Main card */}
       <View style={styles.cardMain}>
-        {(item.imageUrl || item.arweaveUrl || item.metadataUrl) ? (
-          <Image
-            source={{ uri: item.imageUrl || item.arweaveUrl || item.metadataUrl }}
-            style={styles.nftImage}
-            resizeMode="cover"
+        {(item.thumbnailUrl || item.imageUrl || item.arweaveUrl || item.metadataUrl) ? (
+          <NFTImageWithFallback 
+            url={item.thumbnailUrl || item.imageUrl || item.arweaveUrl || item.metadataUrl}
+            originalUrl={item.arweaveUrl || item.metadataUrl}
+            style={styles.nftImage} 
           />
         ) : (
           <View style={[styles.nftImage, styles.noImagePlaceholder]}>
@@ -372,9 +737,16 @@ const NFTGallery = ({
                 {new Date(item.createdAt).toLocaleDateString()}
               </Text>
             </View>
-            <View style={styles.solanaBadge}>
-              <Feather name="hexagon" size={10} color="#9945FF" />
-            </View>
+            {/* Show cNFT badge for compressed NFTs */}
+            {(item.isCompressed || item.mintAddress?.startsWith('cnft_')) ? (
+              <View style={[styles.solanaBadge, { backgroundColor: 'rgba(34, 197, 94, 0.3)' }]}>
+                <Text style={{ fontSize: 8, color: '#22c55e', fontWeight: '600' }}>cNFT</Text>
+              </View>
+            ) : (
+              <View style={styles.solanaBadge}>
+                <Feather name="hexagon" size={10} color="#9945FF" />
+              </View>
+            )}
           </View>
         </View>
       </View>
@@ -394,145 +766,294 @@ const NFTGallery = ({
       >
         <View style={styles.modalOverlay}>
           <View style={styles.detailModal}>
-            {/* Header */}
+            {/* Header - fixed at top */}
             <View style={styles.detailHeader}>
-              <Text style={styles.detailTitle}>{selectedNFT.name}</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.detailTitle}>{selectedNFT.name}</Text>
+                {/* Type badges */}
+                <View style={{ flexDirection: 'row', gap: 6, marginTop: 4 }}>
+                  {(selectedNFT.isCompressed || selectedNFT.mintAddress?.startsWith('cnft_')) ? (
+                    <View style={{ backgroundColor: 'rgba(34, 197, 94, 0.2)', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 4 }}>
+                      <Text style={{ fontSize: 10, color: '#22c55e', fontWeight: '600' }}>{t('nftAlbum.compressedNft')}</Text>
+                    </View>
+                  ) : (
+                    <View style={{ backgroundColor: 'rgba(153, 69, 255, 0.2)', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 4 }}>
+                      <Text style={{ fontSize: 10, color: '#9945FF', fontWeight: '600' }}>{t('nftAlbum.standardNft')}</Text>
+                    </View>
+                  )}
+                  <View style={{ backgroundColor: 'rgba(153, 69, 255, 0.2)', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 4 }}>
+                    <Text style={{ fontSize: 10, color: '#9945FF', fontWeight: '600' }}>
+                      {(selectedNFT.imageUrl || '').includes('stealthlynk.io') ? 'StealthCloud' : 'IPFS'}
+                    </Text>
+                  </View>
+                </View>
+              </View>
               <TouchableOpacity onPress={() => setSelectedNFT(null)}>
                 <Feather name="x" size={24} color={COLORS.text} />
               </TouchableOpacity>
             </View>
             
-            {/* Image */}
-            {(selectedNFT.imageUrl || selectedNFT.arweaveUrl || selectedNFT.metadataUrl) ? (
-              <Image
-                source={{ uri: selectedNFT.imageUrl || selectedNFT.arweaveUrl || selectedNFT.metadataUrl }}
-                style={styles.detailImage}
-                resizeMode="contain"
-              />
-            ) : (
-              <View style={[styles.detailImage, styles.noImagePlaceholder]}>
-                <Feather name="image" size={48} color={COLORS.textSecondary} />
-                <Text style={styles.noImageText}>No image available</Text>
-              </View>
-            )}
-            
-            {/* Owner info */}
-            <View style={styles.ownerSection}>
-              <Text style={styles.sectionLabel}>{t('nftAlbum.nftOwner')}</Text>
-              <Text style={styles.ownerAddress} numberOfLines={1}>
-                {selectedNFT.ownerAddress}
-              </Text>
-            </View>
-            
-            {/* Description */}
-            {selectedNFT.description && (
-              <View style={styles.descriptionSection}>
-                <Text style={styles.sectionLabel}>{t('nftAlbum.description')}</Text>
-                <Text style={styles.descriptionText}>{selectedNFT.description}</Text>
-              </View>
-            )}
-            
-            {/* EXIF Data */}
-            {selectedNFT.exifData && (
-              <View style={styles.exifSection}>
-                <Text style={styles.sectionLabel}>{t('nftAlbum.photoDetails')}</Text>
-                <View style={styles.exifGrid}>
-                  {selectedNFT.exifData.dateTaken && (
-                    <View style={styles.exifItem}>
-                      <Feather name="calendar" size={14} color={COLORS.textSecondary} />
-                      <Text style={styles.exifText}>
-                        {new Date(selectedNFT.exifData.dateTaken).toLocaleDateString()}
-                      </Text>
-                    </View>
-                  )}
-                  {selectedNFT.exifData.camera && (
-                    <View style={styles.exifItem}>
-                      <Feather name="camera" size={14} color={COLORS.textSecondary} />
-                      <Text style={styles.exifText}>{selectedNFT.exifData.camera}</Text>
-                    </View>
-                  )}
-                  {selectedNFT.exifData.width && selectedNFT.exifData.height && (
-                    <View style={styles.exifItem}>
-                      <Feather name="maximize" size={14} color={COLORS.textSecondary} />
-                      <Text style={styles.exifText}>
-                        {selectedNFT.exifData.width}x{selectedNFT.exifData.height}
-                      </Text>
-                    </View>
-                  )}
-                </View>
-              </View>
-            )}
-            
-            {/* Blockchain verification */}
-            <View style={styles.verifySection}>
-              <Text style={styles.sectionLabel}>{t('nftAlbum.blockchainVerification')}</Text>
-              
-              {verifying ? (
-                <ActivityIndicator size="small" color={COLORS.primary} />
-              ) : verificationResult ? (
-                <View style={[
-                  styles.verifyResult,
-                  verificationResult.verified ? styles.verifySuccess : styles.verifyFailed
-                ]}>
-                  <Feather
-                    name={verificationResult.verified ? 'check-circle' : 'x-circle'}
-                    size={18}
-                    color={verificationResult.verified ? COLORS.accent : COLORS.error}
-                  />
-                  <Text style={[
-                    styles.verifyText,
-                    { color: verificationResult.verified ? COLORS.accent : COLORS.error }
-                  ]}>
-                    {verificationResult.verified ? t('nftAlbum.verifiedOnSolana') : t('nftAlbum.notFoundOnChain')}
-                  </Text>
-                </View>
+            {/* Scrollable content */}
+            <ScrollView 
+              key={`scroll-${selectedNFT.mintAddress}`}
+              style={styles.detailScrollView}
+              contentContainerStyle={styles.detailScrollContent}
+              showsVerticalScrollIndicator={true}
+              bounces={false}
+            >
+              {/* Image - try local/thumbnail first (faster), fallback to IPFS */}
+              {(selectedNFT.imageUrl || selectedNFT.thumbnailUrl || selectedNFT.arweaveUrl || selectedNFT.metadataUrl) ? (
+                <NFTImageWithFallback 
+                  key={`img-${selectedNFT.mintAddress}`}
+                  url={selectedNFT.imageUrl || selectedNFT.thumbnailUrl || selectedNFT.arweaveUrl || selectedNFT.metadataUrl}
+                  originalUrl={selectedNFT.arweaveUrl || selectedNFT.metadataUrl}
+                  style={styles.detailImage}
+                  isDetail={true}
+                />
               ) : (
+                <View style={[styles.detailImage, styles.noImagePlaceholder]}>
+                  <Feather name="image" size={48} color={COLORS.textSecondary} />
+                  <Text style={styles.noImageText}>No image available</Text>
+                </View>
+              )}
+              
+              {/* Owner info */}
+              <View style={styles.ownerSection}>
+                <Text style={styles.sectionLabel}>{t('nftAlbum.nftOwner')}</Text>
+                <Text style={styles.ownerAddress} numberOfLines={1}>
+                  {selectedNFT.ownerAddress}
+                </Text>
+              </View>
+              
+              {/* Description */}
+              {selectedNFT.description && (
+                <View style={styles.descriptionSection}>
+                  <Text style={styles.sectionLabel}>{t('nftAlbum.description')}</Text>
+                  <Text style={styles.descriptionText}>{selectedNFT.description}</Text>
+                </View>
+              )}
+              
+              {/* EXIF Data */}
+              {selectedNFT.exifData && (
+                <View style={styles.exifSection}>
+                  <Text style={styles.sectionLabel}>{t('nftAlbum.photoDetails')}</Text>
+                  <View style={styles.exifGrid}>
+                    {selectedNFT.exifData.dateTaken && (
+                      <View style={styles.exifItem}>
+                        <Feather name="calendar" size={14} color={COLORS.textSecondary} />
+                        <Text style={styles.exifText}>
+                          {new Date(selectedNFT.exifData.dateTaken).toLocaleDateString()}
+                        </Text>
+                      </View>
+                    )}
+                    {selectedNFT.exifData.camera && (
+                      <View style={styles.exifItem}>
+                        <Feather name="camera" size={14} color={COLORS.textSecondary} />
+                        <Text style={styles.exifText}>{selectedNFT.exifData.camera}</Text>
+                      </View>
+                    )}
+                    {selectedNFT.exifData.width && selectedNFT.exifData.height && (
+                      <View style={styles.exifItem}>
+                        <Feather name="maximize" size={14} color={COLORS.textSecondary} />
+                        <Text style={styles.exifText}>
+                          {selectedNFT.exifData.width}x{selectedNFT.exifData.height}
+                        </Text>
+                      </View>
+                    )}
+                  </View>
+                </View>
+              )}
+              
+              {/* Blockchain verification */}
+              <View style={styles.verifySection}>
+                <Text style={styles.sectionLabel}>{t('nftAlbum.blockchainVerification')}</Text>
+                
+                {verifying ? (
+                  <ActivityIndicator size="small" color={COLORS.primary} />
+                ) : verificationResult ? (
+                  <View style={[
+                    styles.verifyResult,
+                    verificationResult.verified ? styles.verifySuccess : styles.verifyFailed
+                  ]}>
+                    <Feather
+                      name={verificationResult.verified ? 'check-circle' : 'x-circle'}
+                      size={18}
+                      color={verificationResult.verified ? COLORS.accent : COLORS.error}
+                    />
+                    <Text style={[
+                      styles.verifyText,
+                      { color: verificationResult.verified ? COLORS.accent : COLORS.error }
+                    ]}>
+                      {verificationResult.verified ? t('nftAlbum.verifiedOnSolana') : t('nftAlbum.notFoundOnChain')}
+                    </Text>
+                  </View>
+                ) : (
+                  <TouchableOpacity
+                    style={styles.verifyButton}
+                    onPress={() => verifyOnChain(selectedNFT)}
+                  >
+                    <Feather name="shield" size={16} color={COLORS.primary} />
+                    <Text style={styles.verifyButtonText}>{t('nftAlbum.verifyOnChain')}</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+              
+              {/* Action buttons - context-aware based on NFT type and storage */}
+              <View style={styles.actionButtons}>
+              {/* Token view - different for cNFT vs standard NFT */}
+              {selectedNFT.isCompressed || selectedNFT.mintAddress?.startsWith('cnft_') ? (
+                // cNFT: Use XRAY - handle both real asset ID and tx-based fallback
                 <TouchableOpacity
-                  style={styles.verifyButton}
-                  onPress={() => verifyOnChain(selectedNFT)}
+                  style={styles.actionButton}
+                  onPress={() => {
+                    // Check if we have a real asset ID or tx-based fallback
+                    const mintAddr = selectedNFT.mintAddress || '';
+                    if (mintAddr.startsWith('cnft_tx_')) {
+                      // Tx-based: use transaction view
+                      const txSig = mintAddr.replace('cnft_tx_', '');
+                      openLink(`https://xray.helius.xyz/tx/${txSig}?network=mainnet`);
+                    } else if (selectedNFT.assetId && selectedNFT.assetId.length > 30) {
+                      // Real asset ID available (valid base58 is 32-44 chars)
+                      openLink(`https://xray.helius.xyz/token/${selectedNFT.assetId}?network=mainnet`);
+                    } else if (selectedNFT.txSignature) {
+                      // Use full tx signature if available
+                      openLink(`https://xray.helius.xyz/tx/${selectedNFT.txSignature}?network=mainnet`);
+                    } else if (mintAddr.startsWith('cnft_')) {
+                      // Old format without txSignature - can't show valid link
+                      // Try to use whatever we have
+                      const assetId = mintAddr.replace('cnft_', '');
+                      if (assetId.length > 40) {
+                        openLink(`https://xray.helius.xyz/tx/${assetId}?network=mainnet`);
+                      } else {
+                        // Show alert that we need to rescan
+                        Alert.alert('Rescan Required', 'This cNFT was created before proper asset ID tracking. Please use "Scan Wallet" to update your NFT data.');
+                      }
+                    }
+                  }}
                 >
-                  <Feather name="shield" size={16} color={COLORS.primary} />
-                  <Text style={styles.verifyButtonText}>{t('nftAlbum.verifyOnChain')}</Text>
+                  <Feather name="zap" size={16} color={COLORS.text} />
+                  <Text style={styles.actionButtonText}>XRAY</Text>
+                </TouchableOpacity>
+              ) : (
+                // Standard NFT: Use Solscan token view
+                <TouchableOpacity
+                  style={styles.actionButton}
+                  onPress={() => openLink(NFTOperations.getSolscanUrl(selectedNFT.mintAddress))}
+                >
+                  <Feather name="search" size={16} color={COLORS.text} />
+                  <Text style={styles.actionButtonText}>{t('nftAlbum.solscan')}</Text>
                 </TouchableOpacity>
               )}
-            </View>
-            
-            {/* Action buttons */}
-            <View style={styles.actionButtons}>
-              <TouchableOpacity
-                style={[styles.actionButton, !selectedNFT.txSignature && styles.actionButtonDisabled]}
-                onPress={() => selectedNFT.txSignature && openLink(NFTOperations.getExplorerUrl(selectedNFT.txSignature))}
-                disabled={!selectedNFT.txSignature}
-              >
-                <Feather name="external-link" size={16} color={selectedNFT.txSignature ? COLORS.text : COLORS.textSecondary} />
-                <Text style={[styles.actionButtonText, !selectedNFT.txSignature && styles.actionButtonTextDisabled]}>{t('nftAlbum.explorer')}</Text>
-              </TouchableOpacity>
               
+              {/* Image storage - IPFS or StealthCloud */}
               <TouchableOpacity
                 style={styles.actionButton}
-                onPress={() => openLink(NFTOperations.getSolscanUrl(selectedNFT.mintAddress))}
-              >
-                <Feather name="search" size={16} color={COLORS.text} />
-                <Text style={styles.actionButtonText}>{t('nftAlbum.solscan')}</Text>
-              </TouchableOpacity>
-              
-              <TouchableOpacity
-                style={styles.actionButton}
-                onPress={() => openLink(selectedNFT.arweaveUrl || selectedNFT.imageUrl)}
+                onPress={async () => {
+                  // Determine if this is StealthCloud or IPFS storage
+                  const isStealthCloud = (selectedNFT.thumbnailUrl || selectedNFT.imageUrl || '').includes('stealthlynk.io');
+                  
+                  if (isStealthCloud) {
+                    // StealthCloud: use thumbnailUrl or imageUrl directly
+                    const url = selectedNFT.thumbnailUrl || selectedNFT.imageUrl || selectedNFT.arweaveUrl;
+                    if (url) {
+                      openLink(url);
+                    } else {
+                      showDarkAlert(t('common.error'), 'Image URL not available');
+                    }
+                    return;
+                  }
+                  
+                  // IPFS storage: need to find the actual image URL
+                  // arweaveUrl might be metadata JSON URL, not image URL
+                  // We need to fetch metadata and extract the image field
+                  
+                  let imageUrl = null;
+                  
+                  // Check if we have a direct IPFS image URL (not metadata)
+                  // Metadata URLs typically end with the CID only, image URLs have file extensions or specific patterns
+                  const possibleImageUrl = selectedNFT.imageUrl || selectedNFT.arweaveUrl;
+                  if (possibleImageUrl) {
+                    const cid = extractIPFSCid(possibleImageUrl);
+                    if (cid) {
+                      // Fetch to check if it's JSON (metadata) or image
+                      try {
+                        const testUrl = `https://w3s.link/ipfs/${cid}`;
+                        const resp = await fetch(testUrl, { method: 'HEAD', timeout: 3000 });
+                        const contentType = resp.headers.get('content-type') || '';
+                        
+                        if (contentType.includes('image')) {
+                          // It's an image, use directly
+                          imageUrl = testUrl;
+                        } else if (contentType.includes('json')) {
+                          // It's metadata JSON, fetch and extract image
+                          const jsonResp = await fetch(testUrl, { timeout: 5000 });
+                          if (jsonResp.ok) {
+                            const meta = await jsonResp.json();
+                            if (meta.image) {
+                              imageUrl = meta.image;
+                            }
+                          }
+                        }
+                      } catch (e) {
+                        console.log('[NFT] Could not determine content type:', e.message);
+                      }
+                    }
+                  }
+                  
+                  // If still no image URL, try metadataUrl
+                  if (!imageUrl && selectedNFT.metadataUrl) {
+                    const metaCid = extractIPFSCid(selectedNFT.metadataUrl);
+                    if (metaCid) {
+                      try {
+                        const gateways = [
+                          `https://w3s.link/ipfs/${metaCid}`,
+                          `https://nftstorage.link/ipfs/${metaCid}`,
+                        ];
+                        for (const gateway of gateways) {
+                          try {
+                            const resp = await fetch(gateway, { timeout: 5000 });
+                            if (resp.ok) {
+                              const meta = await resp.json();
+                              if (meta.image) {
+                                imageUrl = meta.image;
+                                break;
+                              }
+                            }
+                          } catch (e) {}
+                        }
+                      } catch (e) {}
+                    }
+                  }
+                  
+                  // Open the image URL
+                  if (imageUrl) {
+                    const cid = extractIPFSCid(imageUrl);
+                    if (cid) {
+                      openLink(`https://ipfs.io/ipfs/${cid}`);
+                    } else {
+                      openLink(imageUrl);
+                    }
+                  } else {
+                    showDarkAlert(t('common.error'), 'Image URL not available');
+                  }
+                }}
               >
                 <Feather name="image" size={16} color={COLORS.text} />
-                <Text style={styles.actionButtonText}>{t('nftAlbum.ipfs')}</Text>
+                <Text style={styles.actionButtonText}>
+                  {(selectedNFT.thumbnailUrl || selectedNFT.imageUrl || '').includes('stealthlynk.io') ? 'Image' : t('nftAlbum.ipfs')}
+                </Text>
               </TouchableOpacity>
-            </View>
-            
-            {/* Transfer button */}
-            <TouchableOpacity
-              style={styles.transferButton}
-              onPress={() => handleTransfer(selectedNFT)}
-            >
-              <Feather name="send" size={18} color="#fff" />
-              <Text style={styles.transferButtonText}>{t('nftAlbum.transferNft')}</Text>
-            </TouchableOpacity>
+              </View>
+              
+              {/* Transfer button */}
+              <TouchableOpacity
+                style={styles.transferButton}
+                onPress={() => handleTransfer(selectedNFT)}
+              >
+                <Feather name="send" size={18} color="#fff" />
+                <Text style={styles.transferButtonText}>{t('nftAlbum.transferNft')}</Text>
+              </TouchableOpacity>
+            </ScrollView>
           </View>
         </View>
       </Modal>
@@ -565,26 +1086,45 @@ const NFTGallery = ({
           </TouchableOpacity>
         </View>
         
-        {/* Filter Toggle */}
+        {/* Filter Toggle - All NFTs, Standard, Compressed */}
         {nfts.length > 0 && (
           <View style={styles.filterToggleBar}>
             <TouchableOpacity 
-              style={[styles.filterToggle, showOnlyPhotoLynk && styles.filterToggleActive]}
-              onPress={() => setShowOnlyPhotoLynk(true)}
+              style={[styles.filterToggle, nftFilter === 'all' && styles.filterToggleActive]}
+              onPress={() => { setNftFilter('all'); setCurrentPage(0); }}
             >
-              <Feather name="camera" size={14} color={showOnlyPhotoLynk ? '#fff' : COLORS.textSecondary} />
-              <Text style={[styles.filterToggleText, showOnlyPhotoLynk && styles.filterToggleTextActive]}>
-                PhotoLynk
+              <Feather name="grid" size={14} color={nftFilter === 'all' ? '#fff' : COLORS.textSecondary} />
+              <Text style={[styles.filterToggleText, nftFilter === 'all' && styles.filterToggleTextActive]}>
+                {t('nftAlbum.allNfts')}
               </Text>
             </TouchableOpacity>
             <TouchableOpacity 
-              style={[styles.filterToggle, !showOnlyPhotoLynk && styles.filterToggleActive]}
-              onPress={() => setShowOnlyPhotoLynk(false)}
+              style={[styles.filterToggle, nftFilter === 'standard' && { backgroundColor: 'rgba(153, 69, 255, 0.3)', borderColor: '#9945FF' }]}
+              onPress={() => { setNftFilter('standard'); setCurrentPage(0); }}
             >
-              <Feather name="grid" size={14} color={!showOnlyPhotoLynk ? '#fff' : COLORS.textSecondary} />
-              <Text style={[styles.filterToggleText, !showOnlyPhotoLynk && styles.filterToggleTextActive]}>
-                {t('nftAlbum.allNfts')}
-              </Text>
+              <View style={{ alignItems: 'center' }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                  <Feather name="hexagon" size={14} color={nftFilter === 'standard' ? '#9945FF' : COLORS.textSecondary} />
+                  <Text style={[styles.filterToggleText, nftFilter === 'standard' && { color: '#9945FF' }]}>
+                    {t('nftAlbum.standard')}
+                  </Text>
+                </View>
+                <Text style={{ fontSize: 8, color: COLORS.textSecondary, marginTop: 2 }}>{t('nftAlbum.uniqueToken')}</Text>
+              </View>
+            </TouchableOpacity>
+            <TouchableOpacity 
+              style={[styles.filterToggle, nftFilter === 'compressed' && { backgroundColor: 'rgba(34, 197, 94, 0.3)', borderColor: '#22c55e' }]}
+              onPress={() => { setNftFilter('compressed'); setCurrentPage(0); }}
+            >
+              <View style={{ alignItems: 'center' }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                  <Feather name="zap" size={14} color={nftFilter === 'compressed' ? '#22c55e' : COLORS.textSecondary} />
+                  <Text style={[styles.filterToggleText, nftFilter === 'compressed' && { color: '#22c55e' }]}>
+                    {t('nftAlbum.compressed')}
+                  </Text>
+                </View>
+                <Text style={{ fontSize: 8, color: COLORS.textSecondary, marginTop: 2 }}>{t('nftAlbum.sharedTree')}</Text>
+              </View>
             </TouchableOpacity>
           </View>
         )}
@@ -700,8 +1240,8 @@ const NFTGallery = ({
               </Text>
             )}
             
-            {/* NFT Grid */}
-            <View style={styles.gridContainer}>
+            {/* NFT Grid - key forces complete re-render on page change to free memory */}
+            <View key={`page-${currentPage}`} style={styles.gridContainer}>
               {displayedNFTs.map((item, index) => (
                 <View key={item.mintAddress} style={styles.gridItem}>
                   {renderNFTCard({ item, index })}
@@ -709,17 +1249,31 @@ const NFTGallery = ({
               ))}
             </View>
             
-            {/* Show More Button */}
-            {hasMore && (
-              <TouchableOpacity 
-                style={styles.showMoreButton}
-                onPress={handleShowMore}
-              >
-                <Text style={styles.showMoreText}>
-                  Show More ({filteredNFTs.length - displayCount} remaining)
+            {/* Pagination Controls */}
+            {filteredNFTs.length > ITEMS_PER_PAGE && (
+              <View style={styles.paginationContainer}>
+                <TouchableOpacity 
+                  style={[styles.paginationButton, !hasPrev && styles.paginationButtonDisabled]}
+                  onPress={goToPrevPage}
+                  disabled={!hasPrev}
+                >
+                  <Feather name="chevron-left" size={24} color={hasPrev ? COLORS.primary : COLORS.textSecondary} />
+                  <Text style={[styles.paginationText, !hasPrev && styles.paginationTextDisabled]}>{t('nftAlbum.prev')}</Text>
+                </TouchableOpacity>
+                
+                <Text style={styles.paginationInfo}>
+                  {currentPage + 1} / {totalPages}
                 </Text>
-                <Feather name="chevron-down" size={20} color={COLORS.primary} />
-              </TouchableOpacity>
+                
+                <TouchableOpacity 
+                  style={[styles.paginationButton, !hasNext && styles.paginationButtonDisabled]}
+                  onPress={goToNextPage}
+                  disabled={!hasNext}
+                >
+                  <Text style={[styles.paginationText, !hasNext && styles.paginationTextDisabled]}>{t('nftAlbum.next')}</Text>
+                  <Feather name="chevron-right" size={24} color={hasNext ? COLORS.primary : COLORS.textSecondary} />
+                </TouchableOpacity>
+              </View>
             )}
             
             {/* No results */}
@@ -979,31 +1533,31 @@ const styles = StyleSheet.create({
   gridItem: {
     width: '50%',
     paddingHorizontal: 6,
-    marginBottom: 20,
+    marginBottom: 16,
   },
   
-  // Premium 3D Card
+  // Premium 3D Card - 2 columns
   nftCard: {
     position: 'relative',
-    height: (SCREEN_WIDTH - 48) / 2 + 60,
+    height: (SCREEN_WIDTH - 48) / 2 + 50,
   },
   cardShadow3: {
-    position: 'absolute',
-    bottom: -8,
-    left: 8,
-    right: 8,
-    height: '100%',
-    backgroundColor: 'rgba(153, 69, 255, 0.1)',
-    borderRadius: 16,
-  },
-  cardShadow2: {
     position: 'absolute',
     bottom: -4,
     left: 4,
     right: 4,
     height: '100%',
+    backgroundColor: 'rgba(153, 69, 255, 0.1)',
+    borderRadius: 10,
+  },
+  cardShadow2: {
+    position: 'absolute',
+    bottom: -2,
+    left: 2,
+    right: 2,
+    height: '100%',
     backgroundColor: 'rgba(153, 69, 255, 0.15)',
-    borderRadius: 14,
+    borderRadius: 9,
   },
   cardShadow1: {
     position: 'absolute',
@@ -1012,16 +1566,16 @@ const styles = StyleSheet.create({
     right: 0,
     height: '100%',
     backgroundColor: COLORS.surface,
-    borderRadius: 12,
+    borderRadius: 8,
   },
   cardMain: {
     position: 'absolute',
     top: 0,
     left: 0,
     right: 0,
-    bottom: 8,
+    bottom: 4,
     backgroundColor: COLORS.surface,
-    borderRadius: 12,
+    borderRadius: 8,
     overflow: 'hidden',
     borderWidth: 1,
     borderColor: 'rgba(153, 69, 255, 0.2)',
@@ -1054,14 +1608,14 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     right: 0,
-    padding: 12,
+    padding: 6,
     backgroundColor: 'rgba(0,0,0,0.6)',
   },
   nftName: {
-    fontSize: 14,
+    fontSize: 10,
     fontWeight: '700',
     color: '#fff',
-    marginBottom: 6,
+    marginBottom: 2,
     textShadowColor: 'rgba(0,0,0,0.5)',
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 2,
@@ -1077,36 +1631,53 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   nftDate: {
-    fontSize: 11,
+    fontSize: 8,
     color: 'rgba(255,255,255,0.7)',
   },
   solanaBadge: {
-    width: 20,
-    height: 20,
+    width: 14,
+    height: 14,
     borderRadius: 10,
     backgroundColor: 'rgba(153, 69, 255, 0.3)',
     justifyContent: 'center',
     alignItems: 'center',
   },
   
-  // Show More
-  showMoreButton: {
+  // Pagination
+  paginationContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
+    justifyContent: 'space-between',
     marginHorizontal: 16,
-    marginTop: 8,
-    paddingVertical: 16,
+    marginTop: 16,
+    marginBottom: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
     backgroundColor: COLORS.surface,
     borderRadius: 12,
-    borderWidth: 1,
-    borderColor: COLORS.primary,
   },
-  showMoreText: {
+  paginationButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+  },
+  paginationButtonDisabled: {
+    opacity: 0.4,
+  },
+  paginationText: {
     fontSize: 15,
     fontWeight: '600',
     color: COLORS.primary,
+  },
+  paginationTextDisabled: {
+    color: COLORS.textSecondary,
+  },
+  paginationInfo: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: COLORS.text,
   },
   
   // No Results
@@ -1136,14 +1707,23 @@ const styles = StyleSheet.create({
   // Detail modal
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.9)',
-    justifyContent: 'center',
-    padding: 16,
+    backgroundColor: 'rgba(0,0,0,0.95)',
+    justifyContent: 'flex-end',
   },
   detailModal: {
     backgroundColor: COLORS.surface,
-    borderRadius: 16,
-    maxHeight: '90%',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    flex: 1,
+    marginTop: 40,
+    overflow: 'hidden',
+  },
+  detailScrollView: {
+    flex: 1,
+  },
+  detailScrollContent: {
+    paddingBottom: 24,
+    flexGrow: 1,
   },
   detailHeader: {
     flexDirection: 'row',
@@ -1161,7 +1741,8 @@ const styles = StyleSheet.create({
   },
   detailImage: {
     width: '100%',
-    height: 250,
+    aspectRatio: 1,
+    maxHeight: SCREEN_WIDTH,
     backgroundColor: COLORS.background,
   },
   ownerSection: {

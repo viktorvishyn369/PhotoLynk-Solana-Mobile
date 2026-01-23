@@ -373,7 +373,7 @@
     "couldNotScan": "Nepavyko nuskaityti piniginės dėl NFT",
     "couldNotOpenLink": "Nepavyko atidaryti nuorodos",
     "clearAllNfts": "Išvalyti visus NFT",
-    "clearAllNftsMessage": "Taip iš vietinės saugyklos bus pašalinti visi NFT. Tai skirta tik bandymams ir neturi įtakos blokų grandinei.",
+    "clearAllNftsMessage": "Taip bus ištrinti visi NFT iš albumo. Jie lieka blokų grandinėje ir gali būti atkurti iš naujo nuskenavus piniginę.",
     "clear": "Skaidrus",
     "nftOwner": "NFT SAVININKAS",
     "description": "APRAŠYMAS",
@@ -382,10 +382,15 @@
     "verifiedOnSolana": "Patikrinta dėl Solana",
     "notFoundOnChain": "Nerasta ant grandinės",
     "verifyOnChain": "Patikrinti grandinėje",
-    "explorer": "Explorer",
     "solscan": "Solscan",
     "ipfs": "IPFS",
-    "transferNft": "Perkėlimas NFT"
+    "transferNft": "Perkėlimas NFT",
+    "standard": "Standartinis",
+    "compressed": "Suglaudintas",
+    "uniqueToken": "Unikalus žetonas",
+    "sharedTree": "Bendras medis",
+    "standardNft": "Standartinis NFT",
+    "compressedNft": "Suglaudintas NFT"
   },
   "similarPhotos": {
     "title": "Panašios nuotraukos",
@@ -397,6 +402,19 @@
     "delete": "Ištrinti",
     "keepAllNext": "Laikyti viską → Kitas",
     "keepAllDone": "Laikyti viską ir baigta"
+  },
+  "nftWelcome": {
+    "title": "Sveiki atvykę į NFT kūrimą",
+    "whatIsNft": "Kas yra NFT?",
+    "whatIsNftDesc": "NFT (nepakeičiamas žetonas) yra unikalus skaitmeninis nuosavybės sertifikatas, saugomas blokų grandinėje. Kai sukuriate nuotrauką kaip NFT, sukuriate nuolatinį įrodymą, kad jums priklauso šis skaitmeninis turtas.",
+    "publicWarning": "Viešas ir nuolatinis",
+    "publicWarningDesc": "Jūsų nuotrauka bus saugoma internete ir matoma visiems. Venkite asmeninių ar jautrių vaizdų. Sukūrus NFT, jo negalima ištrinti iš blokų grandinės.",
+    "sizeRecommendation": "Vaizdo dydis svarbus",
+    "sizeRecommendationDesc": "Mažesni vaizdai (iki 2MB) albume įkeliami greičiau. Dideli failai dėl tinklo sąlygų gali būti rodomi ilgiau, tačiau jūsų NFT visada saugus blokų grandinėje.",
+    "loadingNote": "Apie vaizdų įkėlimą",
+    "loadingNoteDesc": "Jei vaizdas nerodomas iš karto, nesijaudinkite — jūsų NFT egzistuoja ir yra saugus. Laikini įkėlimo trikdžiai gali atsirasti dėl tinklo perkrovos ar vartų vėlavimų.",
+    "gotIt": "Supratau",
+    "dontShowAgain": "Daugiau nerodyti"
   },
   "nftMint": {
     "createNft": "Sukurti NFT",
@@ -438,7 +456,13 @@
     "seekerIdPlaceholder": "pvz., alice.skr arba alice",
     "seekerIdHint": "Įveskite ieškotojo ID (pvz., alice.skr) arba .sol domeną",
     "warningMessage": "NFT pervedimai yra nuolatiniai ir negali būti atšaukti. Įsitikinkite, kad nurodėte teisingą gavėjo adresą.",
-    "transfer": "Perdavimas"
+    "transfer": "Perdavimas",
+    "confirmTransfer": "Patvirtinti pervedimą",
+    "confirmTransferMessage": "Ar tikrai norite perkelti \"{{name}}\" į {{recipient}}?",
+    "cannotBeUndone": "Šio veiksmo negalima atšaukti.",
+    "transferSuccessful": "Perkėlimas sėkmingas",
+    "transferSuccessMessage": "Jūsų NFT sėkmingai perkeltas!",
+    "transaction": "Sandoris"
   },
   "duplicates": {
     "title": "\"Clean Duplicates",

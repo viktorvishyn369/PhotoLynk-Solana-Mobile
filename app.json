@@ -2,7 +2,7 @@
   "expo": {
     "name": "PhotoLynk",
     "slug": "photosync",
-    "version": "1.4.5",
+    "version": "1.5.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
@@ -18,12 +18,13 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.photosync.app",
-      "buildNumber": "1.1.5",
+      "buildNumber": "15",
       "infoPlist": {
-        "NSPhotoLibraryUsageDescription": "PhotoLynk needs access to your photos to back them up to your secure private cloud.",
-        "NSPhotoLibraryAddUsageDescription": "PhotoLynk needs permission to save restored photos to your library.",
-        "NSCameraUsageDescription": "PhotoLynk needs camera access to scan QR codes for easy server pairing.",
-        "NSLocalNetworkUsageDescription": "PhotoLynk needs access to your local network to connect to your PhotoLynk server and the development bundler.",
+        "NSPhotoLibraryUsageDescription": "PhotoLynk needs read access to choose photos and videos to back up from your device to your PhotoLynk account.",
+        "NSPhotoLibraryAddUsageDescription": "PhotoLynk saves photos and videos you restore or export from your backup back into your library.",
+        "NSCameraUsageDescription": "Allow PhotoLynk to use the camera to scan QR codes for server pairing.",
+        "NSFaceIDUsageDescription": "PhotoLynk uses Face ID to unlock your account for quick auto-login without entering your password.",
+        "NSLocalNetworkUsageDescription": "PhotoLynk needs access to your local network to discover and connect to your PhotoLynk server for photo backup.",
         "NSBonjourServices": [
           "_expo._tcp",
           "_http._tcp"
@@ -64,12 +65,10 @@
         "android.permission.ACCESS_MEDIA_LOCATION",
         "android.permission.READ_MEDIA_IMAGES",
         "android.permission.READ_MEDIA_VIDEO",
-        "android.permission.READ_MEDIA_AUDIO",
-        "android.permission.CAMERA",
-        "android.permission.RECORD_AUDIO"
+        "android.permission.CAMERA"
       ],
       "package": "com.photolynk.solana",
-      "versionCode": 7,
+      "versionCode": 16,
       "intentFilters": [
         {
           "action": "VIEW",
@@ -95,8 +94,8 @@
       [
         "expo-media-library",
         {
-          "photosPermission": "Allow PhotoLynk to access your photos.",
-          "savePhotosPermission": "Allow PhotoLynk to save photos.",
+          "photosPermission": "PhotoLynk needs read access to choose photos and videos to back up from your device to your PhotoLynk account.",
+          "savePhotosPermission": "PhotoLynk saves photos and videos you restore or export from your backup back into your library.",
           "isAccessMediaLocationEnabled": true
         }
       ],

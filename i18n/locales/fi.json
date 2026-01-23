@@ -373,7 +373,7 @@
     "couldNotScan": "Lompakkoa ei voitu skannata NFT:iden varalta",
     "couldNotOpenLink": "Linkkiä ei voitu avata",
     "clearAllNfts": "Tyhjennä kaikki NFT:t",
-    "clearAllNftsMessage": "Tämä poistaa kaikki NFT:t paikallisesta tallennuksesta. Tämä on vain testausta varten eikä vaikuta lohkoketjuun.",
+    "clearAllNftsMessage": "Tämä poistaa kaikki NFT:t albumista. Ne pysyvät lohkoketjussa ja voidaan palauttaa skannaamalla lompakkosi uudelleen.",
     "clear": "Kirkas",
     "nftOwner": "NFT OMISTAJA",
     "description": "KUVAUS",
@@ -382,10 +382,15 @@
     "verifiedOnSolana": "Tarkastettu Solana",
     "notFoundOnChain": "Ei löydy ketjusta",
     "verifyOnChain": "Tarkista ketjussa",
-    "explorer": "Explorer",
     "solscan": "Solscan",
     "ipfs": "IPFS",
-    "transferNft": "Siirto NFT"
+    "transferNft": "Siirto NFT",
+    "standard": "Vakio",
+    "compressed": "Pakattu",
+    "uniqueToken": "Ainutlaatuinen token",
+    "sharedTree": "Jaettu puu",
+    "standardNft": "Vakio NFT",
+    "compressedNft": "Pakattu NFT"
   },
   "similarPhotos": {
     "title": "Samanlaisia kuvia",
@@ -396,7 +401,20 @@
     "keepThisPhoto": "Pidä tämä kuva",
     "delete": "Poista",
     "keepAllNext": "Pidä kaikki → Seuraava",
-    "keepAllDone": "Keep All & Done"
+    "keepAllDone": "Pidä kaikki ja valmis"
+  },
+  "nftWelcome": {
+    "title": "Tervetuloa NFT:n luomiseen",
+    "whatIsNft": "Mikä on NFT?",
+    "whatIsNftDesc": "NFT (Non-Fungible Token) on ainutlaatuinen digitaalinen omistustodistus, joka on tallennettu lohkoketjuun. Kun luot valokuvan NFT:nä, luot pysyvän todisteen siitä, että omistat tämän digitaalisen omaisuuden.",
+    "publicWarning": "Julkinen ja pysyvä",
+    "publicWarningDesc": "Valokuvasi tallennetaan verkkoon ja se on kaikkien nähtävissä. Vältä henkilökohtaisia tai arkaluonteisia kuvia. Kun NFT on luotu, sitä ei voi poistaa lohkoketjusta.",
+    "sizeRecommendation": "Kuvan koko on tärkeä",
+    "sizeRecommendationDesc": "Pienemmät kuvat (alle 2MB) latautuvat nopeammin albumissa. Suuret tiedostot voivat kestää kauemmin näyttää verkko-olosuhteiden vuoksi, mutta NFT:si on aina turvassa lohkoketjussa.",
+    "loadingNote": "Kuvien lataamisesta",
+    "loadingNoteDesc": "Jos kuva ei näy heti, älä huoli — NFT:si on olemassa ja turvassa. Väliaikaiset latausongelmat voivat johtua verkon ruuhkautumisesta tai yhdyskäytävän viiveistä.",
+    "gotIt": "Selvä",
+    "dontShowAgain": "Älä näytä uudelleen"
   },
   "nftMint": {
     "createNft": "Luo NFT",
@@ -438,7 +456,13 @@
     "seekerIdPlaceholder": "esim. alice.skr tai alice",
     "seekerIdHint": "Syötä Etsijätunnus (esim. alice.skr) tai .sol-verkkotunnus.",
     "warningMessage": "NFT-siirrot ovat pysyviä, eikä niitä voi peruuttaa. Varmista, että sinulla on oikea vastaanottajan osoite.",
-    "transfer": "Siirto"
+    "transfer": "Siirto",
+    "confirmTransfer": "Vahvista siirto",
+    "confirmTransferMessage": "Haluatko varmasti siirtää \"{{name}}\" osoitteeseen {{recipient}}?",
+    "cannotBeUndone": "Tätä toimintoa ei voi kumota.",
+    "transferSuccessful": "Siirto onnistui",
+    "transferSuccessMessage": "NFT on siirretty onnistuneesti!",
+    "transaction": "Tapahtuma"
   },
   "duplicates": {
     "title": "Puhdista kaksoiskappaleet",

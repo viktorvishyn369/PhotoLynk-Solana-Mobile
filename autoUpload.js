@@ -66,7 +66,7 @@ export const checkPhotoAccessForAutoUpload = async () => {
   let permission = null;
   try { permission = await MediaLibrary.getPermissionsAsync(); } catch (e) { permission = null; }
   if (!permission || permission.status !== 'granted') {
-    try { permission = await MediaLibrary.requestPermissionsAsync(); } catch (e) { permission = null; }
+    try { permission = await MediaLibrary.requestPermissionsAsync(false, ['photo', 'video']); } catch (e) { permission = null; }
     if (!permission || permission.status !== 'granted') return { granted: false, limited: false };
   }
   const privileges = await getMediaLibraryAccessPrivileges(permission);

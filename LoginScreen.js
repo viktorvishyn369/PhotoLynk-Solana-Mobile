@@ -19,6 +19,7 @@ import {
   Image,
   KeyboardAvoidingView,
   Linking,
+  StatusBar,
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { t } from './i18n';
@@ -68,7 +69,7 @@ const ServerOption = ({ icon, label, badge, isSelected, onPress }) => (
 );
 
 // Input Field Component
-const InputField = ({ icon, placeholder, value, onChangeText, secureTextEntry, keyboardType, autoCapitalize, autoComplete, textContentType, style }) => (
+const InputField = ({ icon, placeholder, value, onChangeText, secureTextEntry, keyboardType, autoCapitalize, autoComplete, textContentType, importantForAutofill, style }) => (
   <View style={[styles.inputContainer, style]}>
     <View style={styles.inputIcon}>
       <Feather name={icon} size={scale(18)} color="#666666" />
@@ -84,6 +85,7 @@ const InputField = ({ icon, placeholder, value, onChangeText, secureTextEntry, k
       autoCapitalize={autoCapitalize || 'none'}
       autoComplete={autoComplete}
       textContentType={textContentType}
+      importantForAutofill={importantForAutofill}
     />
   </View>
 );
@@ -270,6 +272,9 @@ export const LoginScreen = ({
                 placeholder={t('login.enterLocalIp')}
                 value={localHost}
                 onChangeText={(t) => setLocalHost(normalizeHostInput(t))}
+                keyboardType="url"
+                autoComplete="off"
+                importantForAutofill="no"
                 style={{ flex: 1, marginRight: scaleSpacing(10) }}
               />
               <TouchableOpacity style={styles.qrButton} onPress={openQrScanner}>
@@ -291,6 +296,9 @@ export const LoginScreen = ({
               placeholder={t('login.enterRemoteDomain')}
               value={remoteHost}
               onChangeText={(t) => setRemoteHost(normalizeHostInput(t))}
+              keyboardType="url"
+              autoComplete="off"
+              importantForAutofill="no"
             />
             <Text style={styles.inputHint}>{t('login.remoteDomainHint')}</Text>
             <TouchableOpacity style={styles.quickSetupLinkInline} onPress={openQuickSetupGuide}>
@@ -503,13 +511,13 @@ const styles = StyleSheet.create({
   scrollContent: {
     flexGrow: 1,
     paddingHorizontal: scaleSpacing(20),
-    paddingTop: Platform.OS === 'android' ? scaleSpacing(58) : scaleSpacing(12),
-    paddingBottom: scaleSpacing(40),
+    paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 24) + 8 : scaleSpacing(12),
+    paddingBottom: Platform.OS === 'android' ? 60 : scaleSpacing(40),
   },
   // Header
   header: {
-    marginBottom: scaleSpacing(20),
-    marginTop: scaleSpacing(12),
+    marginBottom: scaleSpacing(12),
+    marginTop: Platform.OS === 'android' ? 8 : scaleSpacing(12),
   },
   headerRow: {
     flexDirection: 'row',

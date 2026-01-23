@@ -373,7 +373,7 @@
     "couldNotScan": "Δεν ήταν δυνατή η σάρωση πορτοφολιού για NFTs",
     "couldNotOpenLink": "Δεν μπόρεσε να ανοίξει ο σύνδεσμος",
     "clearAllNfts": "Εκκαθάριση όλων των NFTs",
-    "clearAllNftsMessage": "Αυτό θα αφαιρέσει όλα τα NFTs από την τοπική αποθήκευση. Αυτό είναι μόνο για δοκιμές και δεν επηρεάζει την αλυσίδα μπλοκ.",
+    "clearAllNftsMessage": "Αυτό θα διαγράψει όλα τα NFTs από το άλμπουμ. Παραμένουν στην αλυσίδα μπλοκ και μπορούν να αποκατασταθούν σαρώνοντας ξανά το πορτοφόλι σας.",
     "clear": "Σαφής",
     "nftOwner": "NFT ΙΔΙΟΚΤΗΤΗΣ",
     "description": "ΠΕΡΙΓΡΑΦΗ",
@@ -382,10 +382,15 @@
     "verifiedOnSolana": "Επαληθεύτηκε στο Solana",
     "notFoundOnChain": "Δεν βρέθηκε στην αλυσίδα",
     "verifyOnChain": "Επαλήθευση στην αλυσίδα",
-    "explorer": "Εξερευνητής",
     "solscan": "Solscan",
     "ipfs": "IPFS",
-    "transferNft": "Μεταφορά NFT"
+    "transferNft": "Μεταφορά NFT",
+    "standard": "Τυπικό",
+    "compressed": "Συμπιεσμένο",
+    "uniqueToken": "Μοναδικό token",
+    "sharedTree": "Κοινό δέντρο",
+    "standardNft": "Τυπικό NFT",
+    "compressedNft": "Συμπιεσμένο NFT"
   },
   "similarPhotos": {
     "title": "Παρόμοιες φωτογραφίες",
@@ -438,7 +443,13 @@
     "seekerIdPlaceholder": "π.χ., alice.skr ή alice",
     "seekerIdHint": "Εισάγετε ένα αναγνωριστικό αναζητητή (π.χ. alice.skr) ή ένα domain .sol",
     "warningMessage": "Οι μεταφορές NFT είναι μόνιμες και δεν μπορούν να αντιστραφούν. Βεβαιωθείτε ότι έχετε τη σωστή διεύθυνση παραλήπτη.",
-    "transfer": "Μεταφορά"
+    "transfer": "Μεταφορά",
+    "confirmTransfer": "Επιβεβαίωση μεταφοράς",
+    "confirmTransferMessage": "Είστε σίγουροι ότι θέλετε να μεταφέρετε το \"{{name}}\" στο {{recipient}};",
+    "cannotBeUndone": "Αυτή η ενέργεια δεν μπορεί να αναιρεθεί.",
+    "transferSuccessful": "Η μεταφορά ολοκληρώθηκε",
+    "transferSuccessMessage": "Το NFT σας μεταφέρθηκε επιτυχώς!",
+    "transaction": "Συναλλαγή"
   },
   "duplicates": {
     "title": "Καθαρίστε τα αντίγραφα",

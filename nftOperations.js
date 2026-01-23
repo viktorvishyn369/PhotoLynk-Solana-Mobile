@@ -1,5 +1,7 @@
 // NFT Operations Module for PhotoLynk Solana Seeker
-// Handles REAL photo NFT minting on Solana using SPL Token + Metaplex Token Metadata
+// Handles REAL photo NFT minting on Solana using:
+// 1. Compressed NFTs (cNFTs) via Metaplex Bubblegum - PRIMARY (99.99% cheaper)
+// 2. Regular NFTs via SPL Token + Metaplex Token Metadata - FALLBACK
 // Uses Mobile Wallet Adapter for Seeker device wallet
 
 import { Platform } from 'react-native';
@@ -8,13 +10,14 @@ import * as SecureStore from 'expo-secure-store';
 import * as MediaLibrary from 'expo-media-library';
 import * as ImageManipulator from 'expo-image-manipulator';
 import axios from 'axios';
+import { sha256 } from 'js-sha256';
 import { getDeviceUUID, SAVED_PASSWORD_KEY } from './authHelpers';
 
 // ============================================================================
 // SOLANA IMPORTS
 // ============================================================================
 
-let Connection, PublicKey, Transaction, SystemProgram, LAMPORTS_PER_SOL;
+let Connection, PublicKey, Transaction, SystemProgram, LAMPORTS_PER_SOL, TransactionInstruction;
 let TransactionMessage, VersionedTransaction, Keypair, ComputeBudgetProgram;
 let transact;
 let TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID, createInitializeMintInstruction;
@@ -23,11 +26,17 @@ let getMint, getMinimumBalanceForRentExemptMint, MINT_SIZE;
 let solanaAvailable = false;
 let splTokenAvailable = false;
 
+// Compressed NFT (cNFT) support - using raw Solana instructions (no UMI dependency)
+// UMI/Bubblegum SDK is not compatible with React Native Metro bundler
+// We implement cNFT minting using raw transaction instructions instead
+let cNFTAvailable = false;
+
 try {
   const web3 = require('@solana/web3.js');
   Connection = web3.Connection;
   PublicKey = web3.PublicKey;
   Transaction = web3.Transaction;
+  TransactionInstruction = web3.TransactionInstruction;
   SystemProgram = web3.SystemProgram;
   LAMPORTS_PER_SOL = web3.LAMPORTS_PER_SOL;
   TransactionMessage = web3.TransactionMessage;
@@ -57,6 +66,11 @@ try {
   } catch (splErr) {
     console.log('[NFT] SPL Token not available:', splErr.message);
   }
+  
+  // cNFT is available if we have basic Solana support
+  // We use raw instructions instead of UMI SDK
+  cNFTAvailable = true;
+  console.log('[NFT] cNFT support enabled (raw instructions mode)');
 } catch (e) {
   console.log('[NFT] Solana libraries not available:', e.message);
 }
@@ -97,14 +111,87 @@ const APP_IDENTITY = {
 let TOKEN_METADATA_PROGRAM_ID = null;
 
 // NFT Minting Fees (in USD)
+// Pricing tiers based on NFT type and storage option
+
+// ============================================================================
+// PROMOTIONAL PRICING - 30 DAY LAUNCH SPECIAL
+// ============================================================================
+const PROMO_START_DATE = new Date('2026-01-24T00:00:00Z'); // Launch date (starts tomorrow)
+const PROMO_DURATION_DAYS = 30;
+const PROMO_END_DATE = new Date(PROMO_START_DATE.getTime() + PROMO_DURATION_DAYS * 24 * 60 * 60 * 1000);
+
+// Check if promotion is active
+export const isPromoActive = () => {
+  const now = new Date();
+  return now >= PROMO_START_DATE && now < PROMO_END_DATE;
+};
+
+// Get days remaining in promotion
+export const getPromoDaysRemaining = () => {
+  const now = new Date();
+  if (now >= PROMO_END_DATE) return 0;
+  return Math.ceil((PROMO_END_DATE - now) / (24 * 60 * 60 * 1000));
+};
+
+// PROMOTIONAL FEES (first 30 days)
+const PROMO_FEES = {
+  // Standard NFT fees (promo)
+  APP_COMMISSION_STANDARD_IPFS_USD: 0.50,    // Standard + IPFS (promo)
+  APP_COMMISSION_STANDARD_CLOUD_USD: 0.20,   // Standard + StealthCloud (promo)
+  // Compressed NFT fees (promo) - super cheap launch pricing!
+  APP_COMMISSION_CNFT_IPFS_USD: 0.05,        // cNFT + IPFS (promo)
+  APP_COMMISSION_CNFT_CLOUD_USD: 0.02,       // cNFT + StealthCloud (promo)
+};
+
+// REGULAR FEES (after promotion ends)
+const REGULAR_FEES = {
+  // Standard NFT fees (regular)
+  APP_COMMISSION_STANDARD_IPFS_USD: 1.00,    // Standard + IPFS = $1.00
+  APP_COMMISSION_STANDARD_CLOUD_USD: 0.50,   // Standard + StealthCloud = $0.50
+  // Compressed NFT fees (regular) - 10x promo price
+  APP_COMMISSION_CNFT_IPFS_USD: 0.50,        // cNFT + IPFS = $0.50
+  APP_COMMISSION_CNFT_CLOUD_USD: 0.20,       // cNFT + StealthCloud = $0.20
+};
+
+// Get current fees based on promo status
+export const getCurrentFees = () => {
+  return isPromoActive() ? PROMO_FEES : REGULAR_FEES;
+};
+
 export const NFT_FEES = {
-  ARWEAVE_UPLOAD_BASE: 0.01,      // Base Arweave upload cost (varies by size)
+  // Storage costs (unchanged)
+  ARWEAVE_UPLOAD_BASE: 0.01,      // Base IPFS/Arweave upload cost (varies by size)
   ARWEAVE_PER_KB: 0.00001,        // Per KB upload cost
+  
+  // Standard NFT on-chain costs (expensive)
   SOLANA_RENT: 0.002,             // Solana rent-exempt minimum (~0.002 SOL)
   METAPLEX_FEE: 0.01,             // Metaplex protocol fee
-  APP_COMMISSION_IPFS_USD: 0.50,  // PhotoLynk commission for IPFS storage
-  APP_COMMISSION_CLOUD_USD: 0.20, // PhotoLynk commission for StealthCloud storage (discounted)
-  APP_COMMISSION_PERCENT: 5,      // Alternative: 5% of total cost
+  
+  // Compressed NFT on-chain costs (99.99% cheaper)
+  CNFT_TRANSACTION_FEE: 0.000005, // cNFT only costs transaction fee (~$0.001)
+  
+  // Dynamic PhotoLynk commission - uses promo or regular based on date
+  get APP_COMMISSION_STANDARD_IPFS_USD() { return getCurrentFees().APP_COMMISSION_STANDARD_IPFS_USD; },
+  get APP_COMMISSION_STANDARD_CLOUD_USD() { return getCurrentFees().APP_COMMISSION_STANDARD_CLOUD_USD; },
+  get APP_COMMISSION_CNFT_IPFS_USD() { return getCurrentFees().APP_COMMISSION_CNFT_IPFS_USD; },
+  get APP_COMMISSION_CNFT_CLOUD_USD() { return getCurrentFees().APP_COMMISSION_CNFT_CLOUD_USD; },
+  
+  // Legacy aliases (for backward compatibility)
+  get APP_COMMISSION_IPFS_USD() { return getCurrentFees().APP_COMMISSION_STANDARD_IPFS_USD; },
+  get APP_COMMISSION_CLOUD_USD() { return getCurrentFees().APP_COMMISSION_STANDARD_CLOUD_USD; },
+  get APP_COMMISSION_CNFT_USD() { return getCurrentFees().APP_COMMISSION_CNFT_IPFS_USD; },
+  APP_COMMISSION_PERCENT: 5,
+};
+
+// PhotoLynk shared Merkle Tree for compressed NFTs
+// This tree is pre-created and shared by all PhotoLynk users for maximum cost efficiency
+// Tree specs: maxDepth=20 (1M+ NFTs), maxBufferSize=64, public=true
+export const PHOTOLYNK_MERKLE_TREE = '7qSKB5q1JMmsGx2cHzAJPxvjzXCbAfpWNDTKDM3tSunS'; // PhotoLynk shared Merkle tree on mainnet
+
+// cNFT minting mode
+export const CNFT_MODE = {
+  ENABLED: true,           // Use cNFTs by default (99.99% cheaper)
+  FALLBACK_TO_REGULAR: true, // Fall back to regular NFTs if cNFT fails
 };
 
 // Storage options for NFT images
@@ -141,6 +228,7 @@ let connection = null;
 let cachedSolPrice = null;
 let solPriceLastFetch = 0;
 const SOL_PRICE_CACHE_MS = 60000;
+const SOL_PRICE_STORAGE_KEY = 'photolynk_sol_price';
 
 // Local NFT storage - using FileSystem instead of SecureStore to avoid 2KB limit
 const NFT_STORAGE_KEY = 'photolynk_nfts';
@@ -332,31 +420,65 @@ export const initializeNFT = async () => {
  */
 export const fetchSolPrice = async () => {
   const now = Date.now();
-  if (cachedSolPrice && (now - solPriceLastFetch) < SOL_PRICE_CACHE_MS) {
+  if (cachedSolPrice && cachedSolPrice > 10 && (now - solPriceLastFetch) < SOL_PRICE_CACHE_MS) {
+    console.log('[NFT] Using cached SOL price:', cachedSolPrice);
     return cachedSolPrice;
+  }
+  
+  // Try to load persisted price if no memory cache
+  if (!cachedSolPrice) {
+    try {
+      const stored = await SecureStore.getItemAsync(SOL_PRICE_STORAGE_KEY);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (parsed.price > 0) {
+          cachedSolPrice = parsed.price;
+          console.log('[NFT] Loaded persisted SOL price:', cachedSolPrice);
+        }
+      }
+    } catch (e) {
+      console.log('[NFT] Could not load persisted price:', e.message);
+    }
   }
   
   const priceApis = [
     { name: 'CoinGecko', url: 'https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd', extract: (d) => d?.solana?.usd },
     { name: 'Binance', url: 'https://api.binance.com/api/v3/ticker/price?symbol=SOLUSDT', extract: (d) => parseFloat(d?.price) },
     { name: 'CoinCap', url: 'https://api.coincap.io/v2/assets/solana', extract: (d) => parseFloat(d?.data?.priceUsd) },
+    { name: 'Jupiter', url: 'https://price.jup.ag/v4/price?ids=SOL', extract: (d) => d?.data?.SOL?.price },
   ];
   
   for (const api of priceApis) {
     try {
+      console.log('[NFT] Fetching SOL price from', api.name);
       const response = await axios.get(api.url, { timeout: 8000 });
       const price = api.extract(response.data);
       if (price && typeof price === 'number' && price > 0) {
         cachedSolPrice = price;
         solPriceLastFetch = now;
+        console.log('[NFT] SOL price from', api.name + ':', price);
+        // Persist successful price for future fallback
+        try {
+          await SecureStore.setItemAsync(SOL_PRICE_STORAGE_KEY, JSON.stringify({ price, timestamp: now }));
+        } catch (e) {
+          console.log('[NFT] Could not persist price:', e.message);
+        }
         return price;
       }
+      console.log('[NFT]', api.name, 'returned invalid price:', price);
     } catch (e) {
-      // Continue to next API
+      console.log('[NFT]', api.name, 'failed:', e.message);
     }
   }
   
-  return cachedSolPrice || 150; // Fallback
+  // Fallback to last stored price if all APIs fail
+  if (cachedSolPrice && cachedSolPrice > 0) {
+    console.log('[NFT] All price APIs failed, using last stored price:', cachedSolPrice);
+    return cachedSolPrice;
+  }
+  
+  console.error('[NFT] All price APIs failed and no stored price available');
+  return null;
 };
 
 /**
@@ -452,6 +574,19 @@ export const extractExifForNFT = (asset, info) => {
  */
 export const stripExifFromImage = async (filePath) => {
   try {
+    // Validate file path
+    if (!filePath) {
+      console.log('[NFT] No file path provided for EXIF stripping');
+      return { success: false, error: 'No image file provided' };
+    }
+    
+    // Check if file exists
+    const fileInfo = await FileSystem.getInfoAsync(filePath);
+    if (!fileInfo.exists) {
+      console.log('[NFT] File does not exist:', filePath);
+      return { success: false, error: 'File not found' };
+    }
+    
     // Read the original image as base64
     const originalBase64 = await FileSystem.readAsStringAsync(filePath, {
       encoding: FileSystem.EncodingType.Base64,
@@ -489,6 +624,168 @@ export const stripExifFromImage = async (filePath) => {
     };
   } catch (e) {
     console.error('[NFT] EXIF stripping failed:', e.message);
+    return { success: false, error: e.message };
+  }
+};
+
+// ============================================================================
+// THUMBNAIL GENERATION
+// ============================================================================
+
+const THUMBNAIL_SIZE = 400; // 400x400 max dimension for gallery thumbnails
+
+/**
+ * Generate a thumbnail from an image file
+ * @param {string} imagePath - Path to the original image
+ * @returns {Object} { success, thumbnailPath, error }
+ */
+const generateThumbnail = async (imagePath) => {
+  try {
+    console.log('[NFT] Generating thumbnail from:', imagePath);
+    
+    // Validate image path
+    if (!imagePath) {
+      console.log('[NFT] No image path provided for thumbnail');
+      return { success: false, error: 'No image file provided' };
+    }
+    
+    // Check if file exists
+    const fileInfo = await FileSystem.getInfoAsync(imagePath);
+    if (!fileInfo.exists) {
+      console.log('[NFT] Image file does not exist:', imagePath);
+      return { success: false, error: 'Image file not found' };
+    }
+    
+    // Resize image to max 400x400 while maintaining aspect ratio
+    const result = await ImageManipulator.manipulateAsync(
+      imagePath,
+      [{ resize: { width: THUMBNAIL_SIZE, height: THUMBNAIL_SIZE } }],
+      { compress: 0.7, format: ImageManipulator.SaveFormat.JPEG }
+    );
+    
+    console.log('[NFT] Thumbnail generated:', result.uri, 'size:', result.width, 'x', result.height);
+    return { success: true, thumbnailPath: result.uri };
+  } catch (e) {
+    console.error('[NFT] Thumbnail generation failed:', e.message);
+    return { success: false, error: e.message };
+  }
+};
+
+/**
+ * Upload thumbnail to StealthCloud
+ * @param {string} thumbnailPath - Path to thumbnail file
+ * @param {string} nftName - NFT name for filename
+ * @param {Object} config - Server config
+ * @returns {Object} { success, thumbnailUrl, error }
+ */
+const uploadThumbnailToStealthCloud = async (thumbnailPath, nftName, config) => {
+  try {
+    if (!config?.baseUrl) {
+      return { success: false, error: 'No server config' };
+    }
+    
+    // Get auth headers
+    let headers = {};
+    if (typeof config.getAuthHeaders === 'function') {
+      const authConfig = await config.getAuthHeaders();
+      headers = authConfig?.headers || authConfig || {};
+    } else if (config.headers) {
+      headers = config.headers;
+    }
+    
+    if (!headers.Authorization) {
+      return { success: false, error: 'Not authenticated' };
+    }
+    
+    // Ensure device UUID header is present (server requires X-Device-UUID)
+    if (!headers['X-Device-UUID'] && !headers['x-device-uuid']) {
+      try {
+        const storedUuid = await SecureStore.getItemAsync('device_uuid');
+        if (storedUuid) {
+          headers['X-Device-UUID'] = storedUuid;
+        }
+      } catch (e) {
+        // ignore
+      }
+
+      if (!headers['X-Device-UUID']) {
+        try {
+          const email = await SecureStore.getItemAsync('user_email');
+          const password = await SecureStore.getItemAsync(SAVED_PASSWORD_KEY);
+          if (email && password) {
+            const derived = await getDeviceUUID(email, password);
+            if (derived) headers['X-Device-UUID'] = derived;
+          }
+        } catch (e) {
+          // ignore
+        }
+      }
+
+      if (!headers['X-Device-UUID']) {
+        return { success: false, error: 'Device UUID missing' };
+      }
+    }
+    
+    // Read thumbnail as base64
+    const fileBase64 = await FileSystem.readAsStringAsync(thumbnailPath, {
+      encoding: FileSystem.EncodingType.Base64,
+    });
+    
+    // Generate unique filename
+    const timestamp = Date.now();
+    const safeName = (nftName || 'nft').replace(/[^a-zA-Z0-9]/g, '_').substring(0, 30);
+    const filename = `thumb_${safeName}_${timestamp}.jpg`;
+    
+    // Decode base64 to binary for multipart upload
+    const binaryStr = atob(fileBase64);
+    const bytes = new Uint8Array(binaryStr.length);
+    for (let i = 0; i < binaryStr.length; i++) {
+      bytes[i] = binaryStr.charCodeAt(i);
+    }
+    
+    // Build multipart form data (same format as main image upload)
+    const boundary = '----FormBoundary' + Math.random().toString(36).substring(2);
+    const headerStr = [
+      `--${boundary}\r\n`,
+      `Content-Disposition: form-data; name="image"; filename="${filename}"\r\n`,
+      `Content-Type: image/jpeg\r\n\r\n`,
+    ].join('');
+    const footerStr = `\r\n--${boundary}--\r\n`;
+    
+    const headerBytes = new TextEncoder().encode(headerStr);
+    const footerBytes = new TextEncoder().encode(footerStr);
+    
+    const body = new Uint8Array(headerBytes.length + bytes.length + footerBytes.length);
+    body.set(headerBytes, 0);
+    body.set(bytes, headerBytes.length);
+    body.set(footerBytes, headerBytes.length + bytes.length);
+    
+    // Upload to StealthCloud NFT endpoint using multipart form-data
+    const response = await fetch(`${config.baseUrl}/api/nft/upload`, {
+      method: 'POST',
+      headers: {
+        ...headers,
+        'Content-Type': `multipart/form-data; boundary=${boundary}`,
+      },
+      body: body,
+    });
+    
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.error || `Upload failed: ${response.status}`);
+    }
+    
+    const result = await response.json();
+    
+    if (result.success) {
+      const thumbnailUrl = `${config.baseUrl}${result.fallbackUrl}`;
+      console.log('[NFT] Thumbnail uploaded to StealthCloud:', thumbnailUrl);
+      return { success: true, thumbnailUrl };
+    }
+    
+    throw new Error(result.error || 'Upload failed');
+  } catch (e) {
+    console.error('[NFT] Thumbnail upload failed:', e.message);
     return { success: false, error: e.message };
   }
 };
@@ -846,7 +1143,36 @@ const uploadToPinata = async (filePath, contentType) => {
 // ============================================================================
 
 /**
- * Build Metaplex-compatible NFT metadata
+ * Compute SHA256 hash of file content for integrity proof
+ * This creates a cryptographic commitment that anchors the NFT to the actual file
+ * @param {string} filePath - Path to the file
+ * @returns {Promise<string>} SHA256 hash as hex string
+ */
+export const computeContentHash = async (filePath) => {
+  try {
+    // Read file as base64
+    const base64Content = await FileSystem.readAsStringAsync(filePath, {
+      encoding: FileSystem.EncodingType.Base64,
+    });
+    
+    // Decode base64 to binary string for hashing
+    const binaryString = atob(base64Content);
+    
+    // Compute SHA256 hash
+    const hash = sha256(binaryString);
+    
+    console.log('[NFT] Computed content hash:', hash.substring(0, 16) + '...');
+    return hash;
+  } catch (e) {
+    console.error('[NFT] Failed to compute content hash:', e);
+    return null;
+  }
+};
+
+/**
+ * Build Metaplex-compatible NFT metadata with content integrity proof
+ * The content hash creates a cryptographic anchor proving this NFT represents
+ * a specific file, making it verifiable on-chain storage proof
  * @param {Object} params - NFT parameters
  * @returns {Object} Metaplex metadata JSON
  */
@@ -857,18 +1183,25 @@ export const buildNFTMetadata = ({
   ownerAddress,
   exifData,
   creatorAddress,
+  contentHash, // SHA256 hash of original file for integrity proof
+  fileSize, // Original file size in bytes
   royaltyBasisPoints = 500, // 5% royalty
 }) => {
   const metadata = {
     name: name || 'PhotoLynk Photo NFT',
     symbol: PHOTOLYNK_COLLECTION.symbol,
-    description: description || 'Photo NFT minted with PhotoLynk on Solana Seeker',
+    description: description || 'Encrypted photo backup with on-chain integrity proof anchored via SHA-256 hash NFT.',
     image: imageUrl,
     external_url: 'https://stealthlynk.io',
     
-    // Metaplex attributes
+    // Metaplex attributes - content integrity proof for Solana Mobile Season 2
+    // Ownership is on-chain via token account - NOT duplicated in metadata
     attributes: [
-      { trait_type: 'NFT Owner', value: ownerAddress },
+      // CRITICAL: Content Integrity Proof - anchors NFT to actual file
+      ...(contentHash ? [{ trait_type: 'Content Hash', value: `SHA256:${contentHash}` }] : []),
+      ...(contentHash ? [{ trait_type: 'Hash Scope', value: 'Original plaintext before encryption' }] : []),
+      ...(fileSize ? [{ trait_type: 'Original Size', value: `${fileSize} bytes` }] : []),
+      { trait_type: 'Proof Type', value: 'Storage Integrity' },
       { trait_type: 'Minted With', value: 'PhotoLynk' },
       { trait_type: 'Platform', value: 'Solana Seeker' },
     ],
@@ -966,9 +1299,10 @@ export const uploadMetadataToArweave = async (metadata) => {
  * Estimate total NFT minting cost
  * @param {number} imageSizeBytes - Image file size
  * @param {string} storageOption - 'ipfs' or 'cloud' (optional, defaults to 'ipfs')
+ * @param {boolean} useCompressed - Use compressed NFT (cNFT) pricing (default: true)
  * @returns {Object} Cost breakdown
  */
-export const estimateNFTMintCost = async (imageSizeBytes, storageOption = 'ipfs') => {
+export const estimateNFTMintCost = async (imageSizeBytes, storageOption = 'ipfs', useCompressed = true) => {
   const solPrice = await fetchSolPrice();
   
   // Storage upload cost (image + metadata)
@@ -979,15 +1313,29 @@ export const estimateNFTMintCost = async (imageSizeBytes, storageOption = 'ipfs'
     : await estimateArweaveUploadCost(imageSizeBytes);
   const metadataUploadCost = await estimateArweaveUploadCost(2000); // ~2KB metadata (always IPFS)
   
-  // Solana costs
-  const solanaRentSol = 0.00203928; // Rent-exempt minimum for token account
-  const metaplexFeeSol = 0.01; // Metaplex fee
-  const transactionFeeSol = 0.000005; // Transaction fee
+  // Solana costs - MUCH cheaper for cNFTs
+  let solanaRentSol, metaplexFeeSol, transactionFeeSol, appCommissionUsd;
   
-  // App commission - lower for StealthCloud users
-  const appCommissionUsd = useCloud 
-    ? NFT_FEES.APP_COMMISSION_CLOUD_USD 
-    : NFT_FEES.APP_COMMISSION_IPFS_USD;
+  if (useCompressed && cNFTAvailable) {
+    // Compressed NFT (cNFT) - 99.99% cheaper!
+    solanaRentSol = 0;                    // No rent for cNFTs (stored in Merkle tree)
+    metaplexFeeSol = 0;                   // No Metaplex fee for cNFTs
+    transactionFeeSol = NFT_FEES.CNFT_TRANSACTION_FEE; // ~0.000005 SOL
+    appCommissionUsd = useCloud 
+      ? NFT_FEES.APP_COMMISSION_CNFT_CLOUD_USD   // cNFT + StealthCloud = $0.02
+      : NFT_FEES.APP_COMMISSION_CNFT_IPFS_USD;   // cNFT + IPFS = $0.05
+  } else {
+    // Standard NFT (Token Metadata Legacy)
+    // On-chain: ~0.02 SOL (rent + Metaplex) + tx fee + app commission
+    solanaRentSol = 0.008;                // Mint + ATA + account rent
+    metaplexFeeSol = 0.012;               // Metadata + Master Edition fees
+    transactionFeeSol = 0.000005;         // Transaction fee
+    // App commission is ADDITIONAL (sent to PhotoLynk wallet)
+    appCommissionUsd = useCloud 
+      ? NFT_FEES.APP_COMMISSION_STANDARD_CLOUD_USD  // Standard + StealthCloud = $0.20
+      : NFT_FEES.APP_COMMISSION_STANDARD_IPFS_USD;  // Standard + IPFS = $0.50
+  }
+  
   const appCommissionSol = appCommissionUsd / solPrice;
   
   // Total
@@ -1002,6 +1350,7 @@ export const estimateNFTMintCost = async (imageSizeBytes, storageOption = 'ipfs'
   const totalUsd = totalSol * solPrice;
   
   return {
+    isCompressed: useCompressed && cNFTAvailable,
     breakdown: {
       arweaveImage: { sol: imageUploadCost.arweaveSol, usd: imageUploadCost.arweaveUsd },
       arweaveMetadata: { sol: metadataUploadCost.arweaveSol, usd: metadataUploadCost.arweaveUsd },
@@ -1021,6 +1370,232 @@ export const estimateNFTMintCost = async (imageSizeBytes, storageOption = 'ipfs'
 };
 
 // ============================================================================
+// COMPRESSED NFT (cNFT) MINTING - 99.99% CHEAPER
+// ============================================================================
+
+/**
+ * Mint a compressed NFT (cNFT) using raw Bubblegum instructions
+ * This is ~99.99% cheaper than regular NFTs
+ * No UMI dependency - uses raw Solana instructions for React Native compatibility
+ * @param {Object} params - Minting parameters
+ * @returns {Object} { success, assetId, txSignature, error }
+ */
+const mintCompressedNFT = async ({
+  ownerPubkey,
+  ownerAddressStr,
+  nftName,
+  nftDescription,
+  metadataUrl,
+  imageUrl,
+  wallet,
+}) => {
+  if (!cNFTAvailable) {
+    throw new Error('Compressed NFT support not available');
+  }
+  
+  console.log('[cNFT] Starting compressed NFT mint (raw instructions mode)...');
+  
+  try {
+    const { blockhash } = await connection.getLatestBlockhash('confirmed');
+    
+    // Build the mintV1 instruction using Bubblegum
+    // The tree must be public for anyone to mint to it
+    const merkleTreePubkey = new PublicKey(PHOTOLYNK_MERKLE_TREE);
+    
+    // Bubblegum Program ID
+    const BUBBLEGUM_PROGRAM_ID = new PublicKey('BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY');
+    const SPL_NOOP_PROGRAM_ID = new PublicKey('noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV');
+    const SPL_ACCOUNT_COMPRESSION_PROGRAM_ID = new PublicKey('cmtDvXumGCrqC1Age74AVPhSRVXJMd8PJS91L8KbNCK');
+    
+    // Derive tree config PDA
+    const [treeConfig] = PublicKey.findProgramAddressSync(
+      [merkleTreePubkey.toBuffer()],
+      BUBBLEGUM_PROGRAM_ID
+    );
+    
+    // Derive bubblegum signer PDA
+    const [bubblegumSigner] = PublicKey.findProgramAddressSync(
+      [Buffer.from('collection_cpi')],
+      BUBBLEGUM_PROGRAM_ID
+    );
+    
+    // Build metadata for the cNFT
+    const metadataArgs = {
+      name: nftName.slice(0, 32),
+      symbol: 'PLNK',
+      uri: metadataUrl,
+      sellerFeeBasisPoints: 500, // 5%
+      primarySaleHappened: false,
+      isMutable: true,
+      editionNonce: null,
+      tokenStandard: null,
+      collection: null,
+      uses: null,
+      tokenProgramVersion: 0, // Original
+      creators: [{
+        address: ownerPubkey,
+        verified: false,
+        share: 100,
+      }],
+    };
+    
+    // Serialize metadata args for the instruction
+    // This is a simplified version - in production, use proper borsh serialization
+    const metadataBuffer = serializeMetadataArgs(metadataArgs);
+    
+    // Build mintV1 instruction using proper TransactionInstruction
+    // Discriminator is 8 bytes: [145, 98, 192, 118, 184, 147, 118, 104]
+    const MINT_V1_DISCRIMINATOR = new Uint8Array([145, 98, 192, 118, 184, 147, 118, 104]);
+    
+    // Combine discriminator and metadata into single Uint8Array
+    const instructionData = new Uint8Array(MINT_V1_DISCRIMINATOR.length + metadataBuffer.length);
+    instructionData.set(MINT_V1_DISCRIMINATOR, 0);
+    instructionData.set(metadataBuffer, MINT_V1_DISCRIMINATOR.length);
+    
+    const mintV1Instruction = new TransactionInstruction({
+      keys: [
+        { pubkey: treeConfig, isSigner: false, isWritable: true },      // 0: treeConfig
+        { pubkey: ownerPubkey, isSigner: false, isWritable: false },    // 1: leafOwner
+        { pubkey: ownerPubkey, isSigner: false, isWritable: false },    // 2: leafDelegate
+        { pubkey: merkleTreePubkey, isSigner: false, isWritable: true },// 3: merkleTree
+        { pubkey: ownerPubkey, isSigner: true, isWritable: true },      // 4: payer
+        { pubkey: ownerPubkey, isSigner: true, isWritable: false },     // 5: treeCreatorOrDelegate
+        { pubkey: SPL_NOOP_PROGRAM_ID, isSigner: false, isWritable: false }, // 6: logWrapper
+        { pubkey: SPL_ACCOUNT_COMPRESSION_PROGRAM_ID, isSigner: false, isWritable: false }, // 7: compressionProgram
+        { pubkey: SystemProgram.programId, isSigner: false, isWritable: false }, // 8: systemProgram
+      ],
+      programId: BUBBLEGUM_PROGRAM_ID,
+      data: instructionData,
+    });
+    
+    // App commission transfer (much smaller for cNFTs)
+    const commissionLamports = Math.ceil(NFT_FEES.APP_COMMISSION_CNFT_USD / (await fetchSolPrice()) * LAMPORTS_PER_SOL);
+    const commissionInstruction = SystemProgram.transfer({
+      fromPubkey: ownerPubkey,
+      toPubkey: new PublicKey(NFT_COMMISSION_WALLET),
+      lamports: commissionLamports,
+    });
+    
+    // Build transaction
+    const messageV0 = new TransactionMessage({
+      payerKey: ownerPubkey,
+      recentBlockhash: blockhash,
+      instructions: [mintV1Instruction, commissionInstruction],
+    }).compileToV0Message();
+    
+    const transaction = new VersionedTransaction(messageV0);
+    
+    // Sign and send via wallet
+    const signatures = await wallet.signAndSendTransactions({
+      transactions: [transaction],
+    });
+    
+    const txSignature = signatures[0];
+    console.log('[cNFT] Transaction signature:', txSignature);
+    
+    // For cNFTs, the asset ID is derived from the tree and leaf index
+    // We'll need to parse the transaction to get the leaf index
+    // For now, use a placeholder that can be resolved later
+    const assetId = `cnft_${txSignature.slice(0, 16)}`;
+    
+    return {
+      success: true,
+      assetId,
+      txSignature,
+      isCompressed: true,
+      merkleTree: PHOTOLYNK_MERKLE_TREE,
+    };
+  } catch (e) {
+    console.error('[cNFT] Minting failed:', e);
+    throw e;
+  }
+};
+
+/**
+ * Serialize metadata args for Bubblegum mintV1 instruction
+ * Follows exact borsh format from @metaplex-foundation/mpl-bubblegum
+ * 
+ * MetadataArgs structure:
+ * - name: string (4 byte length + data)
+ * - symbol: string
+ * - uri: string  
+ * - sellerFeeBasisPoints: u16
+ * - primarySaleHappened: bool
+ * - isMutable: bool
+ * - editionNonce: Option<u8> (0 for None, 1 + value for Some)
+ * - tokenStandard: Option<TokenStandard> (should be Some(NonFungible) = 1 + 0)
+ * - collection: Option<Collection> (0 for None)
+ * - uses: Option<Uses> (0 for None)
+ * - tokenProgramVersion: enum (0 = Original)
+ * - creators: Vec<Creator>
+ */
+const serializeMetadataArgs = (args) => {
+  const buffers = [];
+  
+  // Helper to write string (4 byte length + data)
+  const writeString = (str) => {
+    const bytes = Buffer.from(str || '');
+    const lenBuf = Buffer.alloc(4);
+    lenBuf.writeUInt32LE(bytes.length);
+    buffers.push(lenBuf, bytes);
+  };
+  
+  // Name
+  writeString(args.name);
+  
+  // Symbol
+  writeString(args.symbol || '');
+  
+  // URI
+  writeString(args.uri);
+  
+  // Seller fee basis points (u16)
+  const feeBuf = Buffer.alloc(2);
+  feeBuf.writeUInt16LE(args.sellerFeeBasisPoints);
+  buffers.push(feeBuf);
+  
+  // Primary sale happened (bool)
+  buffers.push(Buffer.from([args.primarySaleHappened ? 1 : 0]));
+  
+  // Is mutable (bool)
+  buffers.push(Buffer.from([args.isMutable ? 1 : 0]));
+  
+  // Edition nonce (Option<u8>): None = 0
+  buffers.push(Buffer.from([0]));
+  
+  // Token standard (Option<TokenStandard>): Some(NonFungible) = 1 + 0
+  // TokenStandard enum: NonFungible = 0, FungibleAsset = 1, Fungible = 2, NonFungibleEdition = 3
+  buffers.push(Buffer.from([1, 0])); // Some(NonFungible)
+  
+  // Collection (Option<Collection>): None = 0
+  buffers.push(Buffer.from([0]));
+  
+  // Uses (Option<Uses>): None = 0
+  buffers.push(Buffer.from([0]));
+  
+  // Token program version (enum: 0 = Original, 1 = Token2022)
+  buffers.push(Buffer.from([args.tokenProgramVersion || 0]));
+  
+  // Creators (Vec<Creator>): 4 byte length + array of Creator
+  const creatorsLenBuf = Buffer.alloc(4);
+  creatorsLenBuf.writeUInt32LE(args.creators.length);
+  buffers.push(creatorsLenBuf);
+  
+  for (const creator of args.creators) {
+    // Creator: address (32 bytes) + verified (bool) + share (u8)
+    const addressBuffer = typeof creator.address === 'string' 
+      ? new PublicKey(creator.address).toBuffer()
+      : creator.address.toBuffer();
+    buffers.push(addressBuffer);
+    buffers.push(Buffer.from([creator.verified ? 1 : 0]));
+    buffers.push(Buffer.from([creator.share]));
+  }
+  
+  // Return as Uint8Array for proper serialization with Mobile Wallet Adapter
+  return new Uint8Array(Buffer.concat(buffers));
+};
+
+// ============================================================================
 // NFT MINTING
 // ============================================================================
 
@@ -1036,6 +1611,7 @@ export const mintPhotoNFT = async ({
   description,     // NFT description
   stripExif,       // Remove EXIF data for privacy
   storageOption,   // 'ipfs' or 'cloud' (StealthCloud)
+  nftType = 'compressed', // 'compressed' or 'standard' - defaults to compressed
   serverConfig,    // Server config for StealthCloud { baseUrl, headers }
   onProgress,      // Progress callback (0-1)
   onStatus,        // Status callback
@@ -1044,119 +1620,307 @@ export const mintPhotoNFT = async ({
     return { success: false, error: 'Solana not available' };
   }
   
+  // Validate required parameters
+  if (!filePath) {
+    console.error('[NFT] No file path provided');
+    return { success: false, error: 'No image file provided' };
+  }
+  
   try {
     onStatus?.('Preparing NFT...');
     onProgress?.(0.05);
+    
+    // Validate file exists
+    const fileInfo = await FileSystem.getInfoAsync(filePath);
+    if (!fileInfo.exists) {
+      console.error('[NFT] File does not exist:', filePath);
+      return { success: false, error: 'Image file not found' };
+    }
+    const fileSize = fileInfo.size || 0;
+    console.log('[NFT] File validated:', filePath, 'size:', fileSize);
     
     // Get asset info for EXIF
     const info = await MediaLibrary.getAssetInfoAsync(asset.id);
     const exifData = extractExifForNFT(asset, info);
     
-    // Get file size
-    const fileInfo = await FileSystem.getInfoAsync(filePath);
-    const fileSize = fileInfo.size || 0;
-    
     onStatus?.('Estimating costs...');
     onProgress?.(0.1);
     
-    // Estimate costs
-    const costEstimate = await estimateNFTMintCost(fileSize);
-    console.log('[NFT] Cost estimate:', costEstimate.total);
+    // Estimate costs with correct storage option and NFT type
+    const useCompressed = nftType === 'compressed';
+    const costEstimate = await estimateNFTMintCost(fileSize, storageOption, useCompressed);
+    console.log('[NFT] Cost estimate:', costEstimate.total, 'storage:', storageOption, 'compressed:', useCompressed);
     
+    // ========== STEP 1: Get wallet address first (quick session) ==========
     onStatus?.('Connecting wallet...');
     onProgress?.(0.15);
     
-    // Execute minting via Mobile Wallet Adapter
-    const result = await transact(async (wallet) => {
-      // Authorize wallet
-      console.log('[NFT] Authorizing wallet...');
+    // First transact session - just get the address
+    let ownerAddressStr;
+    let ownerPubkey;
+    
+    await transact(async (wallet) => {
+      console.log('[NFT] Authorizing wallet to get address...');
       const authResult = await wallet.authorize({
         cluster: 'mainnet-beta',
         identity: APP_IDENTITY,
       });
       
-      console.log('[NFT] Auth result accounts:', authResult.accounts?.length);
-      
-      // Get owner's public key
       const ownerAddress = authResult.accounts[0].address;
-      console.log('[NFT] Owner address raw:', ownerAddress);
-      
       const ownerBytes = typeof ownerAddress === 'string'
         ? Uint8Array.from(atob(ownerAddress), c => c.charCodeAt(0))
         : new Uint8Array(ownerAddress);
-      const ownerPubkey = new PublicKey(ownerBytes);
-      const ownerAddressStr = ownerPubkey.toBase58();
-      
+      ownerPubkey = new PublicKey(ownerBytes);
+      ownerAddressStr = ownerPubkey.toBase58();
       console.log('[NFT] Owner address (base58):', ownerAddressStr);
+    });
+    
+    // ========== STEP 2: Do all uploads OUTSIDE wallet session ==========
+    // Handle EXIF stripping if requested
+    let uploadFilePath = filePath;
+    let cleanupTempFile = null;
+    
+    if (stripExif) {
+      onStatus?.('Removing private data...');
+      onProgress?.(0.2);
       
-        // Handle EXIF stripping if requested
-      let uploadFilePath = filePath;
-      let cleanupTempFile = null;
+      const stripResult = await stripExifFromImage(filePath);
+      if (stripResult.success && stripResult.stripped) {
+        uploadFilePath = stripResult.cleanPath;
+        cleanupTempFile = stripResult.cleanPath;
+        console.log('[NFT] Using EXIF-stripped image');
+      } else {
+        console.log('[NFT] EXIF stripping skipped or failed, using original');
+      }
+    }
+    
+    // Upload image based on storage option
+    const useStealthCloud = storageOption === NFT_STORAGE_OPTIONS.STEALTHCLOUD && serverConfig;
+    
+    let imageUpload;
+    if (useStealthCloud) {
+      onStatus?.('Uploading to StealthCloud...');
+      onProgress?.(0.25);
+      imageUpload = await uploadToStealthCloud(uploadFilePath, serverConfig);
+    } else {
+      onStatus?.('Uploading to IPFS...');
+      onProgress?.(0.25);
+      imageUpload = await uploadToArweave(uploadFilePath, 'image/jpeg', {
+        'NFT-Owner': ownerAddressStr,
+        'Photo-Date': stripExif ? 'Private' : (exifData.dateTaken || 'Unknown'),
+      });
+    }
+    
+    if (!imageUpload.success) {
+      throw new Error('Image upload failed: ' + imageUpload.error);
+    }
+    
+    console.log(`[NFT] Image uploaded via ${useStealthCloud ? 'StealthCloud' : 'IPFS'}:`, imageUpload.arweaveUrl);
+    
+    // Generate and upload thumbnail to StealthCloud (for fast gallery loading)
+    let thumbnailUrl = null;
+    if (serverConfig) {
+      onStatus?.('Creating thumbnail...');
+      onProgress?.(0.30);
       
-      if (stripExif) {
-        onStatus?.('Removing private data...');
-        onProgress?.(0.2);
-        
-        const stripResult = await stripExifFromImage(filePath);
-        if (stripResult.success && stripResult.stripped) {
-          uploadFilePath = stripResult.cleanPath;
-          cleanupTempFile = stripResult.cleanPath;
-          console.log('[NFT] Using EXIF-stripped image');
-        } else {
-          console.log('[NFT] EXIF stripping skipped or failed, using original');
+      const thumbnailResult = await generateThumbnail(uploadFilePath);
+      if (thumbnailResult.success) {
+        const nftName = name || `PhotoLynk_${Date.now()}`;
+        const uploadResult = await uploadThumbnailToStealthCloud(
+          thumbnailResult.thumbnailPath, 
+          nftName, 
+          serverConfig
+        );
+        if (uploadResult.success) {
+          thumbnailUrl = uploadResult.thumbnailUrl;
+          console.log('[NFT] Thumbnail stored:', thumbnailUrl);
+        }
+      }
+    }
+    
+    onStatus?.('Computing integrity proof...');
+    onProgress?.(0.35);
+    
+    // Compute content hash for integrity proof (CRITICAL for Solana Mobile Season 2)
+    // This creates a cryptographic anchor proving this NFT represents a specific file
+    const contentHash = await computeContentHash(uploadFilePath);
+    
+    onStatus?.('Building metadata...');
+    onProgress?.(0.4);
+    
+    // Build NFT metadata (Metaplex standard) with content integrity proof
+    const nftName = name || `PhotoLynk #${Date.now()}`;
+    const nftDescription = description || 'Encrypted photo backup with on-chain integrity proof';
+    
+    // Build metadata - exclude EXIF if privacy mode is on
+    const metadataExif = stripExif ? null : exifData;
+    
+    const metadata = buildNFTMetadata({
+      name: nftName,
+      description: nftDescription,
+      imageUrl: imageUpload.arweaveUrl,
+      ownerAddress: ownerAddressStr,
+      exifData: metadataExif,
+      creatorAddress: ownerAddressStr,
+      contentHash, // SHA256 integrity proof
+      fileSize, // Original file size
+    });
+    
+    // Upload metadata
+    const metadataUpload = await uploadMetadataToArweave(metadata);
+    if (!metadataUpload.success) {
+      throw new Error('Metadata upload failed: ' + metadataUpload.error);
+    }
+    
+    // ========== STEP 3: Pre-fetch blockhash and SOL price BEFORE wallet session ==========
+    onStatus?.('Creating NFT on Solana...');
+    onProgress?.(0.55);
+    
+    // Pre-fetch everything needed for transaction BEFORE opening wallet session
+    const latestBlockhashResult = await connection.getLatestBlockhash('confirmed');
+    const prefetchedBlockhash = latestBlockhashResult.blockhash;
+    const solPrice = await fetchSolPrice();
+    console.log('[NFT] Pre-fetched blockhash:', prefetchedBlockhash, 'SOL price:', solPrice);
+    
+    // Execute minting via Mobile Wallet Adapter (second session - just for signing)
+    const result = await transact(async (wallet) => {
+      // Re-authorize wallet for signing
+      console.log('[NFT] Re-authorizing wallet for signing...');
+      await wallet.authorize({
+        cluster: 'mainnet-beta',
+        identity: APP_IDENTITY,
+      });
+      
+      // ========== TRY COMPRESSED NFT IF USER SELECTED IT (99.99% CHEAPER) ==========
+      const useCompressedNFT = nftType === 'compressed' && cNFTAvailable;
+      if (useCompressedNFT) {
+        try {
+          console.log('[NFT] Attempting compressed NFT (cNFT) mint (user selected)...');
+          onStatus?.('Minting compressed NFT...');
+          
+          // INLINE cNFT minting to avoid async calls that close the wallet session
+          // All data is pre-fetched before this transact block
+          const merkleTreePubkey = new PublicKey(PHOTOLYNK_MERKLE_TREE);
+          const BUBBLEGUM_PROGRAM_ID = new PublicKey('BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY');
+          const SPL_NOOP_PROGRAM_ID = new PublicKey('noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV');
+          const SPL_ACCOUNT_COMPRESSION_PROGRAM_ID = new PublicKey('cmtDvXumGCrqC1Age74AVPhSRVXJMd8PJS91L8KbNCK');
+          
+          // Derive tree config PDA
+          const [treeConfig] = PublicKey.findProgramAddressSync(
+            [merkleTreePubkey.toBuffer()],
+            BUBBLEGUM_PROGRAM_ID
+          );
+          
+          // Build metadata for the cNFT
+          // Note: creators.address must be base58 string for serialization
+          const metadataArgs = {
+            name: nftName.slice(0, 32),
+            symbol: 'PLNK',
+            uri: metadataUpload.arweaveUrl,
+            sellerFeeBasisPoints: 500,
+            primarySaleHappened: false,
+            isMutable: true,
+            editionNonce: null,
+            tokenStandard: null,
+            collection: null,
+            uses: null,
+            tokenProgramVersion: 0,
+            creators: [{ address: ownerPubkey, verified: true, share: 100 }],
+          };
+          
+          const metadataBuffer = serializeMetadataArgs(metadataArgs);
+          
+          // Build mintV1 instruction using proper TransactionInstruction
+          // Discriminator is 8 bytes: [145, 98, 192, 118, 184, 147, 118, 104]
+          const MINT_V1_DISCRIMINATOR = new Uint8Array([145, 98, 192, 118, 184, 147, 118, 104]);
+          
+          // Combine discriminator and metadata into single Uint8Array
+          const instructionData = new Uint8Array(MINT_V1_DISCRIMINATOR.length + metadataBuffer.length);
+          instructionData.set(MINT_V1_DISCRIMINATOR, 0);
+          instructionData.set(metadataBuffer, MINT_V1_DISCRIMINATOR.length);
+          
+          const mintV1Instruction = new TransactionInstruction({
+            keys: [
+              { pubkey: treeConfig, isSigner: false, isWritable: true },      // 0: treeConfig
+              { pubkey: ownerPubkey, isSigner: false, isWritable: false },    // 1: leafOwner
+              { pubkey: ownerPubkey, isSigner: false, isWritable: false },    // 2: leafDelegate
+              { pubkey: merkleTreePubkey, isSigner: false, isWritable: true },// 3: merkleTree
+              { pubkey: ownerPubkey, isSigner: true, isWritable: true },      // 4: payer
+              { pubkey: ownerPubkey, isSigner: true, isWritable: false },     // 5: treeCreatorOrDelegate
+              { pubkey: SPL_NOOP_PROGRAM_ID, isSigner: false, isWritable: false }, // 6: logWrapper
+              { pubkey: SPL_ACCOUNT_COMPRESSION_PROGRAM_ID, isSigner: false, isWritable: false }, // 7: compressionProgram
+              { pubkey: SystemProgram.programId, isSigner: false, isWritable: false }, // 8: systemProgram
+            ],
+            programId: BUBBLEGUM_PROGRAM_ID,
+            data: instructionData,
+          });
+          
+          // App commission transfer - use pre-fetched SOL price
+          // Sanity check: if solPrice is unreasonably low, use fallback
+          const safeSolPrice = solPrice > 10 ? solPrice : 250;
+          const commissionUsd = useStealthCloud 
+            ? NFT_FEES.APP_COMMISSION_CNFT_CLOUD_USD 
+            : NFT_FEES.APP_COMMISSION_CNFT_IPFS_USD;
+          const commissionLamports = Math.ceil(commissionUsd / safeSolPrice * LAMPORTS_PER_SOL);
+          console.log('[cNFT] Commission:', commissionUsd, 'USD =', commissionLamports, 'lamports at SOL price', safeSolPrice, 'storage:', useStealthCloud ? 'cloud' : 'ipfs');
+          const commissionWalletPubkey = new PublicKey(NFT_COMMISSION_WALLET);
+          console.log('[cNFT] Commission wallet:', NFT_COMMISSION_WALLET);
+          console.log('[cNFT] Commission lamports:', commissionLamports, '(', commissionLamports / LAMPORTS_PER_SOL, 'SOL)');
+          
+          const commissionInstruction = SystemProgram.transfer({
+            fromPubkey: ownerPubkey,
+            toPubkey: commissionWalletPubkey,
+            lamports: commissionLamports,
+          });
+          
+          // Build transaction using pre-fetched blockhash
+          const messageV0 = new TransactionMessage({
+            payerKey: ownerPubkey,
+            recentBlockhash: prefetchedBlockhash,
+            instructions: [mintV1Instruction, commissionInstruction],
+          }).compileToV0Message();
+          
+          const cNFTTransaction = new VersionedTransaction(messageV0);
+          
+          console.log('[cNFT] Sending transaction to wallet for signing...');
+          console.log('[cNFT] Transaction has 2 instructions: mintV1 + commission transfer');
+          console.log('[cNFT] Blockhash:', prefetchedBlockhash);
+          
+          // Sign and send - this is the ONLY await in the wallet session
+          const signatures = await wallet.signAndSendTransactions({
+            transactions: [cNFTTransaction],
+          });
+          
+          const txSignature = signatures[0];
+          console.log('[cNFT] ✅ Transaction SUCCESS:', txSignature);
+          console.log('[cNFT] ✅ Commission of', commissionUsd, 'USD sent to', NFT_COMMISSION_WALLET);
+          
+          // Return immediately from transact - DAS fetch will happen outside
+          return {
+            txSignature,
+            ownerAddress: ownerAddressStr,
+            imageUrl: imageUpload.arweaveUrl,
+            thumbnailUrl,
+            metadataUrl: metadataUpload.arweaveUrl,
+            metadata,
+            isRealNFT: true,
+            isCompressed: true,
+            merkleTree: PHOTOLYNK_MERKLE_TREE,
+            _needsDasLookup: true, // Flag to do DAS lookup after transact
+          };
+        } catch (cNFTError) {
+          console.error('[cNFT] FAILED - Full error:', cNFTError);
+          console.error('[cNFT] Error message:', cNFTError.message);
+          console.error('[cNFT] Error stack:', cNFTError.stack);
+          if (!CNFT_MODE.FALLBACK_TO_REGULAR) {
+            throw cNFTError;
+          }
+          onStatus?.('cNFT failed: ' + cNFTError.message?.slice(0, 50) + '... Falling back to standard NFT');
         }
       }
       
-      // Upload image based on storage option
-      const useStealthCloud = storageOption === NFT_STORAGE_OPTIONS.STEALTHCLOUD && serverConfig;
-      
-      let imageUpload;
-      if (useStealthCloud) {
-        onStatus?.('Uploading to StealthCloud...');
-        onProgress?.(0.25);
-        imageUpload = await uploadToStealthCloud(uploadFilePath, serverConfig);
-      } else {
-        onStatus?.('Uploading to IPFS...');
-        onProgress?.(0.25);
-        imageUpload = await uploadToArweave(uploadFilePath, 'image/jpeg', {
-          'NFT-Owner': ownerAddressStr,
-          'Photo-Date': stripExif ? 'Private' : (exifData.dateTaken || 'Unknown'),
-        });
-      }
-      
-      if (!imageUpload.success) {
-        throw new Error('Image upload failed: ' + imageUpload.error);
-      }
-      
-      console.log(`[NFT] Image uploaded via ${useStealthCloud ? 'StealthCloud' : 'IPFS'}:`, imageUpload.arweaveUrl);
-      
-      onStatus?.('Building metadata...');
-      onProgress?.(0.4);
-      
-      // Build NFT metadata (Metaplex standard)
-      const nftName = name || `PhotoLynk #${Date.now()}`;
-      const nftDescription = description || 'Photo NFT minted with PhotoLynk on Solana Seeker';
-      
-      // Build metadata - exclude EXIF if privacy mode is on
-      const metadataExif = stripExif ? null : exifData;
-      
-      const metadata = buildNFTMetadata({
-        name: nftName,
-        description: nftDescription,
-        imageUrl: imageUpload.arweaveUrl,
-        ownerAddress: ownerAddressStr,
-        exifData: metadataExif,
-        creatorAddress: ownerAddressStr,
-      });
-      
-      // Upload metadata
-      const metadataUpload = await uploadMetadataToArweave(metadata);
-      if (!metadataUpload.success) {
-        throw new Error('Metadata upload failed: ' + metadataUpload.error);
-      }
-      
-      onStatus?.('Creating NFT on Solana...');
-      onProgress?.(0.55);
+      // ========== STANDARD NFT (user selected or fallback) ==========
+      console.log('[NFT] Using standard NFT minting (nftType:', nftType, ')...');
       
       // Metaplex Token Metadata Program ID
       const TOKEN_METADATA_PROGRAM_ID = new PublicKey('metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s');
@@ -1284,6 +2048,8 @@ export const mintPhotoNFT = async ({
       
       // 7. App commission transfer
       const commissionLamports = Math.ceil(costEstimate.breakdown.appCommission.sol * LAMPORTS_PER_SOL);
+      console.log('[NFT] Standard commission:', costEstimate.breakdown.appCommission.usd, 'USD =', commissionLamports, 'lamports');
+      console.log('[NFT] Commission wallet:', NFT_COMMISSION_WALLET);
       instructions.push(
         SystemProgram.transfer({
           fromPubkey: ownerPubkey,
@@ -1298,7 +2064,7 @@ export const mintPhotoNFT = async ({
       // Create transaction with all instructions
       const messageV0 = new TransactionMessage({
         payerKey: ownerPubkey,
-        recentBlockhash: blockhash,
+        recentBlockhash: prefetchedBlockhash,
         instructions,
       }).compileToV0Message();
       
@@ -1314,7 +2080,8 @@ export const mintPhotoNFT = async ({
       
       const txSignature = signatures[0];
       
-      console.log('[NFT] Transaction signature:', txSignature);
+      console.log('[NFT] ✅ Transaction SUCCESS:', txSignature);
+      console.log('[NFT] ✅ Commission of', costEstimate.breakdown.appCommission.usd, 'USD (', commissionLamports, 'lamports) sent to', NFT_COMMISSION_WALLET);
       
       onStatus?.('Confirming transaction...');
       onProgress?.(0.85);
@@ -1324,11 +2091,61 @@ export const mintPhotoNFT = async ({
         mintAddress: mintPubkey.toBase58(),
         ownerAddress: ownerAddressStr,
         imageUrl: imageUpload.arweaveUrl,
+        thumbnailUrl, // StealthCloud thumbnail for fast gallery loading
         metadataUrl: metadataUpload.arweaveUrl,
         metadata,
         isRealNFT: true,
       };
     });
+    
+    // If cNFT, do DAS lookup OUTSIDE the transact block to get real asset ID
+    if (result._needsDasLookup) {
+      console.log('[cNFT] Doing DAS lookup outside transact...');
+      onStatus?.('Finalizing...');
+      onProgress?.(0.90);
+      
+      let realAssetId = null;
+      try {
+        // Wait for indexing
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        
+        const dasResponse = await fetch(SOLANA_RPC_ENDPOINT, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            jsonrpc: '2.0',
+            id: 'get-cnft-asset',
+            method: 'getAssetsByOwner',
+            params: {
+              ownerAddress: result.ownerAddress,
+              page: 1,
+              limit: 10,
+              sortBy: { sortBy: 'created', sortDirection: 'desc' },
+            },
+          }),
+        });
+        const dasData = await dasResponse.json();
+        
+        if (dasData.result?.items) {
+          const matchingAsset = dasData.result.items.find(item => 
+            item.content?.json_uri === result.metadataUrl ||
+            item.content?.metadata?.name === result.metadata?.name
+          );
+          if (matchingAsset) {
+            realAssetId = matchingAsset.id;
+            console.log('[cNFT] ✅ Found real asset ID:', realAssetId);
+          }
+        }
+      } catch (dasError) {
+        console.log('[cNFT] DAS lookup failed, using tx-based ID:', dasError.message);
+      }
+      
+      // Update result with proper mintAddress
+      result.mintAddress = realAssetId 
+        ? `cnft_${realAssetId}` 
+        : `cnft_tx_${result.txSignature}`;
+      delete result._needsDasLookup;
+    }
     
     onStatus?.('NFT minted successfully!');
     onProgress?.(1);
@@ -1353,8 +2170,9 @@ export const mintPhotoNFT = async ({
       ownerAddress: result.ownerAddress,
       name: name || `PhotoLynk #${Date.now()}`,
       description,
-      imageUrl: localImagePath || asset.uri, // Use local path for display
-      arweaveUrl: result.imageUrl, // Keep Arweave URL for reference
+      imageUrl: result.thumbnailUrl || result.imageUrl || localImagePath || asset.uri, // Prefer thumbnail, then full image URL
+      thumbnailUrl: result.thumbnailUrl, // StealthCloud thumbnail
+      arweaveUrl: result.imageUrl, // Keep full image URL for detail view (StealthCloud or IPFS)
       metadataUrl: result.metadataUrl,
       txSignature: result.txSignature,
       assetId: asset.id,
@@ -1465,8 +2283,9 @@ export const resolveSolDomain = async (domain) => {
 export const isSolDomain = (input) => {
   if (!input) return false;
   const trimmed = input.trim().toLowerCase();
-  // Check if it ends with .skr, .sol, or looks like a simple domain name
-  return trimmed.endsWith('.skr') || trimmed.endsWith('.sol') || /^[a-z0-9][a-z0-9-]*[a-z0-9]$/.test(trimmed);
+  // Only treat as domain if it explicitly ends with .skr or .sol
+  // Do NOT treat plain alphanumeric strings as domains (they could be Solana addresses)
+  return trimmed.endsWith('.skr') || trimmed.endsWith('.sol');
 };
 
 /**
@@ -1498,14 +2317,253 @@ export const resolveRecipient = async (input) => {
 };
 
 /**
+ * Transfer a compressed NFT (cNFT) using Bubblegum program
+ * Requires fetching asset proof from DAS API
+ * @param {string} mintAddress - cNFT ID (format: cnft_<assetId> or cnft_tx_<txSig>)
+ * @param {string} recipientInput - Recipient's Solana wallet address or .sol domain
+ * @returns {Object} { success, txSignature, recipientAddress, error }
+ */
+const transferCompressedNFT = async (mintAddress, recipientInput) => {
+  // Check Solana availability
+  if (!solanaAvailable || !transact) {
+    return { success: false, error: 'Solana not available' };
+  }
+  
+  // Ensure connection is initialized
+  if (!connection) {
+    connection = new Connection(SOLANA_RPC_ENDPOINT, 'confirmed');
+  }
+  
+  const DAS_RPC_URL = 'https://api.mainnet-beta.solana.com';
+  
+  try {
+    // Resolve recipient
+    const resolved = await resolveRecipient(recipientInput);
+    if (!resolved.success) {
+      return { success: false, error: resolved.error };
+    }
+    
+    const recipientAddress = resolved.address;
+    const newLeafOwner = new PublicKey(recipientAddress);
+    
+    // Extract asset ID from mintAddress
+    let assetId = mintAddress.replace('cnft_', '');
+    
+    // Handle tx-based IDs (fallback format)
+    if (assetId.startsWith('tx_')) {
+      return { success: false, error: 'Cannot transfer cNFT with transaction-based ID. Please refresh your NFT list first.' };
+    }
+    
+    console.log('[cNFT Transfer] Asset ID:', assetId);
+    console.log('[cNFT Transfer] Recipient:', recipientAddress);
+    
+    // Fetch asset data from DAS API
+    const assetResponse = await fetch(DAS_RPC_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 'get-asset',
+        method: 'getAsset',
+        params: { id: assetId },
+      }),
+    });
+    const assetData = await assetResponse.json();
+    
+    if (assetData.error || !assetData.result) {
+      console.error('[cNFT Transfer] Failed to fetch asset:', assetData.error);
+      return { success: false, error: 'Failed to fetch cNFT data. Please try again.' };
+    }
+    
+    const asset = assetData.result;
+    console.log('[cNFT Transfer] Asset owner:', asset.ownership?.owner);
+    
+    // Fetch asset proof from DAS API
+    const proofResponse = await fetch(DAS_RPC_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 'get-asset-proof',
+        method: 'getAssetProof',
+        params: { id: assetId },
+      }),
+    });
+    const proofData = await proofResponse.json();
+    
+    if (proofData.error || !proofData.result) {
+      console.error('[cNFT Transfer] Failed to fetch proof:', proofData.error);
+      return { success: false, error: 'Failed to fetch cNFT proof. Please try again.' };
+    }
+    
+    const proof = proofData.result;
+    console.log('[cNFT Transfer] Proof fetched, tree:', proof.tree_id);
+    
+    // Build transfer instruction
+    const BUBBLEGUM_PROGRAM_ID = new PublicKey('BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY');
+    const SPL_NOOP_PROGRAM_ID = new PublicKey('noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV');
+    const SPL_ACCOUNT_COMPRESSION_PROGRAM_ID = new PublicKey('cmtDvXumGCrqC1Age74AVPhSRVXJMd8PJS91L8KbNCK');
+    
+    const merkleTree = new PublicKey(proof.tree_id);
+    
+    // DAS API returns hashes as base58 strings, decode them properly
+    const decodeHash = (hash) => {
+      if (!hash) return Buffer.alloc(32);
+      // If it starts with 0x, it's hex
+      if (hash.startsWith('0x')) {
+        return Buffer.from(hash.slice(2), 'hex');
+      }
+      // Otherwise it's base58 - use PublicKey to decode
+      try {
+        return new PublicKey(hash).toBuffer();
+      } catch {
+        // Fallback: try as raw bytes array
+        return Buffer.from(hash);
+      }
+    };
+    
+    const root = decodeHash(proof.root);
+    const dataHash = decodeHash(asset.compression.data_hash);
+    const creatorHash = decodeHash(asset.compression.creator_hash);
+    const leafIndex = asset.compression.leaf_id;
+    const nonce = BigInt(leafIndex);
+    
+    console.log('[cNFT Transfer] Root length:', root.length, 'DataHash length:', dataHash.length);
+    
+    // Derive tree config PDA
+    const [treeConfig] = PublicKey.findProgramAddressSync(
+      [merkleTree.toBuffer()],
+      BUBBLEGUM_PROGRAM_ID
+    );
+    
+    // Build proof path (remaining accounts)
+    const proofPath = proof.proof.map(p => ({
+      pubkey: new PublicKey(p),
+      isSigner: false,
+      isWritable: false,
+    }));
+    
+    const txSignature = await transact(async (wallet) => {
+      const authResult = await wallet.authorize({
+        cluster: 'mainnet-beta',
+        identity: APP_IDENTITY,
+      });
+      
+      const ownerAddress = authResult.accounts[0].address;
+      const ownerBytes = typeof ownerAddress === 'string'
+        ? Uint8Array.from(atob(ownerAddress), c => c.charCodeAt(0))
+        : new Uint8Array(ownerAddress);
+      const leafOwner = new PublicKey(ownerBytes);
+      
+      // Verify ownership
+      if (leafOwner.toBase58() !== asset.ownership?.owner) {
+        throw new Error('You do not own this NFT');
+      }
+      
+      // Build transfer instruction data
+      // Discriminator for transfer (163, 52, 200, 231, 140, 3, 69, 186)
+      const discriminator = Buffer.from([163, 52, 200, 231, 140, 3, 69, 186]);
+      
+      // Encode nonce as u64 little-endian
+      const nonceBuffer = Buffer.alloc(8);
+      nonceBuffer.writeBigUInt64LE(nonce, 0);
+      
+      // Encode index as u32 little-endian
+      const indexBuffer = Buffer.alloc(4);
+      indexBuffer.writeUInt32LE(leafIndex, 0);
+      
+      // Encode instruction data: discriminator + root + dataHash + creatorHash + nonce + index
+      const instructionData = Buffer.concat([
+        discriminator,
+        root,                                    // [u8; 32]
+        dataHash,                                // [u8; 32]
+        creatorHash,                             // [u8; 32]
+        nonceBuffer,                             // u64 LE
+        indexBuffer,                             // u32 LE
+      ]);
+      
+      console.log('[cNFT Transfer] Instruction data length:', instructionData.length);
+      
+      // Build accounts for transfer instruction
+      const transferAccounts = [
+        { pubkey: treeConfig, isSigner: false, isWritable: false },           // 0: treeConfig
+        { pubkey: leafOwner, isSigner: true, isWritable: false },             // 1: leafOwner (signer)
+        { pubkey: leafOwner, isSigner: false, isWritable: false },            // 2: leafDelegate
+        { pubkey: newLeafOwner, isSigner: false, isWritable: false },         // 3: newLeafOwner
+        { pubkey: merkleTree, isSigner: false, isWritable: true },            // 4: merkleTree
+        { pubkey: SPL_NOOP_PROGRAM_ID, isSigner: false, isWritable: false },  // 5: logWrapper
+        { pubkey: SPL_ACCOUNT_COMPRESSION_PROGRAM_ID, isSigner: false, isWritable: false }, // 6: compressionProgram
+        { pubkey: SystemProgram.programId, isSigner: false, isWritable: false }, // 7: systemProgram
+        ...proofPath, // Remaining accounts: proof nodes
+      ];
+      
+      const transferInstruction = new TransactionInstruction({
+        programId: BUBBLEGUM_PROGRAM_ID,
+        keys: transferAccounts,
+        data: instructionData,
+      });
+      
+      const { blockhash } = await connection.getLatestBlockhash('confirmed');
+      
+      const messageV0 = new TransactionMessage({
+        payerKey: leafOwner,
+        recentBlockhash: blockhash,
+        instructions: [transferInstruction],
+      }).compileToV0Message();
+      
+      const transaction = new VersionedTransaction(messageV0);
+      
+      const signatures = await wallet.signAndSendTransactions({
+        transactions: [transaction],
+      });
+      
+      return signatures[0];
+    });
+    
+    // Update local storage
+    await removeNFTFromStorage(mintAddress);
+    
+    console.log(`[cNFT Transfer] Success: ${txSignature}`);
+    
+    return {
+      success: true,
+      txSignature,
+      recipientAddress,
+      isDomain: resolved.isDomain,
+      domainName: resolved.domainName,
+    };
+  } catch (e) {
+    console.error('[cNFT Transfer] Failed:', e);
+    return { success: false, error: e.message };
+  }
+};
+
+/**
  * Transfer NFT to another wallet address
  * @param {string} mintAddress - NFT mint address
  * @param {string} recipientInput - Recipient's Solana wallet address or .sol domain
  * @returns {Object} { success, txSignature, recipientAddress, error }
  */
 export const transferNFT = async (mintAddress, recipientInput) => {
-  if (!solanaAvailable || !splTokenAvailable || !transact || !connection) {
-    return { success: false, error: 'Solana or SPL Token not available' };
+  if (!solanaAvailable || !transact) {
+    return { success: false, error: 'Solana not available' };
+  }
+  
+  // Ensure connection is initialized
+  if (!connection) {
+    connection = new Connection(SOLANA_RPC_ENDPOINT, 'confirmed');
+  }
+  
+  // Check if this is a compressed NFT (cNFT)
+  const isCompressedNFT = mintAddress?.startsWith('cnft_');
+  if (isCompressedNFT) {
+    // cNFT transfers use Bubblegum program
+    return await transferCompressedNFT(mintAddress, recipientInput);
+  }
+  
+  // Standard NFT transfer requires SPL Token
+  if (!splTokenAvailable) {
+    return { success: false, error: 'SPL Token not available. Please restart the app.' };
   }
   
   try {
@@ -1762,12 +2820,19 @@ export const syncNFTsFromServer = async (serverUrl, authHeaders) => {
     const localNFTs = await getStoredNFTs();
     const localMints = new Set(localNFTs.map(n => n.mintAddress));
     
-    // Merge: add server NFTs that aren't local
+    // Merge: add server NFTs that aren't local, and update local NFTs with missing imageUrl
     let merged = 0;
     for (const serverNFT of serverNFTs) {
       if (!localMints.has(serverNFT.mintAddress)) {
         localNFTs.push(serverNFT);
         merged++;
+      } else {
+        // Update local NFT with server data if local is missing imageUrl
+        const localIdx = localNFTs.findIndex(n => n.mintAddress === serverNFT.mintAddress);
+        if (localIdx >= 0 && !localNFTs[localIdx].imageUrl && serverNFT.imageUrl) {
+          localNFTs[localIdx].imageUrl = serverNFT.imageUrl;
+          merged++;
+        }
       }
     }
     
@@ -1883,8 +2948,10 @@ export const getSolscanUrl = (mintAddress) => {
 
 /**
  * Verify NFT exists on-chain
+ * @param {string} mintAddress - The mint address or cNFT asset ID
+ * @param {string} txSignature - Optional transaction signature for cNFT verification fallback
  */
-export const verifyNFTOnChain = async (mintAddress) => {
+export const verifyNFTOnChain = async (mintAddress, txSignature = null) => {
   // Initialize connection if not available
   if (!connection) {
     await initializeNFT();
@@ -1895,6 +2962,80 @@ export const verifyNFTOnChain = async (mintAddress) => {
   }
   
   try {
+    // Handle compressed NFTs (cNFTs) - use DAS API
+    if (mintAddress?.startsWith('cnft_')) {
+      // Check if it's a tx-based ID (fallback when DAS wasn't ready)
+      if (mintAddress.startsWith('cnft_tx_')) {
+        const txSig = mintAddress.replace('cnft_tx_', '');
+        // Verify the transaction exists
+        try {
+          const txInfo = await connection.getTransaction(txSig, { maxSupportedTransactionVersion: 0 });
+          if (txInfo && !txInfo.meta?.err) {
+            return {
+              verified: true,
+              exists: true,
+              compressed: true,
+              txBased: true,
+              note: 'Verified via transaction',
+            };
+          }
+        } catch (txError) {
+          console.log('[Verify] Could not verify tx:', txError.message);
+        }
+        return { verified: false, error: 'Transaction not found or failed' };
+      }
+      
+      // Real asset ID - use DAS API
+      const assetId = mintAddress.replace('cnft_', '');
+      
+      // Check if assetId looks valid (base58, 32-44 chars)
+      if (assetId.length >= 32 && assetId.length <= 44) {
+        const response = await fetch(SOLANA_RPC_ENDPOINT, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            jsonrpc: '2.0',
+            id: 'verify-cnft',
+            method: 'getAsset',
+            params: { id: assetId },
+          }),
+        });
+        const data = await response.json();
+        
+        if (data.result && data.result.id) {
+          return {
+            verified: true,
+            exists: true,
+            owner: data.result.ownership?.owner,
+            compressed: true,
+            tree: data.result.compression?.tree,
+          };
+        }
+      }
+      
+      // Old format or DAS failed - try txSignature if provided
+      if (txSignature) {
+        try {
+          console.log('[Verify] Trying txSignature fallback:', txSignature.slice(0, 20));
+          const txInfo = await connection.getTransaction(txSignature, { maxSupportedTransactionVersion: 0 });
+          if (txInfo && !txInfo.meta?.err) {
+            return {
+              verified: true,
+              exists: true,
+              compressed: true,
+              txBased: true,
+              note: 'Verified via transaction',
+            };
+          }
+        } catch (txError) {
+          console.log('[Verify] txSignature fallback failed:', txError.message);
+        }
+      }
+      
+      return { verified: false, error: 'Asset not found (try rescanning wallet)' };
+    }
+    
+    // Standard NFT verification
     const mintPubkey = new PublicKey(mintAddress);
     const accountInfo = await connection.getAccountInfo(mintPubkey);
     
@@ -1995,11 +3136,151 @@ export const fetchNFTsFromBlockchain = async (walletAddress) => {
       }
     }
     
-    console.log(`[NFT] Successfully fetched ${nfts.length} NFTs`);
+    console.log(`[NFT] Successfully fetched ${nfts.length} standard NFTs`);
+    
+    // Also fetch compressed NFTs (cNFTs) using DAS API
+    try {
+      console.log('[NFT] Fetching compressed NFTs via DAS API...');
+      const cNFTs = await fetchCompressedNFTs(walletAddress);
+      if (cNFTs && cNFTs.length > 0) {
+        console.log(`[NFT] Found ${cNFTs.length} compressed NFTs`);
+        nfts.push(...cNFTs);
+      }
+    } catch (cNFTError) {
+      console.log('[NFT] cNFT fetch failed (non-critical):', cNFTError.message);
+    }
+    
+    console.log(`[NFT] Total NFTs fetched: ${nfts.length}`);
     return { success: true, nfts };
   } catch (e) {
     console.error('[NFT] Fetch NFTs failed:', e);
     return { success: false, error: e.message };
+  }
+};
+
+/**
+ * Fetch compressed NFTs (cNFTs) using DAS API
+ * @param {string} walletAddress - Owner's wallet address
+ * @returns {Array} Array of cNFT objects
+ */
+const fetchCompressedNFTs = async (walletAddress) => {
+  // Use Solana mainnet RPC which supports DAS API
+  const DAS_RPC_URL = 'https://api.mainnet-beta.solana.com';
+  
+  console.log('[cNFT] Fetching compressed NFTs for:', walletAddress);
+  
+  try {
+    const response = await fetch(DAS_RPC_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 'photolynk-cnft-fetch',
+        method: 'getAssetsByOwner',
+        params: {
+          ownerAddress: walletAddress,
+          page: 1,
+          limit: 100,
+        },
+      }),
+    });
+    
+    const data = await response.json();
+    console.log('[cNFT] DAS API response status:', response.status);
+    
+    if (data.error) {
+      console.log('[cNFT] DAS API error:', JSON.stringify(data.error));
+      return [];
+    }
+    
+    if (!data.result?.items) {
+      console.log('[cNFT] No items in response');
+      return [];
+    }
+    
+    console.log('[cNFT] Total assets from DAS:', data.result.items.length);
+    
+    // Filter for compressed NFTs only
+    const compressedItems = data.result.items.filter(item => item.compression?.compressed === true);
+    console.log('[cNFT] Compressed items:', compressedItems.length);
+    
+    // Fetch metadata for each cNFT to get image URLs
+    const cNFTs = [];
+    for (const item of compressedItems) {
+      let imageUrl = item.content?.links?.image || item.content?.files?.[0]?.uri || '';
+      const metadataUrl = item.content?.json_uri || '';
+      
+      // If no image URL but we have metadata URL, fetch the metadata to get image
+      if (!imageUrl && metadataUrl) {
+        try {
+          console.log('[cNFT] Fetching metadata for:', item.content?.metadata?.name);
+          
+          // Try multiple IPFS gateways as fallback
+          // Extract CID from URL
+          const cidMatch = metadataUrl.match(/ipfs\/([a-zA-Z0-9]+)/);
+          const cid = cidMatch ? cidMatch[1] : null;
+          
+          // Use w3s.link (web3.storage) and nftstorage.link as primary - more reliable
+          const gateways = cid ? [
+            `https://w3s.link/ipfs/${cid}`,
+            `https://nftstorage.link/ipfs/${cid}`,
+            `https://ipfs.io/ipfs/${cid}`,
+            `https://cf-ipfs.com/ipfs/${cid}`,
+          ] : [metadataUrl];
+          
+          for (const gateway of gateways) {
+            try {
+              console.log('[cNFT] Trying gateway:', gateway.slice(0, 50));
+              const controller = new AbortController();
+              const timeoutId = setTimeout(() => controller.abort(), 15000); // 15 second timeout
+              const metaResponse = await fetch(gateway, { 
+                signal: controller.signal,
+                redirect: 'follow',
+              });
+              clearTimeout(timeoutId);
+              
+              console.log('[cNFT] Gateway response:', metaResponse.status);
+              if (metaResponse.ok) {
+                const metaJson = await metaResponse.json();
+                imageUrl = metaJson.image || '';
+                if (imageUrl) {
+                  console.log('[cNFT] Got image from metadata:', imageUrl?.slice(0, 60));
+                  break;
+                }
+              } else {
+                console.log('[cNFT] Gateway returned:', metaResponse.status);
+              }
+            } catch (gwErr) {
+              console.log('[cNFT] Gateway failed:', gwErr.name, gwErr.message);
+              // Try next gateway
+            }
+          }
+        } catch (metaErr) {
+          console.log('[cNFT] Failed to fetch metadata:', metaErr.message);
+        }
+      }
+      
+      cNFTs.push({
+        mintAddress: `cnft_${item.id}`,
+        assetId: item.id,
+        name: item.content?.metadata?.name || 'Compressed NFT',
+        description: item.content?.metadata?.description || '',
+        imageUrl, // IPFS image URL
+        arweaveUrl: imageUrl, // Same as imageUrl for scanned NFTs (for fallback logic)
+        metadataUrl,
+        ownerAddress: walletAddress,
+        createdAt: new Date().toISOString(),
+        source: 'das',
+        isCompressed: true,
+        merkleTree: item.compression?.tree,
+      });
+    }
+    
+    console.log('[cNFT] Compressed NFTs found:', cNFTs.length);
+    return cNFTs;
+  } catch (e) {
+    console.error('[cNFT] fetchCompressedNFTs error:', e.message);
+    return [];
   }
 };
 
@@ -2115,6 +3396,9 @@ export const discoverAndImportNFTs = async (walletAddress, serverUrl = null, aut
 // EXPORTS
 // ============================================================================
 
+// Check if cNFT is available
+export const isCNFTAvailable = () => cNFTAvailable;
+
 export default {
   initializeNFT,
   fetchSolPrice,
@@ -2122,6 +3406,7 @@ export default {
   extractExifForNFT,
   estimateArweaveUploadCost,
   uploadToArweave,
+  computeContentHash,
   buildNFTMetadata,
   uploadMetadataToArweave,
   estimateNFTMintCost,
@@ -2145,6 +3430,9 @@ export default {
   fetchNFTsFromBlockchain,
   fetchNFTMetadata,
   discoverAndImportNFTs,
+  isCNFTAvailable,
   NFT_FEES,
   NFT_COMMISSION_WALLET,
+  CNFT_MODE,
+  PHOTOLYNK_MERKLE_TREE,
 };

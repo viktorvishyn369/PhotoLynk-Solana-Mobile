@@ -373,7 +373,7 @@
     "couldNotScan": "Nije moguće skenirati novčanik za NFT-ove.",
     "couldNotOpenLink": "Nije moguće otvoriti poveznicu",
     "clearAllNfts": "Očisti sve NFT-ove",
-    "clearAllNftsMessage": "Ovo će ukloniti sve NFT-ove iz lokalne pohrane. Ovo je samo za testiranje i ne utječe na blockchain.",
+    "clearAllNftsMessage": "Ovo će izbrisati sve NFT-ove iz albuma. Ostaju na blockchainu i mogu se vratiti ponovnim skeniranjem novčanika.",
     "clear": "Jasno",
     "nftOwner": "Vlasnik NFT-a",
     "description": "OPIS",
@@ -382,10 +382,15 @@
     "verifiedOnSolana": "Potvrđeno na Solani",
     "notFoundOnChain": "Nije pronađeno na lancu",
     "verifyOnChain": "Provjeri na lancu",
-    "explorer": "Popis istraživača",
     "solscan": "Solscan",
     "ipfs": "IPFS",
-    "transferNft": "Prenesi NFT"
+    "transferNft": "Prenesi NFT",
+    "standard": "Standardni",
+    "compressed": "Komprimirani",
+    "uniqueToken": "Jedinstveni token",
+    "sharedTree": "Dijeljeno stablo",
+    "standardNft": "Standardni NFT",
+    "compressedNft": "Komprimirani NFT"
   },
   "similarPhotos": {
     "title": "Slične fotografije",
@@ -438,7 +443,13 @@
     "seekerIdPlaceholder": "npr., alice.skr ili alice",
     "seekerIdHint": "Unesite Seeker ID (npr. alice.skr) ili .sol domenu",
     "warningMessage": "NFT prijenosi su trajni i ne mogu se poništiti. Provjerite imate li ispravnu adresu primatelja.",
-    "transfer": "Prijenos"
+    "transfer": "Prijenos",
+    "confirmTransfer": "Potvrdi prijenos",
+    "confirmTransferMessage": "Jeste li sigurni da želite prenijeti \"{{name}}\" na {{recipient}}?",
+    "cannotBeUndone": "Ova radnja se ne može poništiti.",
+    "transferSuccessful": "Prijenos uspješan",
+    "transferSuccessMessage": "Vaš NFT je uspješno prenesen!",
+    "transaction": "Transakcija"
   },
   "duplicates": {
     "title": "Ukloni duplikate",

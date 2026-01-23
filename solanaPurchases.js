@@ -77,6 +77,7 @@ let connection = null;
 let cachedSolPrice = null;
 let solPriceLastFetch = 0;
 const SOL_PRICE_CACHE_MS = 60000; // Cache SOL price for 1 minute
+const SOL_PRICE_STORAGE_KEY = 'solana_purchases_sol_price';
 
 let connectedWallet = null;
 let authToken = null;
@@ -211,8 +212,24 @@ export const fetchSolPrice = async () => {
   const now = Date.now();
   
   // Return cached price if still valid
-  if (cachedSolPrice && (now - solPriceLastFetch) < SOL_PRICE_CACHE_MS) {
+  if (cachedSolPrice && cachedSolPrice > 0 && (now - solPriceLastFetch) < SOL_PRICE_CACHE_MS) {
     return cachedSolPrice;
+  }
+  
+  // Try to load persisted price if no memory cache
+  if (!cachedSolPrice) {
+    try {
+      const stored = await SecureStore.getItemAsync(SOL_PRICE_STORAGE_KEY);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (parsed.price > 0) {
+          cachedSolPrice = parsed.price;
+          console.log('[SolanaPurchases] Loaded persisted SOL price:', cachedSolPrice);
+        }
+      }
+    } catch (e) {
+      console.log('[SolanaPurchases] Could not load persisted price:', e.message);
+    }
   }
   
   // Try multiple price APIs with fallbacks
@@ -242,18 +259,29 @@ export const fetchSolPrice = async () => {
       if (price && typeof price === 'number' && price > 0) {
         cachedSolPrice = price;
         solPriceLastFetch = now;
-        console.log(`SOL price from ${api.name}:`, price);
+        console.log(`[SolanaPurchases] SOL price from ${api.name}:`, price);
+        // Persist successful price for future fallback
+        try {
+          await SecureStore.setItemAsync(SOL_PRICE_STORAGE_KEY, JSON.stringify({ price, timestamp: now }));
+        } catch (e) {
+          console.log('[SolanaPurchases] Could not persist price:', e.message);
+        }
         return price;
       }
     } catch (e) {
-      console.warn(`${api.name} price fetch failed:`, e.message);
+      console.warn(`[SolanaPurchases] ${api.name} price fetch failed:`, e.message);
       // Continue to next API
     }
   }
   
-  console.error('All SOL price APIs failed, using fallback');
-  // Return cached price if available, otherwise estimate
-  return cachedSolPrice || 150; // Fallback estimate
+  // Fallback to last stored price if all APIs fail
+  if (cachedSolPrice && cachedSolPrice > 0) {
+    console.log('[SolanaPurchases] All price APIs failed, using last stored price:', cachedSolPrice);
+    return cachedSolPrice;
+  }
+  
+  console.error('[SolanaPurchases] All price APIs failed and no stored price available');
+  return null;
 };
 
 /**

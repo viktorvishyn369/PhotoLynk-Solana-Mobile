@@ -373,7 +373,7 @@
     "couldNotScan": "Не може да сканира портфейла за NFT",
     "couldNotOpenLink": "Не може да се отвори връзката",
     "clearAllNfts": "Изчистване на всички NFTs",
-    "clearAllNftsMessage": "Това ще премахне всички NFT от локалното хранилище. Това е само за тестване и не влияе на блокчейна.",
+    "clearAllNftsMessage": "Това ще изтрие всички NFT от албума. Те остават на блокчейна и могат да бъдат възстановени чрез повторно сканиране на портфейла ви.",
     "clear": "Clear",
     "nftOwner": "СОБСТВЕНИК НА NFT",
     "description": "ОПИСАНИЕ",
@@ -382,10 +382,15 @@
     "verifiedOnSolana": "Проверено на Solana",
     "notFoundOnChain": "Не се намира на веригата",
     "verifyOnChain": "Проверка на веригата",
-    "explorer": "Explorer",
     "solscan": "Solscan",
     "ipfs": "IPFS",
-    "transferNft": "Трансфер NFT"
+    "transferNft": "Трансфер NFT",
+    "standard": "Стандартен",
+    "compressed": "Компресиран",
+    "uniqueToken": "Уникален токен",
+    "sharedTree": "Споделено дърво",
+    "standardNft": "Стандартен NFT",
+    "compressedNft": "Компресиран NFT"
   },
   "similarPhotos": {
     "title": "Подобни снимки",
@@ -438,7 +443,13 @@
     "seekerIdPlaceholder": "напр. alice.skr или alice",
     "seekerIdHint": "Въведете идентификатор на търсещия (напр. alice.skr) или домейн .sol",
     "warningMessage": "Преводите NFT са постоянни и не могат да бъдат анулирани. Уверете се, че сте посочили правилния адрес на получателя.",
-    "transfer": "Трансфер"
+    "transfer": "Прехвърляне",
+    "confirmTransfer": "Потвърдете прехвърлянето",
+    "confirmTransferMessage": "Сигурни ли сте, че искате да прехвърлите \"{{name}}\" на {{recipient}}?",
+    "cannotBeUndone": "Това действие не може да бъде отменено.",
+    "transferSuccessful": "Прехвърлянето е успешно",
+    "transferSuccessMessage": "Вашият NFT беше успешно прехвърлен!",
+    "transaction": "Транзакция"
   },
   "duplicates": {
     "title": "Почистване на дубликати",

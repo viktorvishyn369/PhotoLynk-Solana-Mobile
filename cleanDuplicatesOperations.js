@@ -30,7 +30,7 @@ export const startSimilarShotsReviewCore = async ({
   
   try {
     // Check permission first
-    const permission = await MediaLibrary.requestPermissionsAsync();
+    const permission = await MediaLibrary.requestPermissionsAsync(false, ['photo', 'video']);
     if (permission.status !== 'granted') {
       return { error: 'Photos permission not granted' };
     }
@@ -154,7 +154,7 @@ export const startExactDuplicatesScanCore = async ({
   
   try {
     // Check permission first
-    const permission = await MediaLibrary.requestPermissionsAsync();
+    const permission = await MediaLibrary.requestPermissionsAsync(false, ['photo', 'video']);
     if (permission.status !== 'granted') {
       return { error: 'Photos permission not granted' };
     }
