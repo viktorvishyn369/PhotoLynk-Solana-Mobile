@@ -366,7 +366,18 @@ export default function App() {
   const setAutoUploadEnabledSafe = (value) => { autoUploadEnabledRef.current = !!value; setAutoUploadEnabled(!!value); };
   const setFastModeEnabledSafe = (value) => { fastModeEnabledRef.current = !!value; setFastModeEnabled(!!value); };
   const setTokenSafe = (value) => { tokenRef.current = value; setToken(value); };
-  const setLoadingSafe = (value) => { loadingRef.current = !!value; setLoading(!!value); };
+  const setLoadingSafe = (value) => {
+    loadingRef.current = !!value;
+    setLoading(!!value);
+    // Automatically clear background warning flags when loading ends
+    if (!value) {
+      backgroundWarnEligibleRef.current = false;
+      wasBackgroundedDuringWorkRef.current = false;
+      backgroundedAtMsRef.current = 0;
+      setBackgroundWarnEligible(false);
+      setWasBackgroundedDuringWork(false);
+    }
+  };
 
   // Camera permission for QR scanner
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
@@ -2070,6 +2081,7 @@ export default function App() {
     } finally {
       setNftMinting(false);
       setLoadingSafe(false);
+      setBackgroundWarnEligibleSafe(false);
       setProgress(0);
     }
   };
@@ -2094,11 +2106,13 @@ export default function App() {
 
     if (result.aborted) {
       setLoadingSafe(false);
+      setBackgroundWarnEligibleSafe(false);
       return;
     }
 
     if (result.error) {
       setLoadingSafe(false);
+      setBackgroundWarnEligibleSafe(false);
       showDarkAlert(t('alerts.similarPhotos'), result.error);
       return;
     }
@@ -2108,10 +2122,12 @@ export default function App() {
       await sleep(400); // Let user see 100% before checkmark
       showCompletionTickBriefly(t('results.noSimilarPhotos'));
       setLoadingSafe(false);
+      setBackgroundWarnEligibleSafe(false);
       return;
     }
 
     setLoadingSafe(false);
+    setBackgroundWarnEligibleSafe(false);
     openSimilarGroup({ groups: result.groups, index: 0 });
   };
 
@@ -2346,6 +2362,10 @@ export default function App() {
           setProgress(0);
           setProgressAction(null);
           setStatus(t('status.idle'));
+          // Clear stale background warning flags when app is idle
+          wasBackgroundedDuringWorkRef.current = false;
+          backgroundWarnEligibleRef.current = false;
+          backgroundedAtMsRef.current = 0;
         }
       }
 
@@ -2358,6 +2378,7 @@ export default function App() {
         setShowCompletionTick(false); // Hide checkmark when returning to foreground after being backgrounded during work
         const backgroundForMs = backgroundedAtMsRef.current ? (Date.now() - backgroundedAtMsRef.current) : 0;
         const stillWorking = !!loadingRef.current;
+        const wasEligible = !!backgroundWarnEligibleRef.current;
         backgroundedAtMsRef.current = 0;
 
         // Clear refs
@@ -2366,11 +2387,15 @@ export default function App() {
         setWasBackgroundedDuringWorkSafe(false);
         setBackgroundWarnEligibleSafe(false);
 
+        // Only show alert if: still working, was eligible for warning, and was backgrounded long enough
         if (!stillWorking) return;
+        if (!wasEligible) return;
 
-        // Ignore short transitions (permission prompts, system UI)
-        if (Platform.OS === 'android' && backgroundForMs > 0 && backgroundForMs < 1500) return;
-        if (Platform.OS === 'ios' && backgroundForMs > 0 && backgroundForMs < 2000) return;
+        // Ignore short transitions (permission prompts, system UI, Android overlays)
+        // Also ignore if backgroundForMs is 0 (timestamp wasn't set properly)
+        if (backgroundForMs === 0) return;
+        if (Platform.OS === 'android' && backgroundForMs < 3000) return;
+        if (Platform.OS === 'ios' && backgroundForMs < 2000) return;
 
         if (!autoUploadEnabledRef.current) {
           showDarkAlert(t('alerts.processPaused'), t('alerts.processPausedMessage'));
