@@ -116,7 +116,7 @@ let TOKEN_METADATA_PROGRAM_ID = null;
 // ============================================================================
 // PROMOTIONAL PRICING - 30 DAY LAUNCH SPECIAL
 // ============================================================================
-const PROMO_START_DATE = new Date('2026-01-24T00:00:00Z'); // Launch date (starts tomorrow)
+const PROMO_START_DATE = new Date('2026-01-25T00:00:00Z'); // Launch date
 const PROMO_DURATION_DAYS = 30;
 const PROMO_END_DATE = new Date(PROMO_START_DATE.getTime() + PROMO_DURATION_DAYS * 24 * 60 * 60 * 1000);
 
