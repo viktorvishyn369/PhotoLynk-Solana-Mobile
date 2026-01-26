@@ -402,13 +402,26 @@ export default function App() {
         await SecureStore.setItemAsync('server_type', 'local');
 
         // Send credentials to desktop for pairing (if user is logged in and pairing port available)
-        if (parsed.pairingPort && parsed.token && email && password) {
+        // Try to get credentials from state first, then from SecureStore
+        let pairEmail = email;
+        let pairPassword = password;
+        if (!pairEmail || !pairPassword) {
           try {
+            pairEmail = await SecureStore.getItemAsync('user_email');
+            pairPassword = await SecureStore.getItemAsync('user_password');
+          } catch (e) {
+            console.log('[QR] Failed to get credentials from SecureStore:', e.message);
+          }
+        }
+        console.log('[QR] Pairing check:', { pairingPort: parsed.pairingPort, hasToken: !!parsed.token, email: pairEmail || '(empty)', hasPassword: !!pairPassword });
+        if (parsed.pairingPort && parsed.token && pairEmail && pairPassword) {
+          try {
+            console.log('[QR] Sending pairing request to:', `http://${serverIp}:${parsed.pairingPort}/api/pair`);
             const pairingUrl = `http://${serverIp}:${parsed.pairingPort}/api/pair`;
             const response = await fetch(pairingUrl, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ email, password, token: parsed.token }),
+              body: JSON.stringify({ email: pairEmail, password: pairPassword, token: parsed.token }),
             });
             const result = await response.json();
             if (result.success) {
