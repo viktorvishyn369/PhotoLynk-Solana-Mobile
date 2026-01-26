@@ -832,71 +832,69 @@ const NFTPhotoPicker = ({
         >
           <View style={styles.welcomeOverlay}>
             <View style={styles.welcomeModal}>
-              <ScrollView showsVerticalScrollIndicator={false}>
-                {/* Header */}
-                <View style={styles.welcomeHeader}>
-                  <View style={styles.welcomeIconContainer}>
-                    <Feather name="image" size={32} color={COLORS.primary} />
-                  </View>
-                  <Text style={styles.welcomeTitle}>{t('nftWelcome.title')}</Text>
+              {/* Header */}
+              <View style={styles.welcomeHeader}>
+                <View style={styles.welcomeIconContainer}>
+                  <Feather name="image" size={24} color={COLORS.primary} />
                 </View>
-                
-                {/* What is NFT */}
-                <View style={styles.welcomeSection}>
-                  <View style={styles.welcomeSectionHeader}>
-                    <Feather name="help-circle" size={18} color={COLORS.primary} />
-                    <Text style={styles.welcomeSectionTitle}>{t('nftWelcome.whatIsNft')}</Text>
-                  </View>
-                  <Text style={styles.welcomeSectionText}>{t('nftWelcome.whatIsNftDesc')}</Text>
+                <Text style={styles.welcomeTitle}>{t('nftWelcome.title')}</Text>
+              </View>
+              
+              {/* What is NFT */}
+              <View style={styles.welcomeSection}>
+                <View style={styles.welcomeSectionHeader}>
+                  <Feather name="help-circle" size={14} color={COLORS.primary} />
+                  <Text style={styles.welcomeSectionTitle}>{t('nftWelcome.whatIsNft')}</Text>
                 </View>
-                
-                {/* Public Warning */}
-                <View style={styles.welcomeSection}>
-                  <View style={styles.welcomeSectionHeader}>
-                    <Feather name="alert-triangle" size={18} color={COLORS.warning} />
-                    <Text style={styles.welcomeSectionTitle}>{t('nftWelcome.publicWarning')}</Text>
-                  </View>
-                  <Text style={styles.welcomeSectionText}>{t('nftWelcome.publicWarningDesc')}</Text>
+                <Text style={styles.welcomeSectionText}>{t('nftWelcome.whatIsNftDesc')}</Text>
+              </View>
+              
+              {/* Public Warning */}
+              <View style={styles.welcomeSection}>
+                <View style={styles.welcomeSectionHeader}>
+                  <Feather name="alert-triangle" size={14} color={COLORS.warning} />
+                  <Text style={styles.welcomeSectionTitle}>{t('nftWelcome.publicWarning')}</Text>
                 </View>
-                
-                {/* Size Recommendation */}
-                <View style={styles.welcomeSection}>
-                  <View style={styles.welcomeSectionHeader}>
-                    <Feather name="maximize-2" size={18} color={COLORS.accent} />
-                    <Text style={styles.welcomeSectionTitle}>{t('nftWelcome.sizeRecommendation')}</Text>
-                  </View>
-                  <Text style={styles.welcomeSectionText}>{t('nftWelcome.sizeRecommendationDesc')}</Text>
+                <Text style={styles.welcomeSectionText}>{t('nftWelcome.publicWarningDesc')}</Text>
+              </View>
+              
+              {/* Size Recommendation */}
+              <View style={styles.welcomeSection}>
+                <View style={styles.welcomeSectionHeader}>
+                  <Feather name="maximize-2" size={14} color={COLORS.accent} />
+                  <Text style={styles.welcomeSectionTitle}>{t('nftWelcome.sizeRecommendation')}</Text>
                 </View>
-                
-                {/* Loading Note */}
-                <View style={styles.welcomeSection}>
-                  <View style={styles.welcomeSectionHeader}>
-                    <Feather name="wifi" size={18} color={COLORS.textSecondary} />
-                    <Text style={styles.welcomeSectionTitle}>{t('nftWelcome.loadingNote')}</Text>
-                  </View>
-                  <Text style={styles.welcomeSectionText}>{t('nftWelcome.loadingNoteDesc')}</Text>
+                <Text style={styles.welcomeSectionText}>{t('nftWelcome.sizeRecommendationDesc')}</Text>
+              </View>
+              
+              {/* Loading Note */}
+              <View style={styles.welcomeSection}>
+                <View style={styles.welcomeSectionHeader}>
+                  <Feather name="wifi" size={14} color={COLORS.textSecondary} />
+                  <Text style={styles.welcomeSectionTitle}>{t('nftWelcome.loadingNote')}</Text>
                 </View>
-                
-                {/* Don't show again toggle */}
-                <TouchableOpacity 
-                  style={styles.welcomeToggle}
-                  onPress={() => setDontShowWelcomeAgain(!dontShowWelcomeAgain)}
-                  activeOpacity={0.7}
-                >
-                  <View style={[styles.welcomeCheckbox, dontShowWelcomeAgain && styles.welcomeCheckboxChecked]}>
-                    {dontShowWelcomeAgain && <Feather name="check" size={14} color="#fff" />}
-                  </View>
-                  <Text style={styles.welcomeToggleText}>{t('nftWelcome.dontShowAgain')}</Text>
-                </TouchableOpacity>
-                
-                {/* Got It button */}
-                <TouchableOpacity
-                  style={styles.welcomeButton}
-                  onPress={handleWelcomeDismiss}
-                >
-                  <Text style={styles.welcomeButtonText}>{t('nftWelcome.gotIt')}</Text>
-                </TouchableOpacity>
-              </ScrollView>
+                <Text style={styles.welcomeSectionText}>{t('nftWelcome.loadingNoteDesc')}</Text>
+              </View>
+              
+              {/* Don't show again toggle */}
+              <TouchableOpacity 
+                style={styles.welcomeToggle}
+                onPress={() => setDontShowWelcomeAgain(!dontShowWelcomeAgain)}
+                activeOpacity={0.7}
+              >
+                <View style={[styles.welcomeCheckbox, dontShowWelcomeAgain && styles.welcomeCheckboxChecked]}>
+                  {dontShowWelcomeAgain && <Feather name="check" size={12} color="#fff" />}
+                </View>
+                <Text style={styles.welcomeToggleText}>{t('nftWelcome.dontShowAgain')}</Text>
+              </TouchableOpacity>
+              
+              {/* Got It button */}
+              <TouchableOpacity
+                style={styles.welcomeButton}
+                onPress={handleWelcomeDismiss}
+              >
+                <Text style={styles.welcomeButtonText}>{t('nftWelcome.gotIt')}</Text>
+              </TouchableOpacity>
             </View>
           </View>
         </Modal>
@@ -1354,93 +1352,92 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontWeight: '600',
   },
-  // Welcome popup styles
+  // Welcome popup styles - compact to fit screen without scrolling
   welcomeOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.85)',
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 20,
+    padding: 16,
   },
   welcomeModal: {
     backgroundColor: COLORS.surface,
     borderRadius: 16,
-    padding: 24,
-    maxHeight: '85%',
+    padding: 16,
     width: '100%',
-    maxWidth: 400,
+    maxWidth: 360,
   },
   welcomeHeader: {
     alignItems: 'center',
-    marginBottom: 20,
+    marginBottom: 12,
   },
   welcomeIconContainer: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
+    width: 48,
+    height: 48,
+    borderRadius: 24,
     backgroundColor: `${COLORS.primary}20`,
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 12,
+    marginBottom: 8,
   },
   welcomeTitle: {
-    fontSize: 22,
+    fontSize: 18,
     fontWeight: '700',
     color: COLORS.text,
     textAlign: 'center',
   },
   welcomeSection: {
-    marginBottom: 16,
+    marginBottom: 10,
   },
   welcomeSectionHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 6,
+    marginBottom: 3,
   },
   welcomeSectionTitle: {
-    fontSize: 15,
+    fontSize: 13,
     fontWeight: '600',
     color: COLORS.text,
-    marginLeft: 8,
+    marginLeft: 6,
   },
   welcomeSectionText: {
-    fontSize: 13,
+    fontSize: 11,
     color: COLORS.textSecondary,
-    lineHeight: 19,
-    paddingLeft: 26,
+    lineHeight: 15,
+    paddingLeft: 22,
   },
   welcomeToggle: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginTop: 16,
-    marginBottom: 20,
+    marginTop: 10,
+    marginBottom: 12,
   },
   welcomeCheckbox: {
-    width: 22,
-    height: 22,
+    width: 20,
+    height: 20,
     borderRadius: 4,
     borderWidth: 2,
     borderColor: COLORS.border,
     justifyContent: 'center',
     alignItems: 'center',
-    marginRight: 10,
+    marginRight: 8,
   },
   welcomeCheckboxChecked: {
     backgroundColor: COLORS.primary,
     borderColor: COLORS.primary,
   },
   welcomeToggleText: {
-    fontSize: 14,
+    fontSize: 13,
     color: COLORS.textSecondary,
   },
   welcomeButton: {
     backgroundColor: COLORS.primary,
     borderRadius: 10,
-    paddingVertical: 14,
+    paddingVertical: 12,
     alignItems: 'center',
   },
   welcomeButtonText: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '600',
     color: '#fff',
   },

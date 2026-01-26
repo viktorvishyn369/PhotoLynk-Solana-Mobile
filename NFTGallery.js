@@ -25,49 +25,23 @@ import * as FileSystem from 'expo-file-system';
 import NFTOperations from './nftOperations';
 import { t } from './i18n';
 
-// Image cache directory and index file
+// Import shared cache utilities (avoids circular dependency with nftOperations)
+import NFTImageCache from './nftImageCache';
+
+// Re-export for backwards compatibility
+export const removeNFTImageFromCache = NFTImageCache.removeNFTImageFromCache;
+
+// Local wrapper to provide Map-like interface for existing code
+const imageCache = {
+  has: (cid) => NFTImageCache.hasCachedPath(cid),
+  get: (cid) => NFTImageCache.getCachedPath(cid),
+  set: (cid, path) => NFTImageCache.setCachedPath(cid, path),
+};
+const saveCacheIndex = () => NFTImageCache.saveCacheIndex();
 const IMAGE_CACHE_DIR = `${FileSystem.cacheDirectory}nft_images/`;
-const CACHE_INDEX_FILE = `${FileSystem.documentDirectory}nft_image_cache_index.json`;
-
-// In-memory cache of local paths (CID -> local file path)
-const imageCache = new Map();
-let cacheLoaded = false;
-
-// Load cache index from disk on startup
-const loadCacheIndex = async () => {
-  if (cacheLoaded) return;
-  try {
-    const info = await FileSystem.getInfoAsync(CACHE_INDEX_FILE);
-    if (info.exists) {
-      const data = await FileSystem.readAsStringAsync(CACHE_INDEX_FILE);
-      const index = JSON.parse(data);
-      // Verify each cached file still exists
-      for (const [cid, path] of Object.entries(index)) {
-        const fileInfo = await FileSystem.getInfoAsync(path);
-        if (fileInfo.exists) {
-          imageCache.set(cid, path);
-        }
-      }
-      console.log(`[NFTCache] Loaded ${imageCache.size} cached images`);
-    }
-  } catch (e) {
-    console.log('[NFTCache] Could not load cache index:', e.message);
-  }
-  cacheLoaded = true;
-};
-
-// Save cache index to disk
-const saveCacheIndex = async () => {
-  try {
-    const index = Object.fromEntries(imageCache);
-    await FileSystem.writeAsStringAsync(CACHE_INDEX_FILE, JSON.stringify(index));
-  } catch (e) {
-    console.log('[NFTCache] Could not save cache index:', e.message);
-  }
-};
 
 // Initialize cache on module load
-loadCacheIndex();
+NFTImageCache.loadCacheIndex();
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -142,6 +116,7 @@ const NFTImageWithFallback = ({ url, originalUrl, style, isDetail = false }) => 
   const [memoryRetries, setMemoryRetries] = useState(0);
   const [cachedPath, setCachedPath] = useState(null);
   const [effectiveUrl, setEffectiveUrl] = useState(url);
+  const [imageAspectRatio, setImageAspectRatio] = useState(1); // Dynamic aspect ratio for detail view
   const imageRef = React.useRef(null);
   const retryTimerRef = React.useRef(null);
   
@@ -347,8 +322,16 @@ const NFTImageWithFallback = ({ url, originalUrl, style, isDetail = false }) => 
   }
   
   // Save image to cache after successful load
-  const handleLoadSuccess = async () => {
+  const handleLoadSuccess = async (event) => {
     setLoading(false);
+    
+    // Get image dimensions for proper aspect ratio in detail view
+    if (isDetail && event?.nativeEvent?.source) {
+      const { width, height } = event.nativeEvent.source;
+      if (width && height && height > 0) {
+        setImageAspectRatio(width / height);
+      }
+    }
     
     // Cache IPFS images to disk for persistence
     const cid = extractIPFSCid(finalUrl);
@@ -373,8 +356,13 @@ const NFTImageWithFallback = ({ url, originalUrl, style, isDetail = false }) => 
   // Use cached path if available
   const displayUrl = cachedPath || finalUrl;
   
+  // For detail view, use dynamic aspect ratio to preserve original dimensions
+  const imageStyle = isDetail 
+    ? [style, { aspectRatio: imageAspectRatio }]
+    : style;
+  
   return (
-    <View style={style}>
+    <View style={isDetail ? { width: '100%' } : style}>
       {loading && (
         <View style={[style, { position: 'absolute', justifyContent: 'center', alignItems: 'center', backgroundColor: COLORS.surface, zIndex: 1 }]}>
           <ActivityIndicator size={isDetail ? 'large' : 'small'} color={COLORS.primary} />
@@ -383,7 +371,7 @@ const NFTImageWithFallback = ({ url, originalUrl, style, isDetail = false }) => 
       <Image
         ref={imageRef}
         source={{ uri: displayUrl, cache: 'force-cache' }}
-        style={style}
+        style={imageStyle}
         resizeMode={isDetail ? 'contain' : 'cover'}
         onLoadStart={() => setLoading(true)}
         onLoad={handleLoadSuccess}
@@ -783,7 +771,7 @@ const NFTGallery = ({
                   )}
                   <View style={{ backgroundColor: 'rgba(153, 69, 255, 0.2)', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 4 }}>
                     <Text style={{ fontSize: 10, color: '#9945FF', fontWeight: '600' }}>
-                      {(selectedNFT.imageUrl || '').includes('stealthlynk.io') ? 'StealthCloud' : 'IPFS'}
+                      {selectedNFT.storageType ? (selectedNFT.storageType === 'cloud' ? 'StealthCloud' : 'IPFS') : ((selectedNFT.imageUrl || '').includes('stealthlynk.io') ? 'StealthCloud' : 'IPFS')}
                     </Text>
                   </View>
                 </View>
@@ -950,7 +938,7 @@ const NFTGallery = ({
                 style={styles.actionButton}
                 onPress={async () => {
                   // Determine if this is StealthCloud or IPFS storage
-                  const isStealthCloud = (selectedNFT.thumbnailUrl || selectedNFT.imageUrl || '').includes('stealthlynk.io');
+                  const isStealthCloud = selectedNFT.storageType === 'cloud' || (!selectedNFT.storageType && (selectedNFT.thumbnailUrl || selectedNFT.imageUrl || '').includes('stealthlynk.io'));
                   
                   if (isStealthCloud) {
                     // StealthCloud: use thumbnailUrl or imageUrl directly
@@ -1123,7 +1111,7 @@ const NFTGallery = ({
                     {t('nftAlbum.compressed')}
                   </Text>
                 </View>
-                <Text style={{ fontSize: 8, color: COLORS.textSecondary, marginTop: 2 }}>{t('nftAlbum.sharedTree')}</Text>
+                <Text style={{ fontSize: 8, color: COLORS.textSecondary, marginTop: 2 }}>{t('nftAlbum.lowCost')}</Text>
               </View>
             </TouchableOpacity>
           </View>
@@ -1741,8 +1729,7 @@ const styles = StyleSheet.create({
   },
   detailImage: {
     width: '100%',
-    aspectRatio: 1,
-    maxHeight: SCREEN_WIDTH,
+    minHeight: 200,
     backgroundColor: COLORS.background,
   },
   ownerSection: {

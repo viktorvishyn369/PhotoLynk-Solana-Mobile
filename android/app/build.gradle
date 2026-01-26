@@ -91,8 +91,9 @@ android {
         applicationId 'com.photolynk.solana'
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 17
+        versionCode 24
         versionName "1.5.0"
+        resConfigs "en", "ar", "bg", "cs", "da", "de", "el", "es", "et", "fi", "fr", "hi", "hr", "hu", "id", "in", "it", "iw", "ja", "ko", "lt", "lv", "nl", "no", "pl", "pt", "pt-rBR", "ro", "ru", "sv", "tr", "uk", "zh"
     }
     signingConfigs {
         debug {
@@ -102,10 +103,10 @@ android {
             keyPassword 'android'
         }
         release {
-            storeFile file('photosync-release.keystore')
-            storePassword 'Vik810515$&@'
-            keyAlias 'photosync'
-            keyPassword 'Vik810515$&@'
+            storeFile file('@vishyn369__photosync.jks')
+            storePassword 'ea20a1bd988aa4f5e5461c0a21c62214'
+            keyAlias 'b17dbfc74360776615c3064317222956'
+            keyPassword 'e146f05a5a5ce375e4841e8c8706fd6c'
         }
     }
     buildTypes {

@@ -26,6 +26,14 @@ const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const isTablet = Math.min(SCREEN_WIDTH, SCREEN_HEIGHT) >= 600;
 const isLargeTablet = Math.min(SCREEN_WIDTH, SCREEN_HEIGHT) >= 768;
 
+// Calculate plan card width for 2x2 grid
+// Container has 16px padding on each side = 32px total
+// planGrid has 12px padding on each side = 24px total  
+// Gap between cards = 10px
+// Available width = SCREEN_WIDTH - 32 - 24 - 10 = SCREEN_WIDTH - 66
+// Each card = (available width) / 2
+const PLAN_CARD_WIDTH = Math.floor((SCREEN_WIDTH - 66) / 2);
+
 const scale = (size) => {
   if (isLargeTablet) return size * 1.35;
   if (isTablet) return size * 1.2;
@@ -649,13 +657,12 @@ const styles = StyleSheet.create({
   planGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    padding: scaleSpacing(12),
-    gap: scaleSpacing(10),
+    justifyContent: 'space-between',
+    padding: 12,
   },
   planCard: {
-    flex: 1,
-    minWidth: '45%',
-    maxWidth: '48%',
+    width: PLAN_CARD_WIDTH,
+    marginBottom: 10,
     backgroundColor: '#2A2A2A',
     borderRadius: scale(12),
     padding: scaleSpacing(16),

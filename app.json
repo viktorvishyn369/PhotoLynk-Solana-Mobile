@@ -18,7 +18,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.photosync.app",
-      "buildNumber": "17",
+      "buildNumber": "21",
       "infoPlist": {
         "NSPhotoLibraryUsageDescription": "PhotoLynk needs read access to choose photos and videos to back up from your device to your PhotoLynk account.",
         "NSPhotoLibraryAddUsageDescription": "PhotoLynk saves photos and videos you restore or export from your backup back into your library.",
@@ -36,7 +36,41 @@
         "NSAppTransportSecurity": {
           "NSAllowsArbitraryLoads": true,
           "NSAllowsLocalNetworking": true
-        }
+        },
+        "CFBundleLocalizations": [
+          "en",
+          "ar",
+          "bg",
+          "cs",
+          "da",
+          "de",
+          "el",
+          "en-GB",
+          "es",
+          "et",
+          "fi",
+          "fr",
+          "hi",
+          "hr",
+          "hu",
+          "id",
+          "it",
+          "ja",
+          "ko",
+          "lt",
+          "lv",
+          "nl",
+          "no",
+          "pl",
+          "pt",
+          "pt-BR",
+          "ro",
+          "ru",
+          "sv",
+          "tr",
+          "uk",
+          "zh"
+        ]
       },
       "appleTeamId": "C9X2WT7AA5"
     },
@@ -68,7 +102,7 @@
         "android.permission.CAMERA"
       ],
       "package": "com.photolynk.solana",
-      "versionCode": 16,
+      "versionCode": 24,
       "intentFilters": [
         {
           "action": "VIEW",

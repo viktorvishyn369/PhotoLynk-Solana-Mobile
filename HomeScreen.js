@@ -436,13 +436,10 @@ const styles = StyleSheet.create({
     textAlign: 'right',
   },
   statusMessageContainer: {
-    backgroundColor: COLORS.card,
-    borderRadius: scale(8),
+    backgroundColor: 'transparent',
     paddingVertical: scaleSpacing(8),
     paddingHorizontal: scaleSpacing(12),
     width: '100%',
-    borderWidth: 1,
-    borderColor: COLORS.border,
   },
   statusMessage: {
     fontSize: scale(12),

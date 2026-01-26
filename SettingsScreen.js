@@ -128,6 +128,7 @@ export const SettingsScreen = ({
   persistGlassModeEnabled,
   loading,
   logout,
+  relogin,
   purgeStealthCloudData,
   purgeClassicServerData,
   showDarkAlert,
@@ -165,8 +166,10 @@ export const SettingsScreen = ({
     } else if (serverType === 'local') {
       await SecureStore.setItemAsync('local_host', localHost);
     }
-    await logout();
-    showDarkAlert('Saved', 'Server settings updated');
+    // Relogin with new server settings instead of logging out
+    if (relogin) {
+      await relogin(serverType);
+    }
   };
 
   return (

@@ -1,10 +1,22 @@
 // Solana Blockchain Purchases Integration for StealthCloud
 // Handles subscription payments via SOL transfers on Solana blockchain
-// Uses Mobile Wallet Adapter for Solana Seeker/Saga devices
+// Supports multiple wallets: MWA (Seeker/Saga), Phantom, WalletConnect, MetaMask
 
 import { Platform } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
 import axios from 'axios';
+
+// WalletAdapter imports for universal wallet support
+let WalletAdapter = null;
+let walletAdapterAvailable = false;
+
+try {
+  WalletAdapter = require('./WalletAdapter');
+  walletAdapterAvailable = true;
+  console.log('[SolanaPurchases] WalletAdapter loaded');
+} catch (e) {
+  console.log('[SolanaPurchases] WalletAdapter not available:', e.message);
+}
 
 // Solana imports - will be available after npm install
 let Connection, PublicKey, Transaction, SystemProgram, LAMPORTS_PER_SOL, TransactionMessage, VersionedTransaction;
@@ -37,8 +49,14 @@ try {
 // Payment recipient wallet address (your business wallet)
 export const PAYMENT_WALLET = 'HttTZkUG8xn5A1uJPjRDJqqufdwvHmNQroEGmST8iimU';
 
-// Solana RPC endpoint (mainnet-beta for production)
-const SOLANA_RPC_ENDPOINT = 'https://api.mainnet-beta.solana.com';
+// Solana RPC endpoints with fallbacks (mainnet-beta for production)
+const SOLANA_RPC_ENDPOINTS = [
+  'https://api.mainnet-beta.solana.com',
+  'https://solana-mainnet.g.alchemy.com/v2/demo',
+  'https://rpc.ankr.com/solana',
+];
+let currentRpcIndex = 0;
+const SOLANA_RPC_ENDPOINT = SOLANA_RPC_ENDPOINTS[0];
 // For testing, use devnet:
 // const SOLANA_RPC_ENDPOINT = 'https://api.devnet.solana.com';
 
@@ -87,7 +105,7 @@ let authToken = null;
 // ============================================================================
 
 /**
- * Initialize Solana connection
+ * Initialize Solana connection with fallback RPC endpoints
  */
 export const initializeSolana = async () => {
   if (!solanaAvailable) {
@@ -95,14 +113,66 @@ export const initializeSolana = async () => {
     return false;
   }
   
-  try {
-    connection = new Connection(SOLANA_RPC_ENDPOINT, 'confirmed');
-    console.log('Solana connection initialized');
-    return true;
-  } catch (e) {
-    console.error('Failed to initialize Solana:', e);
-    return false;
+  // Try each RPC endpoint until one works
+  for (let i = 0; i < SOLANA_RPC_ENDPOINTS.length; i++) {
+    try {
+      const endpoint = SOLANA_RPC_ENDPOINTS[i];
+      const testConnection = new Connection(endpoint, 'confirmed');
+      
+      // Test the connection with a simple call
+      await testConnection.getLatestBlockhash('confirmed');
+      
+      connection = testConnection;
+      currentRpcIndex = i;
+      console.log('Solana connection initialized with:', endpoint);
+      return true;
+    } catch (e) {
+      console.log(`RPC ${SOLANA_RPC_ENDPOINTS[i]} failed:`, e.message);
+    }
   }
+  
+  // Fallback: use first endpoint anyway (might work later)
+  connection = new Connection(SOLANA_RPC_ENDPOINTS[0], 'confirmed');
+  console.log('Solana connection initialized (fallback)');
+  return true;
+};
+
+/**
+ * Get a working connection, trying fallback RPCs if needed
+ */
+const getWorkingConnection = async () => {
+  if (!connection) {
+    await initializeSolana();
+  }
+  
+  // Try current connection first
+  try {
+    await connection.getLatestBlockhash('confirmed');
+    return connection;
+  } catch (e) {
+    console.log('[SolanaPurchases] Current RPC failed, trying fallbacks...');
+  }
+  
+  // Try other endpoints
+  for (let i = 0; i < SOLANA_RPC_ENDPOINTS.length; i++) {
+    if (i === currentRpcIndex) continue;
+    
+    try {
+      const endpoint = SOLANA_RPC_ENDPOINTS[i];
+      const testConnection = new Connection(endpoint, 'confirmed');
+      await testConnection.getLatestBlockhash('confirmed');
+      
+      connection = testConnection;
+      currentRpcIndex = i;
+      console.log('[SolanaPurchases] Switched to RPC:', endpoint);
+      return connection;
+    } catch (e) {
+      console.log(`[SolanaPurchases] RPC ${SOLANA_RPC_ENDPOINTS[i]} failed`);
+    }
+  }
+  
+  // Return current connection as last resort
+  return connection;
 };
 
 // ============================================================================
@@ -340,7 +410,7 @@ const createPaymentMemo = (userUuid, tierGb, duration = 'monthly') => {
  * @returns {Object} { success, txSignature, error }
  */
 export const purchaseWithSol = async (tierGb, authToken, duration = 'monthly') => {
-  if (!solanaAvailable || !transact || !connection) {
+  if (!solanaAvailable || !transact) {
     return { success: false, error: 'Solana not available' };
   }
   
@@ -349,6 +419,12 @@ export const purchaseWithSol = async (tierGb, authToken, duration = 'monthly') =
   }
   
   try {
+    // Ensure we have a working connection with fallback RPCs
+    const workingConnection = await getWorkingConnection();
+    if (!workingConnection) {
+      return { success: false, error: 'Cannot connect to Solana network' };
+    }
+    
     // Get price in SOL
     const priceInfo = await getPlanPriceInSol(tierGb);
     if (!priceInfo.sol || priceInfo.sol <= 0) {
@@ -360,13 +436,23 @@ export const purchaseWithSol = async (tierGb, authToken, duration = 'monthly') =
     
     console.log(`Initiating payment: ${priceInfo.sol.toFixed(6)} SOL ($${priceInfo.usd}) for ${tierGb}GB ${duration}`);
     
+    // Pre-fetch blockhash BEFORE opening wallet session to avoid timeout
+    console.log('[SolanaPurchases] Pre-fetching blockhash...');
+    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
+    console.log('[SolanaPurchases] Blockhash ready:', blockhash.slice(0, 16) + '...');
+    
+    const recipientPubkey = new PublicKey(PAYMENT_WALLET);
+    
     // Execute transaction via Mobile Wallet Adapter
+    console.log('[SolanaPurchases] Opening MWA session...');
     const txSignature = await transact(async (wallet) => {
       // Authorize if needed
+      console.log('[SolanaPurchases] Requesting authorization...');
       const authResult = await wallet.authorize({
         cluster: 'mainnet-beta',
         identity: APP_IDENTITY,
       });
+      console.log('[SolanaPurchases] Authorization received, building transaction...');
       
       // Get payer's public key - MWA returns address as base64 string, convert to bytes then PublicKey
       const payerAddress = authResult.accounts[0].address;
@@ -375,10 +461,7 @@ export const purchaseWithSol = async (tierGb, authToken, duration = 'monthly') =
         ? Uint8Array.from(atob(payerAddress), c => c.charCodeAt(0))
         : new Uint8Array(payerAddress);
       const payerPubkey = new PublicKey(payerBytes);
-      const recipientPubkey = new PublicKey(PAYMENT_WALLET);
-      
-      // Get recent blockhash
-      const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
+      console.log('[SolanaPurchases] Payer:', payerPubkey.toBase58());
       
       // Create transfer instruction
       const transferInstruction = SystemProgram.transfer({
@@ -396,26 +479,67 @@ export const purchaseWithSol = async (tierGb, authToken, duration = 'monthly') =
       
       // Create versioned transaction
       const transaction = new VersionedTransaction(messageV0);
+      console.log('[SolanaPurchases] Transaction built, requesting signature...');
+      console.log('[SolanaPurchases] From:', payerPubkey.toBase58(), 'To:', recipientPubkey.toBase58());
       
-      // Sign and send via wallet
-      const signatures = await wallet.signAndSendTransactions({
+      // Use signTransactions + manual send (more reliable than signAndSendTransactions on some wallets)
+      console.log('[SolanaPurchases] Calling wallet.signTransactions...');
+      const signedTransactions = await wallet.signTransactions({
         transactions: [transaction],
       });
+      console.log('[SolanaPurchases] Transaction signed by wallet');
       
-      return signatures[0];
+      // Return signed transaction to send outside wallet session
+      return signedTransactions[0];
     });
     
-    console.log('Transaction submitted:', txSignature);
+    // Small delay to let MWA session fully close before network call
+    await new Promise(resolve => setTimeout(resolve, 500));
+    
+    // Send the signed transaction outside the MWA session with retry
+    console.log('[SolanaPurchases] Sending signed transaction to network...');
+    let txSignatureFinal = null;
+    let sendError = null;
+    
+    // Try each RPC endpoint silently
+    for (let i = 0; i < SOLANA_RPC_ENDPOINTS.length; i++) {
+      try {
+        const endpoint = SOLANA_RPC_ENDPOINTS[i];
+        const sendConnection = new Connection(endpoint, 'confirmed');
+        
+        const signature = await sendConnection.sendRawTransaction(txSignature.serialize(), {
+          skipPreflight: true,
+          preflightCommitment: 'confirmed',
+          maxRetries: 3,
+        });
+        
+        txSignatureFinal = signature;
+        console.log('[SolanaPurchases] Transaction sent successfully');
+        break;
+      } catch (e) {
+        // Silent retry - only log on last attempt
+        if (i === SOLANA_RPC_ENDPOINTS.length - 1) {
+          console.log('[SolanaPurchases] All RPC endpoints failed');
+        }
+        sendError = e;
+      }
+    }
+    
+    if (!txSignatureFinal) {
+      throw sendError || new Error('Failed to send transaction to all RPC endpoints');
+    }
+    
+    console.log('Transaction submitted:', txSignatureFinal);
     
     // Notify server about the payment immediately - server will verify on-chain
     // Don't wait for client-side confirmation as MWA session may timeout
-    const serverResult = await notifyServerOfPayment(txSignature, authToken, tierGb, duration, priceInfo.sol);
+    const serverResult = await notifyServerOfPayment(txSignatureFinal, authToken, tierGb, duration, priceInfo.sol);
     
     if (serverResult.success) {
-      console.log('Payment verified by server:', txSignature);
+      console.log('Payment verified by server:', txSignatureFinal);
       return {
         success: true,
-        txSignature,
+        txSignature: txSignatureFinal,
         solAmount: priceInfo.sol,
         usdAmount: priceInfo.usd,
         serverNotified: true,
@@ -425,7 +549,7 @@ export const purchaseWithSol = async (tierGb, authToken, duration = 'monthly') =
       console.log('Server verification pending:', serverResult.error);
       return {
         success: true,
-        txSignature,
+        txSignature: txSignatureFinal,
         solAmount: priceInfo.sol,
         usdAmount: priceInfo.usd,
         serverNotified: false,
@@ -442,9 +566,205 @@ export const purchaseWithSol = async (tierGb, authToken, duration = 'monthly') =
       console.log('Transaction may have been sent, check wallet for confirmation');
       return { success: false, errorKey: 'transactionTimeout', timeout: true };
     }
-    console.error('Payment failed:', e);
+    console.log('[SolanaPurchases] Payment failed:', e.message);
     return { success: false, errorKey: 'paymentFailed' };
   }
+};
+
+/**
+ * Purchase a subscription plan using SOL via WalletAdapter (Universal)
+ * Supports multiple wallets: MWA, Phantom, WalletConnect, MetaMask
+ * @param {number} tierGb - Plan tier in GB (100, 200, 400, 1000)
+ * @param {string} authToken - User's auth token for server authentication
+ * @param {string} duration - 'monthly' or 'yearly'
+ * @param {string} walletType - Optional: specific wallet type to use
+ * @returns {Object} { success, txSignature, error }
+ */
+export const purchaseWithWallet = async (tierGb, authToken, duration = 'monthly', walletType = null) => {
+  // For MWA (Android), use the original purchaseWithSol which handles everything in one session
+  // MWA requires building and signing transaction in the SAME wallet session to avoid timeouts
+  if (Platform.OS === 'android' && (!walletType || walletType === 'mwa')) {
+    console.log('[SolanaPurchases] Using MWA single-session flow for Android');
+    return purchaseWithSol(tierGb, authToken, duration);
+  }
+  
+  // Check if WalletAdapter is available for non-MWA wallets (Phantom deeplinks, etc.)
+  if (!walletAdapterAvailable || !WalletAdapter) {
+    console.log('[SolanaPurchases] WalletAdapter not available, falling back to MWA');
+    return purchaseWithSol(tierGb, authToken, duration);
+  }
+  
+  if (!solanaAvailable || !connection) {
+    return { success: false, error: 'Solana not available' };
+  }
+  
+  if (!authToken) {
+    return { success: false, error: 'Auth token required' };
+  }
+  
+  try {
+    // Initialize WalletAdapter if needed
+    await WalletAdapter.initializeWalletAdapter();
+    
+    // Check connection status
+    let status = WalletAdapter.getConnectionStatus();
+    
+    // Determine which wallet to use
+    const targetWalletType = walletType || (Platform.OS === 'ios' ? 'phantom' : 'mwa');
+    
+    // If MWA is selected, use the original flow
+    if (targetWalletType === 'mwa') {
+      console.log('[SolanaPurchases] MWA selected, using single-session flow');
+      return purchaseWithSol(tierGb, authToken, duration);
+    }
+    
+    // If not connected, connect to wallet
+    if (!status.isConnected || status.walletType !== targetWalletType) {
+      const connectResult = await WalletAdapter.connectWallet(targetWalletType);
+      
+      if (!connectResult.success) {
+        if (connectResult.userCancelled) {
+          return { success: false, error: 'cancelled', userCancelled: true };
+        }
+        // Fall back to MWA if other wallet fails
+        console.log('[SolanaPurchases] Wallet connection failed, falling back to MWA');
+        return purchaseWithSol(tierGb, authToken, duration);
+      }
+      
+      status = WalletAdapter.getConnectionStatus();
+    }
+    
+    if (!status.address) {
+      return { success: false, error: 'No wallet address' };
+    }
+    
+    // Get price in SOL
+    const priceInfo = await getPlanPriceInSol(tierGb);
+    if (!priceInfo.sol || priceInfo.sol <= 0) {
+      return { success: false, error: 'Invalid plan tier' };
+    }
+    
+    const lamports = Math.ceil(priceInfo.sol * LAMPORTS_PER_SOL);
+    
+    console.log(`[SolanaPurchases] Initiating payment via ${status.walletType}: ${priceInfo.sol.toFixed(6)} SOL ($${priceInfo.usd}) for ${tierGb}GB ${duration}`);
+    
+    // Create transaction
+    const payerPubkey = new PublicKey(status.address);
+    const recipientPubkey = new PublicKey(PAYMENT_WALLET);
+    
+    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
+    
+    const transferInstruction = SystemProgram.transfer({
+      fromPubkey: payerPubkey,
+      toPubkey: recipientPubkey,
+      lamports,
+    });
+    
+    const messageV0 = new TransactionMessage({
+      payerKey: payerPubkey,
+      recentBlockhash: blockhash,
+      instructions: [transferInstruction],
+    }).compileToV0Message();
+    
+    const transaction = new VersionedTransaction(messageV0);
+    
+    // Sign and send via WalletAdapter
+    const txResult = await WalletAdapter.signAndSendTransaction(transaction);
+    
+    if (!txResult.success) {
+      if (txResult.userCancelled) {
+        return { success: false, error: 'cancelled', userCancelled: true };
+      }
+      return { success: false, error: txResult.error || 'Transaction failed' };
+    }
+    
+    const txSignature = txResult.signature;
+    console.log('[SolanaPurchases] Transaction submitted:', txSignature);
+    
+    // Notify server about the payment
+    const serverResult = await notifyServerOfPayment(txSignature, authToken, tierGb, duration, priceInfo.sol);
+    
+    if (serverResult.success) {
+      console.log('[SolanaPurchases] Payment verified by server:', txSignature);
+      return {
+        success: true,
+        txSignature,
+        solAmount: priceInfo.sol,
+        usdAmount: priceInfo.usd,
+        walletType: status.walletType,
+        serverNotified: true,
+      };
+    } else {
+      console.log('[SolanaPurchases] Server verification pending:', serverResult.error);
+      return {
+        success: true,
+        txSignature,
+        solAmount: priceInfo.sol,
+        usdAmount: priceInfo.usd,
+        walletType: status.walletType,
+        serverNotified: false,
+        pendingVerification: true,
+      };
+    }
+  } catch (e) {
+    if (e.message?.includes('User rejected') || e.message?.includes('cancelled') || e.message?.includes('CancellationException')) {
+      return { success: false, error: 'cancelled', userCancelled: true };
+    }
+    if (e.message?.includes('timeout') || e.message?.includes('TimeoutException')) {
+      console.log('[SolanaPurchases] Transaction may have been sent, check wallet for confirmation');
+      return { success: false, errorKey: 'transactionTimeout', timeout: true };
+    }
+    console.log('[SolanaPurchases] Payment failed:', e.message);
+    return { success: false, errorKey: 'paymentFailed', error: e.message };
+  }
+};
+
+/**
+ * Get available wallets for payment
+ * @returns {Array} List of available wallet types
+ */
+export const getAvailablePaymentWallets = async () => {
+  if (!walletAdapterAvailable || !WalletAdapter) {
+    // Fallback: only MWA available on Android
+    if (Platform.OS === 'android' && solanaAvailable) {
+      return [{
+        type: 'mwa',
+        name: 'Mobile Wallet',
+        description: 'Seeker, Phantom, Solflare',
+        isInstalled: true,
+      }];
+    }
+    return [];
+  }
+  
+  try {
+    await WalletAdapter.initializeWalletAdapter();
+    return await WalletAdapter.getAvailableWallets();
+  } catch (e) {
+    console.error('[SolanaPurchases] Failed to get available wallets:', e);
+    return [];
+  }
+};
+
+/**
+ * Get current wallet connection status
+ * @returns {Object} { isConnected, address, walletType }
+ */
+export const getWalletConnectionStatus = () => {
+  if (!walletAdapterAvailable || !WalletAdapter) {
+    return { isConnected: !!connectedWallet, address: connectedWallet, walletType: 'mwa' };
+  }
+  return WalletAdapter.getConnectionStatus();
+};
+
+/**
+ * Disconnect current wallet (universal)
+ */
+export const disconnectCurrentWallet = async () => {
+  if (walletAdapterAvailable && WalletAdapter) {
+    await WalletAdapter.disconnectWallet();
+  }
+  await disconnectWallet();
 };
 
 /**
@@ -452,7 +772,6 @@ export const purchaseWithSol = async (tierGb, authToken, duration = 'monthly') =
  * Server will verify the transaction on-chain and activate the subscription
  */
 const notifyServerOfPayment = async (txSignature, authToken, tierGb, duration, solAmount) => {
-  console.log('notifyServerOfPayment called with authToken:', authToken ? 'present' : 'missing');
   try {
     const headers = { 'Content-Type': 'application/json' };
     if (authToken) {
@@ -471,14 +790,15 @@ const notifyServerOfPayment = async (txSignature, authToken, tierGb, duration, s
     });
     
     if (response.data?.success) {
-      console.log('Server verified payment successfully');
+      console.log('[SolanaPurchases] Server verified payment');
       return { success: true };
     }
     
     return { success: false, error: response.data?.error || 'Verification failed' };
   } catch (e) {
-    console.error('Failed to notify server:', e.message);
     // Payment was successful on-chain, server will pick it up via polling
+    // Don't log as error since transaction succeeded
+    console.log('[SolanaPurchases] Server notification pending, will retry later');
     return { success: false, error: e.message };
   }
 };
@@ -674,6 +994,10 @@ export default {
   usdToSol,
   getPlanPriceInSol,
   purchaseWithSol,
+  purchaseWithWallet,
+  getAvailablePaymentWallets,
+  getWalletConnectionStatus,
+  disconnectCurrentWallet,
   getSubscriptionStatus,
   checkUploadAccess,
   getAvailablePlans,
@@ -683,4 +1007,5 @@ export default {
   PLAN_DURATIONS,
   GRACE_PERIOD_DAYS,
   solanaAvailable: () => solanaAvailable,
+  walletAdapterAvailable: () => walletAdapterAvailable,
 };

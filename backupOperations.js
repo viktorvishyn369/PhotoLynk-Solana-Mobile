@@ -180,6 +180,7 @@ const collectAllAssetsWithCloudDownload = async ({
   if (Platform.OS === 'ios') {
     updateStatus(onStatus, t('status.checkingCloudAvailability', { count: allAssets.length }));
     let cloudDownloadCount = 0;
+    const total = allAssets.length;
     
     for (let i = 0; i < allAssets.length; i++) {
       if (abortRef?.current) return { assets: allAssets, aborted: true };
@@ -195,12 +196,18 @@ const collectAllAssetsWithCloudDownload = async ({
         // Skip items that fail
       }
       
-      if (i % 50 === 0) {
+      // Update progress every 5 items for better feedback
+      if (i % 5 === 0 || i === total - 1) {
         await yieldToUi();
-        // Don't update progress during scanning - keep progress bar hidden
+        const current = i + 1;
         if (cloudDownloadCount > 0) {
-          updateStatus(onStatus, t('status.downloadingFromICloud', { count: cloudDownloadCount }));
+          updateStatus(onStatus, t('status.downloadingFromICloud', { current, total, count: cloudDownloadCount }));
+        } else {
+          updateStatus(onStatus, t('status.preparingPhotos', { current, total }));
         }
+        // Update progress bar during iCloud phase (0-5%)
+        const icloudProgress = (current / total) * 0.05;
+        updateProgress(onProgress, progressStart + icloudProgress);
       }
     }
     

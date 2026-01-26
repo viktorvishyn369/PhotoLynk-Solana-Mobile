@@ -2,7 +2,7 @@
 // Handles REAL photo NFT minting on Solana using:
 // 1. Compressed NFTs (cNFTs) via Metaplex Bubblegum - PRIMARY (99.99% cheaper)
 // 2. Regular NFTs via SPL Token + Metaplex Token Metadata - FALLBACK
-// Uses Mobile Wallet Adapter for Seeker device wallet
+// Supports multiple wallets: MWA (Seeker/Saga), Phantom, WalletConnect, MetaMask
 
 import { Platform } from 'react-native';
 import * as FileSystem from 'expo-file-system';
@@ -12,6 +12,18 @@ import * as ImageManipulator from 'expo-image-manipulator';
 import axios from 'axios';
 import { sha256 } from 'js-sha256';
 import { getDeviceUUID, SAVED_PASSWORD_KEY } from './authHelpers';
+
+// WalletAdapter imports for universal wallet support
+let WalletAdapter = null;
+let walletAdapterAvailable = false;
+
+try {
+  WalletAdapter = require('./WalletAdapter');
+  walletAdapterAvailable = true;
+  console.log('[NFT] WalletAdapter loaded');
+} catch (e) {
+  console.log('[NFT] WalletAdapter not available:', e.message);
+}
 
 // ============================================================================
 // SOLANA IMPORTS
@@ -116,7 +128,7 @@ let TOKEN_METADATA_PROGRAM_ID = null;
 // ============================================================================
 // PROMOTIONAL PRICING - 30 DAY LAUNCH SPECIAL
 // ============================================================================
-const PROMO_START_DATE = new Date('2026-01-25T00:00:00Z'); // Launch date
+const PROMO_START_DATE = new Date('2026-01-27T00:00:00Z'); // Launch date
 const PROMO_DURATION_DAYS = 30;
 const PROMO_END_DATE = new Date(PROMO_START_DATE.getTime() + PROMO_DURATION_DAYS * 24 * 60 * 60 * 1000);
 
@@ -233,6 +245,202 @@ const SOL_PRICE_STORAGE_KEY = 'photolynk_sol_price';
 // Local NFT storage - using FileSystem instead of SecureStore to avoid 2KB limit
 const NFT_STORAGE_KEY = 'photolynk_nfts';
 const NFT_STORAGE_FILE = `${FileSystem.documentDirectory}photolynk_nfts.json`;
+
+// ============================================================================
+// UNIVERSAL WALLET HELPERS
+// ============================================================================
+
+/**
+ * Get connected wallet address using WalletAdapter or MWA fallback
+ * @returns {Object} { success, address, pubkey, walletType, error }
+ */
+const getConnectedWalletAddress = async () => {
+  // Try WalletAdapter first (supports multiple wallets)
+  if (walletAdapterAvailable && WalletAdapter) {
+    try {
+      await WalletAdapter.initializeWalletAdapter();
+      let status = WalletAdapter.getConnectionStatus();
+      
+      if (!status.isConnected) {
+        // Try to connect to best available wallet
+        const connectResult = await WalletAdapter.connectBestWallet();
+        if (!connectResult.success) {
+          // Fall back to MWA
+          console.log('[NFT] WalletAdapter connect failed, falling back to MWA');
+        } else {
+          status = WalletAdapter.getConnectionStatus();
+        }
+      }
+      
+      if (status.isConnected && status.address) {
+        const pubkey = new PublicKey(status.address);
+        return {
+          success: true,
+          address: status.address,
+          pubkey,
+          walletType: status.walletType,
+        };
+      }
+    } catch (e) {
+      console.log('[NFT] WalletAdapter error, falling back to MWA:', e.message);
+    }
+  }
+  
+  // Fallback to MWA (original behavior)
+  if (!transact) {
+    return { success: false, error: 'No wallet available' };
+  }
+  
+  try {
+    let address, pubkey;
+    await transact(async (wallet) => {
+      const authResult = await wallet.authorize({
+        cluster: 'mainnet-beta',
+        identity: APP_IDENTITY,
+      });
+      
+      const ownerAddress = authResult.accounts[0].address;
+      const ownerBytes = typeof ownerAddress === 'string'
+        ? Uint8Array.from(atob(ownerAddress), c => c.charCodeAt(0))
+        : new Uint8Array(ownerAddress);
+      pubkey = new PublicKey(ownerBytes);
+      address = pubkey.toBase58();
+    });
+    
+    return { success: true, address, pubkey, walletType: 'mwa' };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+};
+
+/**
+ * Sign and send transaction using WalletAdapter or MWA fallback
+ * @param {VersionedTransaction} transaction - Transaction to sign and send
+ * @param {string} walletType - Current wallet type (for routing)
+ * @returns {Object} { success, signature, error }
+ */
+const universalSignAndSend = async (transaction, walletType = null) => {
+  // Use WalletAdapter if available and connected
+  if (walletAdapterAvailable && WalletAdapter && walletType !== 'mwa') {
+    try {
+      const status = WalletAdapter.getConnectionStatus();
+      if (status.isConnected) {
+        const result = await WalletAdapter.signAndSendTransaction(transaction);
+        return result;
+      }
+    } catch (e) {
+      console.log('[NFT] WalletAdapter signAndSend failed, falling back to MWA:', e.message);
+    }
+  }
+  
+  // Fallback to MWA
+  if (!transact) {
+    return { success: false, error: 'No wallet available' };
+  }
+  
+  try {
+    const signature = await transact(async (wallet) => {
+      await wallet.authorize({
+        cluster: 'mainnet-beta',
+        identity: APP_IDENTITY,
+      });
+      
+      const signatures = await wallet.signAndSendTransactions({
+        transactions: [transaction],
+      });
+      
+      return signatures[0];
+    });
+    
+    return { success: true, signature };
+  } catch (e) {
+    if (e.message?.includes('User rejected') || e.message?.includes('cancelled')) {
+      return { success: false, error: 'User cancelled', userCancelled: true };
+    }
+    return { success: false, error: e.message };
+  }
+};
+
+/**
+ * Execute a transact session - uses MWA for complex inline operations
+ * For operations that need to build transactions inside the wallet session
+ * @param {Function} callback - Async function receiving wallet object
+ * @returns {any} Result from callback
+ */
+const executeWalletSession = async (callback) => {
+  if (!transact) {
+    throw new Error('Mobile Wallet Adapter not available');
+  }
+  return await transact(callback);
+};
+
+/**
+ * Universal sign transaction - works with all wallet types
+ * Returns signed transaction for manual sending
+ * @param {VersionedTransaction} transaction - Transaction to sign
+ * @param {string} walletType - Current wallet type
+ * @returns {Object} { success, signedTransaction, error }
+ */
+const universalSignTransaction = async (transaction, walletType = null) => {
+  // Use WalletAdapter if available and not MWA
+  if (walletAdapterAvailable && WalletAdapter && walletType && walletType !== 'mwa') {
+    try {
+      const status = WalletAdapter.getConnectionStatus();
+      if (status.isConnected) {
+        console.log('[NFT] Using WalletAdapter for signing (wallet:', walletType, ')');
+        // WalletAdapter's signAndSendTransaction handles signing internally
+        // For sign-only, we need to use the adapter's sign method if available
+        const result = await WalletAdapter.signAndSendTransaction(transaction);
+        if (result.success) {
+          return { success: true, signature: result.signature, sentViaAdapter: true };
+        }
+        return result;
+      }
+    } catch (e) {
+      console.log('[NFT] WalletAdapter sign failed:', e.message);
+      // Fall through to MWA
+    }
+  }
+  
+  // Use MWA for signing
+  if (!transact) {
+    return { success: false, error: 'No wallet available for signing' };
+  }
+  
+  try {
+    console.log('[NFT] Using MWA for signing');
+    const signedTx = await transact(async (wallet) => {
+      await wallet.authorize({
+        cluster: 'mainnet-beta',
+        identity: APP_IDENTITY,
+      });
+      
+      const signedTransactions = await wallet.signTransactions({
+        transactions: [transaction],
+      });
+      
+      return signedTransactions[0];
+    });
+    
+    return { success: true, signedTransaction: signedTx };
+  } catch (e) {
+    if (e.message?.includes('User rejected') || e.message?.includes('cancelled')) {
+      return { success: false, error: 'User cancelled', userCancelled: true };
+    }
+    return { success: false, error: e.message };
+  }
+};
+
+/**
+ * Check if any wallet is available for NFT operations
+ * @returns {boolean}
+ */
+const isWalletAvailable = () => {
+  if (walletAdapterAvailable && WalletAdapter) {
+    return true;
+  }
+  return !!transact;
+};
 
 // ============================================================================
 // METAPLEX TOKEN METADATA INSTRUCTION BUILDERS
@@ -1600,6 +1808,235 @@ const serializeMetadataArgs = (args) => {
 // ============================================================================
 
 /**
+ * Mint NFT using WalletAdapter (for non-MWA wallets like Phantom deeplink, WalletConnect)
+ * Builds transaction outside wallet session, signs via adapter, sends manually
+ */
+const mintWithWalletAdapter = async ({
+  nftType,
+  ownerPubkey,
+  ownerAddressStr,
+  prefetchedBlockhash,
+  prefetchedMintRent,
+  solPrice,
+  imageUpload,
+  thumbnailUrl,
+  metadataUpload,
+  metadata,
+  nftName,
+  useStealthCloud,
+  onStatus,
+  onProgress,
+}) => {
+  const useCompressedNFT = nftType === 'compressed' && cNFTAvailable;
+  
+  if (useCompressedNFT) {
+    // ========== COMPRESSED NFT via WalletAdapter ==========
+    console.log('[NFT] Building cNFT transaction for WalletAdapter...');
+    onStatus?.('Minting compressed NFT...');
+    
+    const merkleTreePubkey = new PublicKey(PHOTOLYNK_MERKLE_TREE);
+    const BUBBLEGUM_PROGRAM_ID = new PublicKey('BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY');
+    const SPL_NOOP_PROGRAM_ID = new PublicKey('noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV');
+    const SPL_ACCOUNT_COMPRESSION_PROGRAM_ID = new PublicKey('cmtDvXumGCrqC1Age74AVPhSRVXJMd8PJS91L8KbNCK');
+    
+    const [treeConfig] = PublicKey.findProgramAddressSync(
+      [merkleTreePubkey.toBuffer()],
+      BUBBLEGUM_PROGRAM_ID
+    );
+    
+    const metadataArgs = {
+      name: nftName.slice(0, 32),
+      symbol: 'PLNK',
+      uri: metadataUpload.arweaveUrl,
+      sellerFeeBasisPoints: 500,
+      primarySaleHappened: false,
+      isMutable: true,
+      editionNonce: null,
+      tokenStandard: null,
+      collection: null,
+      uses: null,
+      tokenProgramVersion: 0,
+      creators: [{ address: ownerPubkey, verified: true, share: 100 }],
+    };
+    
+    const metadataBuffer = serializeMetadataArgs(metadataArgs);
+    const MINT_V1_DISCRIMINATOR = new Uint8Array([145, 98, 192, 118, 184, 147, 118, 104]);
+    const instructionData = new Uint8Array(MINT_V1_DISCRIMINATOR.length + metadataBuffer.length);
+    instructionData.set(MINT_V1_DISCRIMINATOR, 0);
+    instructionData.set(metadataBuffer, MINT_V1_DISCRIMINATOR.length);
+    
+    const mintV1Instruction = new TransactionInstruction({
+      keys: [
+        { pubkey: treeConfig, isSigner: false, isWritable: true },
+        { pubkey: ownerPubkey, isSigner: false, isWritable: false },
+        { pubkey: ownerPubkey, isSigner: false, isWritable: false },
+        { pubkey: merkleTreePubkey, isSigner: false, isWritable: true },
+        { pubkey: ownerPubkey, isSigner: true, isWritable: true },
+        { pubkey: ownerPubkey, isSigner: true, isWritable: false },
+        { pubkey: SPL_NOOP_PROGRAM_ID, isSigner: false, isWritable: false },
+        { pubkey: SPL_ACCOUNT_COMPRESSION_PROGRAM_ID, isSigner: false, isWritable: false },
+        { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+      ],
+      programId: BUBBLEGUM_PROGRAM_ID,
+      data: instructionData,
+    });
+    
+    // Commission
+    const safeSolPrice = solPrice > 10 ? solPrice : 250;
+    const commissionUsd = useStealthCloud 
+      ? NFT_FEES.APP_COMMISSION_CNFT_CLOUD_USD 
+      : NFT_FEES.APP_COMMISSION_CNFT_IPFS_USD;
+    const commissionLamports = Math.ceil(commissionUsd / safeSolPrice * LAMPORTS_PER_SOL);
+    console.log('[cNFT] Commission:', commissionUsd, 'USD =', commissionLamports, 'lamports');
+    
+    const commissionInstruction = SystemProgram.transfer({
+      fromPubkey: ownerPubkey,
+      toPubkey: new PublicKey(NFT_COMMISSION_WALLET),
+      lamports: commissionLamports,
+    });
+    
+    // Build transaction
+    const messageV0 = new TransactionMessage({
+      payerKey: ownerPubkey,
+      recentBlockhash: prefetchedBlockhash,
+      instructions: [mintV1Instruction, commissionInstruction],
+    }).compileToV0Message();
+    
+    const transaction = new VersionedTransaction(messageV0);
+    
+    // Sign and send via WalletAdapter
+    console.log('[cNFT] Signing via WalletAdapter...');
+    onStatus?.('Signing transaction...');
+    const txResult = await WalletAdapter.signAndSendTransaction(transaction);
+    
+    if (!txResult.success) {
+      throw new Error(txResult.error || 'WalletAdapter signing failed');
+    }
+    
+    console.log('[cNFT] ✅ Transaction SUCCESS:', txResult.signature);
+    
+    return {
+      txSignature: txResult.signature,
+      ownerAddress: ownerAddressStr,
+      imageUrl: imageUpload.arweaveUrl,
+      thumbnailUrl,
+      metadataUrl: metadataUpload.arweaveUrl,
+      metadata,
+      isRealNFT: true,
+      isCompressed: true,
+      merkleTree: PHOTOLYNK_MERKLE_TREE,
+      _needsDasLookup: true,
+    };
+  } else {
+    // ========== STANDARD NFT via WalletAdapter ==========
+    console.log('[NFT] Building standard NFT transaction for WalletAdapter...');
+    onStatus?.('Minting standard NFT...');
+    
+    const TOKEN_METADATA_PROGRAM_ID = new PublicKey('metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s');
+    const mintKeypair = Keypair.generate();
+    const mintPubkey = mintKeypair.publicKey;
+    
+    console.log('[NFT] Mint address:', mintPubkey.toBase58());
+    
+    const associatedTokenAccount = PublicKey.findProgramAddressSync(
+      [ownerPubkey.toBuffer(), TOKEN_PROGRAM_ID.toBuffer(), mintPubkey.toBuffer()],
+      ASSOCIATED_TOKEN_PROGRAM_ID
+    )[0];
+    
+    const metadataAccount = PublicKey.findProgramAddressSync(
+      [Buffer.from('metadata'), TOKEN_METADATA_PROGRAM_ID.toBuffer(), mintPubkey.toBuffer()],
+      TOKEN_METADATA_PROGRAM_ID
+    )[0];
+    
+    const masterEditionAccount = PublicKey.findProgramAddressSync(
+      [Buffer.from('metadata'), TOKEN_METADATA_PROGRAM_ID.toBuffer(), mintPubkey.toBuffer(), Buffer.from('edition')],
+      TOKEN_METADATA_PROGRAM_ID
+    )[0];
+    
+    // Build instructions (same as MWA path)
+    const createMintInstruction = SystemProgram.createAccount({
+      fromPubkey: ownerPubkey,
+      newAccountPubkey: mintPubkey,
+      space: 82,
+      lamports: prefetchedMintRent,
+      programId: TOKEN_PROGRAM_ID,
+    });
+    
+    const initializeMintInstruction = createInitializeMintInstruction(
+      mintPubkey, 0, ownerPubkey, ownerPubkey
+    );
+    
+    const createATAInstruction = createAssociatedTokenAccountInstruction(
+      ownerPubkey, associatedTokenAccount, ownerPubkey, mintPubkey
+    );
+    
+    const mintToInstruction = createMintToInstruction(
+      mintPubkey, associatedTokenAccount, ownerPubkey, 1
+    );
+    
+    const createMetadataInstruction = buildCreateMetadataInstruction(
+      metadataAccount, mintPubkey, ownerPubkey, ownerPubkey, ownerPubkey,
+      nftName.slice(0, 32), 'PLNK', metadataUpload.arweaveUrl, 500, ownerPubkey
+    );
+    
+    const createMasterEditionInstruction = buildCreateMasterEditionInstruction(
+      masterEditionAccount, mintPubkey, ownerPubkey, ownerPubkey, metadataAccount, ownerPubkey
+    );
+    
+    // Commission
+    const safeSolPrice = solPrice > 10 ? solPrice : 250;
+    const commissionUsd = useStealthCloud 
+      ? NFT_FEES.APP_COMMISSION_STANDARD_CLOUD_USD 
+      : NFT_FEES.APP_COMMISSION_STANDARD_IPFS_USD;
+    const commissionLamports = Math.ceil(commissionUsd / safeSolPrice * LAMPORTS_PER_SOL);
+    
+    const commissionInstruction = SystemProgram.transfer({
+      fromPubkey: ownerPubkey,
+      toPubkey: new PublicKey(NFT_COMMISSION_WALLET),
+      lamports: commissionLamports,
+    });
+    
+    const messageV0 = new TransactionMessage({
+      payerKey: ownerPubkey,
+      recentBlockhash: prefetchedBlockhash,
+      instructions: [
+        createMintInstruction,
+        initializeMintInstruction,
+        createATAInstruction,
+        mintToInstruction,
+        createMetadataInstruction,
+        createMasterEditionInstruction,
+        commissionInstruction,
+      ],
+    }).compileToV0Message();
+    
+    const transaction = new VersionedTransaction(messageV0);
+    transaction.sign([mintKeypair]);
+    
+    console.log('[NFT] Signing via WalletAdapter...');
+    onStatus?.('Signing transaction...');
+    const txResult = await WalletAdapter.signAndSendTransaction(transaction);
+    
+    if (!txResult.success) {
+      throw new Error(txResult.error || 'WalletAdapter signing failed');
+    }
+    
+    console.log('[NFT] ✅ Transaction SUCCESS:', txResult.signature);
+    
+    return {
+      txSignature: txResult.signature,
+      mintAddress: mintPubkey.toBase58(),
+      ownerAddress: ownerAddressStr,
+      imageUrl: imageUpload.arweaveUrl,
+      thumbnailUrl,
+      metadataUrl: metadataUpload.arweaveUrl,
+      metadata,
+      isRealNFT: true,
+    };
+  }
+};
+
+/**
  * Mint a photo as NFT on Solana
  * @param {Object} params - Minting parameters
  * @returns {Object} { success, mintAddress, txSignature, error }
@@ -1615,8 +2052,10 @@ export const mintPhotoNFT = async ({
   serverConfig,    // Server config for StealthCloud { baseUrl, headers }
   onProgress,      // Progress callback (0-1)
   onStatus,        // Status callback
+  walletType = null, // Optional: specific wallet type to use
 }) => {
-  if (!solanaAvailable || !transact || !connection) {
+  // Check if any wallet is available (WalletAdapter or MWA)
+  if (!solanaAvailable || !isWalletAvailable() || !connection) {
     return { success: false, error: 'Solana not available' };
   }
   
@@ -1651,29 +2090,24 @@ export const mintPhotoNFT = async ({
     const costEstimate = await estimateNFTMintCost(fileSize, storageOption, useCompressed);
     console.log('[NFT] Cost estimate:', costEstimate.total, 'storage:', storageOption, 'compressed:', useCompressed);
     
-    // ========== STEP 1: Get wallet address first (quick session) ==========
+    // ========== STEP 1: Get wallet address first (universal) ==========
     onStatus?.('Connecting wallet...');
     onProgress?.(0.15);
     
-    // First transact session - just get the address
+    // Get wallet address using universal helper (supports WalletAdapter + MWA fallback)
     let ownerAddressStr;
     let ownerPubkey;
+    let currentWalletType;
     
-    await transact(async (wallet) => {
-      console.log('[NFT] Authorizing wallet to get address...');
-      const authResult = await wallet.authorize({
-        cluster: 'mainnet-beta',
-        identity: APP_IDENTITY,
-      });
-      
-      const ownerAddress = authResult.accounts[0].address;
-      const ownerBytes = typeof ownerAddress === 'string'
-        ? Uint8Array.from(atob(ownerAddress), c => c.charCodeAt(0))
-        : new Uint8Array(ownerAddress);
-      ownerPubkey = new PublicKey(ownerBytes);
-      ownerAddressStr = ownerPubkey.toBase58();
-      console.log('[NFT] Owner address (base58):', ownerAddressStr);
-    });
+    const walletResult = await getConnectedWalletAddress();
+    if (!walletResult.success) {
+      return { success: false, error: walletResult.error || 'Wallet connection failed' };
+    }
+    
+    ownerAddressStr = walletResult.address;
+    ownerPubkey = walletResult.pubkey;
+    currentWalletType = walletResult.walletType;
+    console.log('[NFT] Owner address (base58):', ownerAddressStr, 'via', currentWalletType);
     
     // ========== STEP 2: Do all uploads OUTSIDE wallet session ==========
     // Handle EXIF stripping if requested
@@ -1780,16 +2214,43 @@ export const mintPhotoNFT = async ({
     const latestBlockhashResult = await connection.getLatestBlockhash('confirmed');
     const prefetchedBlockhash = latestBlockhashResult.blockhash;
     const solPrice = await fetchSolPrice();
-    console.log('[NFT] Pre-fetched blockhash:', prefetchedBlockhash, 'SOL price:', solPrice);
+    // Pre-fetch rent for standard NFT (in case of fallback)
+    const prefetchedMintRent = await connection.getMinimumBalanceForRentExemption(82); // MINT_SIZE = 82
+    console.log('[NFT] Pre-fetched blockhash:', prefetchedBlockhash, 'SOL price:', solPrice, 'mintRent:', prefetchedMintRent);
     
-    // Execute minting via Mobile Wallet Adapter (second session - just for signing)
-    const result = await transact(async (wallet) => {
-      // Re-authorize wallet for signing
-      console.log('[NFT] Re-authorizing wallet for signing...');
-      await wallet.authorize({
-        cluster: 'mainnet-beta',
-        identity: APP_IDENTITY,
+    // Determine if we should use WalletAdapter or MWA
+    const useWalletAdapter = walletAdapterAvailable && WalletAdapter && currentWalletType && currentWalletType !== 'mwa';
+    console.log('[NFT] Wallet type:', currentWalletType, 'useWalletAdapter:', useWalletAdapter);
+    
+    let result;
+    
+    if (useWalletAdapter) {
+      // ========== NON-MWA WALLET PATH (Phantom deeplink, WalletConnect, etc.) ==========
+      result = await mintWithWalletAdapter({
+        nftType,
+        ownerPubkey,
+        ownerAddressStr,
+        prefetchedBlockhash,
+        prefetchedMintRent,
+        solPrice,
+        imageUpload,
+        thumbnailUrl,
+        metadataUpload,
+        metadata,
+        nftName,
+        useStealthCloud,
+        onStatus,
+        onProgress,
       });
+    } else {
+      // ========== MWA WALLET PATH (Seeker, Phantom MWA, etc.) ==========
+      result = await transact(async (wallet) => {
+        // Re-authorize wallet for signing
+        console.log('[NFT] Re-authorizing wallet for signing via MWA...');
+        await wallet.authorize({
+          cluster: 'mainnet-beta',
+          identity: APP_IDENTITY,
+        });
       
       // ========== TRY COMPRESSED NFT IF USER SELECTED IT (99.99% CHEAPER) ==========
       const useCompressedNFT = nftType === 'compressed' && cNFTAvailable;
@@ -1886,36 +2347,32 @@ export const mintPhotoNFT = async ({
           console.log('[cNFT] Transaction has 2 instructions: mintV1 + commission transfer');
           console.log('[cNFT] Blockhash:', prefetchedBlockhash);
           
-          // Sign and send - this is the ONLY await in the wallet session
-          const signatures = await wallet.signAndSendTransactions({
+          // Use signTransactions (not signAndSendTransactions) - more reliable
+          // We'll send the transaction manually outside the wallet session
+          console.log('[cNFT] Calling wallet.signTransactions...');
+          const signedTransactions = await wallet.signTransactions({
             transactions: [cNFTTransaction],
           });
+          console.log('[cNFT] Transaction signed by wallet');
           
-          const txSignature = signatures[0];
-          console.log('[cNFT] ✅ Transaction SUCCESS:', txSignature);
-          console.log('[cNFT] ✅ Commission of', commissionUsd, 'USD sent to', NFT_COMMISSION_WALLET);
-          
-          // Return immediately from transact - DAS fetch will happen outside
+          // Return signed transaction to send outside wallet session
           return {
-            txSignature,
+            _signedTransaction: signedTransactions[0],
             ownerAddress: ownerAddressStr,
             imageUrl: imageUpload.arweaveUrl,
             thumbnailUrl,
             metadataUrl: metadataUpload.arweaveUrl,
             metadata,
-            isRealNFT: true,
+            commissionUsd,
             isCompressed: true,
             merkleTree: PHOTOLYNK_MERKLE_TREE,
-            _needsDasLookup: true, // Flag to do DAS lookup after transact
           };
         } catch (cNFTError) {
           console.error('[cNFT] FAILED - Full error:', cNFTError);
           console.error('[cNFT] Error message:', cNFTError.message);
           console.error('[cNFT] Error stack:', cNFTError.stack);
-          if (!CNFT_MODE.FALLBACK_TO_REGULAR) {
-            throw cNFTError;
-          }
-          onStatus?.('cNFT failed: ' + cNFTError.message?.slice(0, 50) + '... Falling back to standard NFT');
+          // Don't fallback - let the error propagate so user can retry
+          throw cNFTError;
         }
       }
       
@@ -1931,11 +2388,9 @@ export const mintPhotoNFT = async ({
       
       console.log('[NFT] Mint address:', mintPubkey.toBase58());
       
-      // Get recent blockhash
-      const { blockhash } = await connection.getLatestBlockhash('confirmed');
-      
-      // Calculate rent for mint account
-      const mintRent = await connection.getMinimumBalanceForRentExemption(82); // MINT_SIZE = 82
+      // Use pre-fetched blockhash and rent (avoid network calls inside transact block)
+      const blockhash = prefetchedBlockhash;
+      const mintRent = prefetchedMintRent;
       
       // Derive the associated token account for the owner
       const associatedTokenAccount = PublicKey.findProgramAddressSync(
@@ -2097,6 +2552,64 @@ export const mintPhotoNFT = async ({
         isRealNFT: true,
       };
     });
+    } // End of else (MWA path)
+    
+    // If cNFT with signed transaction, send it manually outside the wallet session
+    if (result._signedTransaction && result.isCompressed) {
+      console.log('[cNFT] Sending signed transaction to network...');
+      onStatus?.('Confirming transaction...');
+      onProgress?.(0.75);
+      
+      // Small delay to let MWA session fully close
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
+      // Send the signed transaction with retry across RPC endpoints
+      let txSignature = null;
+      let sendError = null;
+      
+      const RPC_ENDPOINTS = [
+        'https://api.mainnet-beta.solana.com',
+        'https://solana-mainnet.g.alchemy.com/v2/demo',
+        'https://rpc.ankr.com/solana',
+      ];
+      
+      for (let i = 0; i < RPC_ENDPOINTS.length; i++) {
+        try {
+          const endpoint = RPC_ENDPOINTS[i];
+          const sendConnection = new Connection(endpoint, 'confirmed');
+          
+          const signature = await sendConnection.sendRawTransaction(
+            result._signedTransaction.serialize(),
+            {
+              skipPreflight: true,
+              preflightCommitment: 'confirmed',
+              maxRetries: 3,
+            }
+          );
+          
+          txSignature = signature;
+          console.log('[cNFT] ✅ Transaction sent successfully:', txSignature);
+          console.log('[cNFT] ✅ Commission of', result.commissionUsd, 'USD sent to', NFT_COMMISSION_WALLET);
+          break;
+        } catch (e) {
+          if (i === RPC_ENDPOINTS.length - 1) {
+            console.error('[cNFT] All RPC endpoints failed:', e.message);
+          }
+          sendError = e;
+        }
+      }
+      
+      if (!txSignature) {
+        throw sendError || new Error('Failed to send cNFT transaction');
+      }
+      
+      // Update result with txSignature
+      result.txSignature = txSignature;
+      result.isRealNFT = true;
+      result._needsDasLookup = true;
+      delete result._signedTransaction;
+      delete result.commissionUsd;
+    }
     
     // If cNFT, do DAS lookup OUTSIDE the transact block to get real asset ID
     if (result._needsDasLookup) {
@@ -2178,6 +2691,8 @@ export const mintPhotoNFT = async ({
       assetId: asset.id,
       createdAt: new Date().toISOString(),
       exifData,
+      storageType: storageOption, // 'ipfs' or 'cloud' - for display in NFT details
+      isCompressed: nftType === 'compressed',
     }, serverUrl, authHeaders);
     
     return {
@@ -2323,9 +2838,9 @@ export const resolveRecipient = async (input) => {
  * @param {string} recipientInput - Recipient's Solana wallet address or .sol domain
  * @returns {Object} { success, txSignature, recipientAddress, error }
  */
-const transferCompressedNFT = async (mintAddress, recipientInput) => {
+const transferCompressedNFT = async (mintAddress, recipientInput, walletType = null) => {
   // Check Solana availability
-  if (!solanaAvailable || !transact) {
+  if (!solanaAvailable || !isWalletAvailable()) {
     return { success: false, error: 'Solana not available' };
   }
   
@@ -2443,82 +2958,89 @@ const transferCompressedNFT = async (mintAddress, recipientInput) => {
       isWritable: false,
     }));
     
-    const txSignature = await transact(async (wallet) => {
-      const authResult = await wallet.authorize({
-        cluster: 'mainnet-beta',
-        identity: APP_IDENTITY,
-      });
-      
-      const ownerAddress = authResult.accounts[0].address;
-      const ownerBytes = typeof ownerAddress === 'string'
-        ? Uint8Array.from(atob(ownerAddress), c => c.charCodeAt(0))
-        : new Uint8Array(ownerAddress);
-      const leafOwner = new PublicKey(ownerBytes);
-      
-      // Verify ownership
-      if (leafOwner.toBase58() !== asset.ownership?.owner) {
-        throw new Error('You do not own this NFT');
-      }
-      
-      // Build transfer instruction data
-      // Discriminator for transfer (163, 52, 200, 231, 140, 3, 69, 186)
-      const discriminator = Buffer.from([163, 52, 200, 231, 140, 3, 69, 186]);
-      
-      // Encode nonce as u64 little-endian
-      const nonceBuffer = Buffer.alloc(8);
-      nonceBuffer.writeBigUInt64LE(nonce, 0);
-      
-      // Encode index as u32 little-endian
-      const indexBuffer = Buffer.alloc(4);
-      indexBuffer.writeUInt32LE(leafIndex, 0);
-      
-      // Encode instruction data: discriminator + root + dataHash + creatorHash + nonce + index
-      const instructionData = Buffer.concat([
-        discriminator,
-        root,                                    // [u8; 32]
-        dataHash,                                // [u8; 32]
-        creatorHash,                             // [u8; 32]
-        nonceBuffer,                             // u64 LE
-        indexBuffer,                             // u32 LE
-      ]);
-      
-      console.log('[cNFT Transfer] Instruction data length:', instructionData.length);
-      
-      // Build accounts for transfer instruction
-      const transferAccounts = [
-        { pubkey: treeConfig, isSigner: false, isWritable: false },           // 0: treeConfig
-        { pubkey: leafOwner, isSigner: true, isWritable: false },             // 1: leafOwner (signer)
-        { pubkey: leafOwner, isSigner: false, isWritable: false },            // 2: leafDelegate
-        { pubkey: newLeafOwner, isSigner: false, isWritable: false },         // 3: newLeafOwner
-        { pubkey: merkleTree, isSigner: false, isWritable: true },            // 4: merkleTree
-        { pubkey: SPL_NOOP_PROGRAM_ID, isSigner: false, isWritable: false },  // 5: logWrapper
-        { pubkey: SPL_ACCOUNT_COMPRESSION_PROGRAM_ID, isSigner: false, isWritable: false }, // 6: compressionProgram
-        { pubkey: SystemProgram.programId, isSigner: false, isWritable: false }, // 7: systemProgram
-        ...proofPath, // Remaining accounts: proof nodes
-      ];
-      
-      const transferInstruction = new TransactionInstruction({
-        programId: BUBBLEGUM_PROGRAM_ID,
-        keys: transferAccounts,
-        data: instructionData,
-      });
-      
-      const { blockhash } = await connection.getLatestBlockhash('confirmed');
-      
-      const messageV0 = new TransactionMessage({
-        payerKey: leafOwner,
-        recentBlockhash: blockhash,
-        instructions: [transferInstruction],
-      }).compileToV0Message();
-      
-      const transaction = new VersionedTransaction(messageV0);
-      
-      const signatures = await wallet.signAndSendTransactions({
-        transactions: [transaction],
-      });
-      
-      return signatures[0];
+    // Get current wallet address
+    const walletResult = await getConnectedWalletAddress();
+    if (!walletResult.success) {
+      return { success: false, error: walletResult.error || 'Wallet not connected' };
+    }
+    
+    const leafOwner = walletResult.pubkey;
+    const currentWalletType = walletResult.walletType;
+    
+    // Verify ownership
+    if (leafOwner.toBase58() !== asset.ownership?.owner) {
+      return { success: false, error: 'You do not own this NFT' };
+    }
+    
+    // Build transfer instruction data
+    const discriminator = Buffer.from([163, 52, 200, 231, 140, 3, 69, 186]);
+    const nonceBuffer = Buffer.alloc(8);
+    nonceBuffer.writeBigUInt64LE(nonce, 0);
+    const indexBuffer = Buffer.alloc(4);
+    indexBuffer.writeUInt32LE(leafIndex, 0);
+    
+    const instructionData = Buffer.concat([
+      discriminator, root, dataHash, creatorHash, nonceBuffer, indexBuffer,
+    ]);
+    
+    console.log('[cNFT Transfer] Instruction data length:', instructionData.length);
+    
+    const transferAccounts = [
+      { pubkey: treeConfig, isSigner: false, isWritable: false },
+      { pubkey: leafOwner, isSigner: true, isWritable: false },
+      { pubkey: leafOwner, isSigner: false, isWritable: false },
+      { pubkey: newLeafOwner, isSigner: false, isWritable: false },
+      { pubkey: merkleTree, isSigner: false, isWritable: true },
+      { pubkey: SPL_NOOP_PROGRAM_ID, isSigner: false, isWritable: false },
+      { pubkey: SPL_ACCOUNT_COMPRESSION_PROGRAM_ID, isSigner: false, isWritable: false },
+      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+      ...proofPath,
+    ];
+    
+    const transferInstruction = new TransactionInstruction({
+      programId: BUBBLEGUM_PROGRAM_ID,
+      keys: transferAccounts,
+      data: instructionData,
     });
+    
+    const { blockhash } = await connection.getLatestBlockhash('confirmed');
+    
+    const messageV0 = new TransactionMessage({
+      payerKey: leafOwner,
+      recentBlockhash: blockhash,
+      instructions: [transferInstruction],
+    }).compileToV0Message();
+    
+    const transaction = new VersionedTransaction(messageV0);
+    
+    // Use WalletAdapter for non-MWA wallets, MWA for others
+    let txSignature;
+    const useWalletAdapter = walletAdapterAvailable && WalletAdapter && currentWalletType && currentWalletType !== 'mwa';
+    
+    if (useWalletAdapter) {
+      console.log('[cNFT Transfer] Using WalletAdapter for signing...');
+      const txResult = await WalletAdapter.signAndSendTransaction(transaction);
+      if (!txResult.success) {
+        throw new Error(txResult.error || 'WalletAdapter signing failed');
+      }
+      txSignature = txResult.signature;
+    } else {
+      console.log('[cNFT Transfer] Using MWA for signing...');
+      txSignature = await transact(async (wallet) => {
+        await wallet.authorize({ cluster: 'mainnet-beta', identity: APP_IDENTITY });
+        const signedTxs = await wallet.signTransactions({ transactions: [transaction] });
+        return signedTxs[0];
+      });
+      
+      // Send manually outside MWA session
+      await new Promise(resolve => setTimeout(resolve, 500));
+      const signature = await connection.sendRawTransaction(txSignature.serialize(), {
+        skipPreflight: true,
+        preflightCommitment: 'confirmed',
+        maxRetries: 3,
+      });
+      txSignature = signature;
+    }
     
     // Update local storage
     await removeNFTFromStorage(mintAddress);
@@ -2544,8 +3066,8 @@ const transferCompressedNFT = async (mintAddress, recipientInput) => {
  * @param {string} recipientInput - Recipient's Solana wallet address or .sol domain
  * @returns {Object} { success, txSignature, recipientAddress, error }
  */
-export const transferNFT = async (mintAddress, recipientInput) => {
-  if (!solanaAvailable || !transact) {
+export const transferNFT = async (mintAddress, recipientInput, walletType = null) => {
+  if (!solanaAvailable || !isWalletAvailable()) {
     return { success: false, error: 'Solana not available' };
   }
   
@@ -2579,84 +3101,91 @@ export const transferNFT = async (mintAddress, recipientInput) => {
     
     console.log(`[NFT] Transferring ${mintAddress} to ${recipientAddress}${resolved.isDomain ? ` (${resolved.domainName})` : ''}`);
     
-    const txSignature = await transact(async (wallet) => {
-      const authResult = await wallet.authorize({
-        cluster: 'mainnet-beta',
-        identity: APP_IDENTITY,
-      });
-      
-      const ownerAddress = authResult.accounts[0].address;
-      const ownerBytes = typeof ownerAddress === 'string'
-        ? Uint8Array.from(atob(ownerAddress), c => c.charCodeAt(0))
-        : new Uint8Array(ownerAddress);
-      const ownerPubkey = new PublicKey(ownerBytes);
-      
-      // Get source token account (owner's ATA for this NFT)
-      const sourceATA = await getAssociatedTokenAddress(
-        mintPubkey,
-        ownerPubkey,
-        false,
-        TOKEN_PROGRAM_ID,
-        ASSOCIATED_TOKEN_PROGRAM_ID
-      );
-      
-      // Get destination token account (recipient's ATA for this NFT)
-      const destinationATA = await getAssociatedTokenAddress(
-        mintPubkey,
-        recipientPubkey,
-        false,
-        TOKEN_PROGRAM_ID,
-        ASSOCIATED_TOKEN_PROGRAM_ID
-      );
-      
-      const { blockhash } = await connection.getLatestBlockhash('confirmed');
-      
-      const instructions = [];
-      
-      // Check if destination ATA exists, if not create it
-      const destAccountInfo = await connection.getAccountInfo(destinationATA);
-      if (!destAccountInfo) {
-        // Create ATA for recipient
-        instructions.push(
-          createAssociatedTokenAccountInstruction(
-            ownerPubkey,           // payer
-            destinationATA,        // ata
-            recipientPubkey,       // owner
-            mintPubkey,            // mint
-            TOKEN_PROGRAM_ID,
-            ASSOCIATED_TOKEN_PROGRAM_ID
-          )
-        );
-      }
-      
-      // Add transfer instruction (amount = 1 for NFT)
-      // Use createTransferInstruction from @solana/spl-token
-      const splToken = require('@solana/spl-token');
+    // Get current wallet address
+    const walletResult = await getConnectedWalletAddress();
+    if (!walletResult.success) {
+      return { success: false, error: walletResult.error || 'Wallet not connected' };
+    }
+    
+    const ownerPubkey = walletResult.pubkey;
+    const currentWalletType = walletResult.walletType;
+    
+    // Get source token account (owner's ATA for this NFT)
+    const sourceATA = await getAssociatedTokenAddress(
+      mintPubkey,
+      ownerPubkey,
+      false,
+      TOKEN_PROGRAM_ID,
+      ASSOCIATED_TOKEN_PROGRAM_ID
+    );
+    
+    // Get destination token account (recipient's ATA for this NFT)
+    const destinationATA = await getAssociatedTokenAddress(
+      mintPubkey,
+      recipientPubkey,
+      false,
+      TOKEN_PROGRAM_ID,
+      ASSOCIATED_TOKEN_PROGRAM_ID
+    );
+    
+    const { blockhash } = await connection.getLatestBlockhash('confirmed');
+    
+    const instructions = [];
+    
+    // Check if destination ATA exists, if not create it
+    const destAccountInfo = await connection.getAccountInfo(destinationATA);
+    if (!destAccountInfo) {
       instructions.push(
-        splToken.createTransferInstruction(
-          sourceATA,              // source
-          destinationATA,         // destination
-          ownerPubkey,            // owner/authority
-          1,                      // amount (1 for NFT)
-          [],                     // multiSigners
-          TOKEN_PROGRAM_ID
+        createAssociatedTokenAccountInstruction(
+          ownerPubkey, destinationATA, recipientPubkey, mintPubkey,
+          TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID
         )
       );
-      
-      const messageV0 = new TransactionMessage({
-        payerKey: ownerPubkey,
-        recentBlockhash: blockhash,
-        instructions,
-      }).compileToV0Message();
-      
-      const transaction = new VersionedTransaction(messageV0);
-      
-      const signatures = await wallet.signAndSendTransactions({
-        transactions: [transaction],
+    }
+    
+    // Add transfer instruction
+    const splToken = require('@solana/spl-token');
+    instructions.push(
+      splToken.createTransferInstruction(
+        sourceATA, destinationATA, ownerPubkey, 1, [], TOKEN_PROGRAM_ID
+      )
+    );
+    
+    const messageV0 = new TransactionMessage({
+      payerKey: ownerPubkey,
+      recentBlockhash: blockhash,
+      instructions,
+    }).compileToV0Message();
+    
+    const transaction = new VersionedTransaction(messageV0);
+    
+    // Use WalletAdapter for non-MWA wallets, MWA for others
+    let txSignature;
+    const useWalletAdapter = walletAdapterAvailable && WalletAdapter && currentWalletType && currentWalletType !== 'mwa';
+    
+    if (useWalletAdapter) {
+      console.log('[NFT Transfer] Using WalletAdapter for signing...');
+      const txResult = await WalletAdapter.signAndSendTransaction(transaction);
+      if (!txResult.success) {
+        throw new Error(txResult.error || 'WalletAdapter signing failed');
+      }
+      txSignature = txResult.signature;
+    } else {
+      console.log('[NFT Transfer] Using MWA for signing...');
+      const signedTx = await transact(async (wallet) => {
+        await wallet.authorize({ cluster: 'mainnet-beta', identity: APP_IDENTITY });
+        const signedTxs = await wallet.signTransactions({ transactions: [transaction] });
+        return signedTxs[0];
       });
       
-      return signatures[0];
-    });
+      // Send manually outside MWA session
+      await new Promise(resolve => setTimeout(resolve, 500));
+      txSignature = await connection.sendRawTransaction(signedTx.serialize(), {
+        skipPreflight: true,
+        preflightCommitment: 'confirmed',
+        maxRetries: 3,
+      });
+    }
     
     // Update local storage
     await removeNFTFromStorage(mintAddress);
@@ -2756,6 +3285,29 @@ export const saveNFTToStorage = async (nftData, serverUrl = null, authHeaders = 
 };
 
 /**
+ * Detect storage type from NFT URLs (for legacy NFTs without storageType field)
+ */
+const detectStorageType = (nft) => {
+  // Check arweaveUrl first (original full image URL)
+  const urlToCheck = nft.arweaveUrl || nft.imageUrl || nft.thumbnailUrl || '';
+  
+  // StealthCloud URLs contain stealthlynk.io
+  if (urlToCheck.includes('stealthlynk.io') || urlToCheck.includes('nft.stealthlynk.io')) {
+    return 'cloud';
+  }
+  
+  // IPFS URLs contain ipfs, pinata, w3s.link, or arweave (decentralized)
+  if (urlToCheck.includes('ipfs') || urlToCheck.includes('pinata') || 
+      urlToCheck.includes('w3s.link') || urlToCheck.includes('arweave.net') ||
+      urlToCheck.includes('irys.xyz')) {
+    return 'ipfs';
+  }
+  
+  // Default to IPFS for unknown
+  return 'ipfs';
+};
+
+/**
  * Get all stored NFTs (local) - uses FileSystem for unlimited storage
  */
 export const getStoredNFTs = async () => {
@@ -2779,7 +3331,25 @@ export const getStoredNFTs = async () => {
       return [];
     }
     const stored = await FileSystem.readAsStringAsync(NFT_STORAGE_FILE);
-    return stored ? JSON.parse(stored) : [];
+    let nfts = stored ? JSON.parse(stored) : [];
+    
+    // Auto-fix legacy NFTs without storageType field
+    let needsSave = false;
+    nfts = nfts.map(nft => {
+      if (!nft.storageType) {
+        needsSave = true;
+        return { ...nft, storageType: detectStorageType(nft) };
+      }
+      return nft;
+    });
+    
+    // Save back if we fixed any NFTs
+    if (needsSave) {
+      await FileSystem.writeAsStringAsync(NFT_STORAGE_FILE, JSON.stringify(nfts));
+      console.log('[NFT] Auto-fixed storageType for legacy NFTs');
+    }
+    
+    return nfts;
   } catch (e) {
     console.error('[NFT] Failed to get NFTs:', e);
     return [];
@@ -2876,13 +3446,31 @@ export const backupNFTsToServer = async (serverUrl, authHeaders) => {
 };
 
 /**
- * Remove NFT from local storage AND server
+ * Remove NFT from local storage, image cache, AND server
  */
 export const removeNFTFromStorage = async (mintAddress, serverUrl = null, authHeaders = null) => {
   try {
     const existing = await getStoredNFTs();
+    
+    // Find the NFT to get its image URLs before removing
+    const nftToRemove = existing.find(nft => nft.mintAddress === mintAddress);
+    
     const filtered = existing.filter(nft => nft.mintAddress !== mintAddress);
     await saveNFTsToFile(filtered);
+    
+    // Clear image from cache
+    if (nftToRemove) {
+      try {
+        const { removeNFTImageFromCache } = require('./nftImageCache');
+        // Remove all possible image URLs from cache
+        if (nftToRemove.imageUrl) await removeNFTImageFromCache(nftToRemove.imageUrl);
+        if (nftToRemove.thumbnailUrl) await removeNFTImageFromCache(nftToRemove.thumbnailUrl);
+        if (nftToRemove.arweaveUrl) await removeNFTImageFromCache(nftToRemove.arweaveUrl);
+        console.log('[NFT] Cleared image cache for:', mintAddress);
+      } catch (cacheErr) {
+        console.log('[NFT] Could not clear image cache:', cacheErr.message);
+      }
+    }
     
     // Sync removal to server
     if (serverUrl && authHeaders) {
@@ -3431,8 +4019,10 @@ export default {
   fetchNFTMetadata,
   discoverAndImportNFTs,
   isCNFTAvailable,
+  isWalletAvailable,
   NFT_FEES,
   NFT_COMMISSION_WALLET,
   CNFT_MODE,
   PHOTOLYNK_MERKLE_TREE,
+  walletAdapterAvailable: () => walletAdapterAvailable,
 };

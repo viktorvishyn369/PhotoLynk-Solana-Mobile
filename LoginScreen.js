@@ -163,6 +163,7 @@ export const LoginScreen = ({
   setServerType,
   authMode,
   setAuthMode,
+  isFirstRun = false,
   email,
   setEmail,
   password,
@@ -195,6 +196,11 @@ export const LoginScreen = ({
   plansLoading,
   purchaseLoading,
 }) => {
+  // Login screen shows only the last connected server type (or StealthCloud as default)
+  // On first run register: show only StealthCloud
+  // On login: show only the currently selected server type (which is loaded from SecureStore)
+  // User can change server type in settings after login
+  const showOnlySelectedServer = authMode === 'login' || isFirstRun;
 
   const handleOpenTerms = () => {
     Linking.openURL('https://viktorvishyn369.github.io/PhotoLynk/terms.html');
@@ -228,30 +234,61 @@ export const LoginScreen = ({
           </View>
         </View>
 
-        {/* Server Selection */}
+        {/* Server Selection - Show only the last connected type on login, all on register */}
         <Text style={styles.sectionTitle}>{t('login.chooseServer')}</Text>
         <Card>
-          <ServerOption
-            icon="cloud"
-            label={t('settings.stealthcloud')}
-            badge={t('login.stealthcloudBadge')}
-            isSelected={serverType === 'stealthcloud'}
-            onPress={() => setServerType('stealthcloud')}
-          />
-          <View style={styles.divider} />
-          <ServerOption
-            icon="wifi"
-            label={t('login.localNetwork')}
-            isSelected={serverType === 'local'}
-            onPress={() => setServerType('local')}
-          />
-          <View style={styles.divider} />
-          <ServerOption
-            icon="globe"
-            label={t('settings.remoteServer')}
-            isSelected={serverType === 'remote'}
-            onPress={() => setServerType('remote')}
-          />
+          {/* On login: show only the selected server type. On register (not first run): show all */}
+          {showOnlySelectedServer ? (
+            // Show only the currently selected server type
+            serverType === 'stealthcloud' ? (
+              <ServerOption
+                icon="cloud"
+                label={t('settings.stealthcloud')}
+                badge={t('login.stealthcloudBadge')}
+                isSelected={true}
+                onPress={() => {}}
+              />
+            ) : serverType === 'local' ? (
+              <ServerOption
+                icon="wifi"
+                label={t('login.localNetwork')}
+                isSelected={true}
+                onPress={() => {}}
+              />
+            ) : (
+              <ServerOption
+                icon="globe"
+                label={t('settings.remoteServer')}
+                isSelected={true}
+                onPress={() => {}}
+              />
+            )
+          ) : (
+            // Register mode (not first run): show all server options
+            <>
+              <ServerOption
+                icon="cloud"
+                label={t('settings.stealthcloud')}
+                badge={t('login.stealthcloudBadge')}
+                isSelected={serverType === 'stealthcloud'}
+                onPress={() => setServerType('stealthcloud')}
+              />
+              <View style={styles.divider} />
+              <ServerOption
+                icon="wifi"
+                label={t('login.localNetwork')}
+                isSelected={serverType === 'local'}
+                onPress={() => setServerType('local')}
+              />
+              <View style={styles.divider} />
+              <ServerOption
+                icon="globe"
+                label={t('settings.remoteServer')}
+                isSelected={serverType === 'remote'}
+                onPress={() => setServerType('remote')}
+              />
+            </>
+          )}
         </Card>
 
         {/* Server-specific config */}
@@ -353,8 +390,8 @@ export const LoginScreen = ({
         <Card>
           {authMode !== 'forgot' && (
             <InputField
-              icon="mail"
-              placeholder={t('login.emailPlaceholder')}
+              icon="user"
+              placeholder={t('login.emailOrSeekerIdPlaceholder')}
               value={email}
               onChangeText={setEmail}
               keyboardType="email-address"
@@ -510,14 +547,14 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     flexGrow: 1,
+    justifyContent: 'center',
     paddingHorizontal: scaleSpacing(20),
-    paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 24) + 8 : scaleSpacing(12),
-    paddingBottom: Platform.OS === 'android' ? 60 : scaleSpacing(40),
+    paddingTop: scaleSpacing(40),
+    paddingBottom: scaleSpacing(40),
   },
   // Header
   header: {
     marginBottom: scaleSpacing(12),
-    marginTop: Platform.OS === 'android' ? 8 : scaleSpacing(12),
   },
   headerRow: {
     flexDirection: 'row',

@@ -7,7 +7,7 @@ import * as FileSystem from 'expo-file-system';
 import axios from 'axios';
 
 import { v5 as uuidv5 } from 'uuid';
-import { normalizeEmailForDeviceUuid, normalizeHostInput, computeServerUrl } from './utils';
+import { normalizeEmailForDeviceUuid, normalizeHostInput, computeServerUrl, isSeekerIdFormat, normalizeSeekerIdForStorage } from './utils';
 import { computeIosHardwareId, computeAndroidHardwareId } from './deviceId';
 import { t } from './i18n';
 
@@ -17,21 +17,37 @@ export const SAVED_PASSWORD_EMAIL_KEY = 'user_password_email_v1';
 
 /**
  * Validates auth form inputs before submission.
+ * Accepts either email (user@example.com) or Seeker ID (alice.skr, alice)
  * @param {Object} params
- * @param {string} params.email - User email
+ * @param {string} params.email - User email or Seeker ID
  * @param {string} params.password - User password
  * @param {string} params.confirmPassword - Confirm password (for registration)
  * @param {string} params.type - 'login' or 'register'
- * @returns {{ valid: boolean, error?: string }}
+ * @returns {{ valid: boolean, error?: string, normalizedEmail?: string, isSeekerAuth?: boolean }}
  */
 export const validateAuthInputs = ({ email, password, confirmPassword, type }) => {
   if (!email || !password) {
     return { valid: false, error: 'Please fill in all fields' };
   }
 
-  const normalizedEmail = normalizeEmailForDeviceUuid(email);
+  const trimmedInput = String(email).trim();
+  
+  // Check if it's a Seeker ID/nickname or email
+  const isSeekerAuth = isSeekerIdFormat(trimmedInput);
+  const isEmail = trimmedInput.includes('@');
+  
+  // Must be either a valid Seeker ID/nickname or a valid email
+  if (!isSeekerAuth && !isEmail) {
+    return { valid: false, error: 'Please enter a valid email or Seeker ID (alice.skr or alice)' };
+  }
+  
+  // Normalize to email format for storage and UUID generation
+  // Seeker ID "alice" or "alice.skr" becomes "alice@photolynk.local"
+  // This matches mobile-v2 nickname format for cross-app compatibility
+  const normalizedEmail = normalizeEmailForDeviceUuid(trimmedInput);
+  
   if (!normalizedEmail) {
-    return { valid: false, error: 'Please enter a valid email.' };
+    return { valid: false, error: 'Please enter a valid email or Seeker ID' };
   }
 
   if (type === 'register') {
@@ -43,7 +59,7 @@ export const validateAuthInputs = ({ email, password, confirmPassword, type }) =
     }
   }
 
-  return { valid: true, normalizedEmail };
+  return { valid: true, normalizedEmail, isSeekerAuth };
 };
 
 /**

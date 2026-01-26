@@ -118,6 +118,9 @@ import {
   initializeSolana,
   getAvailablePlans,
   purchaseWithSol,
+  purchaseWithWallet,
+  getAvailablePaymentWallets,
+  getWalletConnectionStatus,
   getSubscriptionStatus,
   checkUploadAccess,
   GRACE_PERIOD_DAYS,
@@ -220,6 +223,7 @@ const FAST_CHUNK_COOLDOWN_MS = 0; // No delay between chunks
 export default function App() {
   const [view, setView] = useState('loading'); // loading, auth, home, settings
   const [authMode, setAuthMode] = useState('login'); // login, register, forgot
+  const [isFirstRun, setIsFirstRun] = useState(false); // First ever app run - show register, hide server options
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -397,10 +401,58 @@ export default function App() {
         await SecureStore.setItemAsync('local_host', serverIp);
         await SecureStore.setItemAsync('server_type', 'local');
 
-        showDarkAlert(
-          t('login.connected'),
-          t('login.serverIpSetTo', { ip: serverIp + ':' + parsed.port }) + (parsed.name ? '\n\n' + t('login.serverName', { name: parsed.name }) : '')
-        );
+        // Send credentials to desktop for pairing (if user is logged in and pairing port available)
+        if (parsed.pairingPort && parsed.token && email && password) {
+          try {
+            const pairingUrl = `http://${serverIp}:${parsed.pairingPort}/api/pair`;
+            const response = await fetch(pairingUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ email, password, token: parsed.token }),
+            });
+            const result = await response.json();
+            if (result.success) {
+              // If in settings, auto-relogin and navigate to main
+              if (view === 'settings') {
+                setLoading(true);
+                try {
+                  await handleAuth('login');
+                  setView('home');
+                  showDarkAlert(t('login.paired'), t('login.pairedWithDesktop', { ip: serverIp }));
+                } catch (e) {
+                  showDarkAlert(t('alerts.error'), e.message || t('alerts.connectionFailed'));
+                } finally {
+                  setLoading(false);
+                }
+              } else {
+                showDarkAlert(t('login.paired'), t('login.pairedWithDesktop', { ip: serverIp }));
+              }
+              return;
+            }
+          } catch (pairErr) {
+            // Pairing failed, continue with normal flow
+            console.log('[QR] Pairing request failed:', pairErr.message);
+          }
+        }
+
+        // If in settings, auto-relogin and navigate to main
+        if (view === 'settings') {
+          setLoading(true);
+          try {
+            await handleAuth('login');
+            setView('home');
+            showDarkAlert(t('login.connected'), t('login.serverIpSetTo', { ip: serverIp + ':' + parsed.port }));
+          } catch (e) {
+            showDarkAlert(t('alerts.error'), e.message || t('alerts.connectionFailed'));
+          } finally {
+            setLoading(false);
+          }
+        } else {
+          showDarkAlert(
+            t('login.connected'),
+            t('login.serverIpSetTo', { ip: serverIp + ':' + parsed.port }) + (parsed.name ? '\n\n' + t('login.serverName', { name: parsed.name }) : '')
+          );
+        }
       } else if (parsed.type === 'photolynk-decrypt' && parsed.sessionId && parsed.server) {
         // Web portal decryption request - connect via WebSocket
         setQrScannerOpen(false);
@@ -662,13 +714,28 @@ export default function App() {
         return;
       }
 
-      const result = await purchaseWithSol(tierGb, authToken);
+      // Use universal wallet purchase (supports MWA, Phantom, WalletConnect, etc.)
+      const result = await purchaseWithWallet(tierGb, authToken);
 
       if (result.success) {
-        showDarkAlert(t('alerts.success'), t('alerts.planActive', { plan: tierGb === 1000 ? '1 TB' : tierGb + ' GB' }));
+        // Close paywall popup immediately on success
+        closePaywall();
+        
+        // Refresh subscription status from server
         await refreshSubscriptionStatus();
         await refreshStealthUsage();
         setSelectedStealthPlanGb(tierGb);
+        
+        // Show appropriate message based on server verification
+        const planName = tierGb === 1000 ? '1 TB' : tierGb + ' GB';
+        if (result.pendingVerification) {
+          // Fallback message if translation key doesn't exist
+          const pendingMsg = t('alerts.paymentSentPending', { plan: planName });
+          const fallbackMsg = `Payment sent! Your ${planName} plan will activate shortly.`;
+          showDarkAlert(t('alerts.success'), pendingMsg.includes('paymentSentPending') ? fallbackMsg : pendingMsg);
+        } else {
+          showDarkAlert(t('alerts.success'), t('alerts.planActive', { plan: planName }));
+        }
       } else if (result.userCancelled) {
         // User cancelled - no message needed
       } else {
@@ -2899,9 +2966,11 @@ export default function App() {
       setGlassModeEnabled(savedGlassMode === 'true');
     }
 
-    // If first launch after reinstall, skip auto-login and show login screen
+    // If first launch after reinstall, skip auto-login and show register screen
     if (isFirstLaunchAfterReinstall) {
-      console.log('[FirstLaunch] Skipping auto-login - showing login screen');
+      console.log('[FirstLaunch] Skipping auto-login - showing register screen');
+      setIsFirstRun(true);
+      setAuthMode('register');
       setStatus('');
       setView('auth');
       return;
@@ -3849,7 +3918,14 @@ export default function App() {
           serverType={serverType}
           setServerType={setServerType}
           authMode={authMode}
-          setAuthMode={setAuthMode}
+          setAuthMode={(mode) => {
+            setAuthMode(mode);
+            // When user switches to login on first run, show server options
+            if (mode === 'login' && isFirstRun) {
+              setIsFirstRun(false);
+            }
+          }}
+          isFirstRun={isFirstRun}
           email={email}
           setEmail={setEmail}
           password={password}
@@ -4216,6 +4292,19 @@ export default function App() {
           persistGlassModeEnabled={persistGlassModeEnabled}
           loading={loading}
           logout={logout}
+          relogin={async (newServerType) => {
+            // Re-authenticate with new server settings
+            setLoading(true);
+            try {
+              await handleAuth('login');
+              setView('home');
+            } catch (e) {
+              console.log('[Relogin] Error:', e.message);
+              showDarkAlert(t('alerts.error'), e.message || t('alerts.connectionFailed'));
+            } finally {
+              setLoading(false);
+            }
+          }}
           purgeStealthCloudData={purgeStealthCloudData}
           purgeClassicServerData={purgeClassicServerData}
           showDarkAlert={showDarkAlert}

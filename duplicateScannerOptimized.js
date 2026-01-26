@@ -498,28 +498,47 @@ export const scanExactDuplicates = async ({
   let photoCount = 0;
   let videoCount = 0;
 
+  let icloudDownloadCount = 0;
+
   for (let i = 0; i < totalAssets; i++) {
     if (abortRef?.current) {
       return { duplicateGroups: [], stats: {}, aborted: true };
     }
 
     const asset = allAssets[i];
+    const current = i + 1;
 
     // Update progress every 5 files, yield every 25 (fast but responsive)
     // Progress: 10% to 90% during hashing
-    if (i % 5 === 0) {
+    if (i % 5 === 0 || i === totalAssets - 1) {
       const fileProgress = 0.10 + (i / totalAssets) * 0.80;
       updateProgress(onProgress, fileProgress);
-      updateStatus(onStatus, t('status.scanningAnalyzingProgress', { current: i + 1, total: totalAssets }));
+      // Show iCloud download count if any files are being downloaded
+      if (Platform.OS === 'ios' && icloudDownloadCount > 0) {
+        updateStatus(onStatus, t('status.scanningWithICloud', { current, total: totalAssets, icloudCount: icloudDownloadCount }));
+      } else {
+        updateStatus(onStatus, t('status.scanningAnalyzingProgress', { current, total: totalAssets }));
+      }
       if (i % 25 === 0) await yieldToUi();
     }
 
     // Get asset info
     let info;
     try {
-      info = Platform.OS === 'ios'
-        ? await MediaLibrary.getAssetInfoAsync(asset.id, { shouldDownloadFromNetwork: true })
-        : await MediaLibrary.getAssetInfoAsync(asset.id);
+      // First check if file is local (quick check without download)
+      if (Platform.OS === 'ios') {
+        const quickInfo = await MediaLibrary.getAssetInfoAsync(asset.id);
+        if (!quickInfo?.localUri && quickInfo?.uri) {
+          // File needs iCloud download
+          icloudDownloadCount++;
+          updateStatus(onStatus, t('status.scanningWithICloud', { current, total: totalAssets, icloudCount: icloudDownloadCount }));
+          await yieldToUi();
+        }
+        // Now download if needed
+        info = await MediaLibrary.getAssetInfoAsync(asset.id, { shouldDownloadFromNetwork: true });
+      } else {
+        info = await MediaLibrary.getAssetInfoAsync(asset.id);
+      }
     } catch (e) {
       inspectFailed++;
       continue;
@@ -683,13 +702,27 @@ export const scanExactDuplicates = async ({
 
   // Fuzzy dHash comparison (O(n²) but only for images with dHash)
   const itemsWithDHash = allHashedItems.filter(item => item.rawDHash && !item.isVideo);
+  console.log('[DupScanner] Items with dHash for comparison:', itemsWithDHash.length, 'out of', allHashedItems.length, 'total');
   let comparisons = 0;
+  let matchesFound = 0;
+  let nearMisses = { dist1: 0, dist2: 0, dist3: 0, dist4: 0, dist5: 0 };
   
   for (let i = 0; i < itemsWithDHash.length; i++) {
     for (let j = i + 1; j < itemsWithDHash.length; j++) {
       const dist = hammingDistance64(itemsWithDHash[i].rawDHash, itemsWithDHash[j].rawDHash);
+      // Track near-misses for debugging
+      if (dist === 1) nearMisses.dist1++;
+      else if (dist === 2) nearMisses.dist2++;
+      else if (dist === 3) nearMisses.dist3++;
+      else if (dist === 4) nearMisses.dist4++;
+      else if (dist === 5) nearMisses.dist5++;
+      
       if (dist <= CROSS_PLATFORM_DHASH_THRESHOLD) {
         union(itemsWithDHash[i].asset.id, itemsWithDHash[j].asset.id);
+        matchesFound++;
+        if (matchesFound <= 5) {
+          console.log('[DupScanner] Match found:', itemsWithDHash[i].info?.filename, 'vs', itemsWithDHash[j].info?.filename, 'dist:', dist);
+        }
       }
       comparisons++;
       if (comparisons % YIELD_EVERY_N_COMPARISONS === 0) {
@@ -701,6 +734,9 @@ export const scanExactDuplicates = async ({
       }
     }
   }
+
+  console.log('[DupScanner] Comparisons:', comparisons, 'Matches found:', matchesFound, 'Threshold:', CROSS_PLATFORM_DHASH_THRESHOLD);
+  console.log('[DupScanner] Near-misses:', nearMisses);
 
   // Build groups from Union-Find
   const groupMap = new Map();
@@ -1050,11 +1086,6 @@ export const scanSimilarPhotos = async ({
       const dt = Math.abs((b.createdTs || 0) - (a.createdTs || 0));
       const dist = hammingDistance64(aHash, bHash);
 
-      // Debug: log first 30 comparisons
-      if (comparisonsDone <= 30) {
-        console.log(`[SimilarScan] #${comparisonsDone} ${a.filename} vs ${b.filename}: dist=${dist}, dt=${Math.round(dt/1000)}s, exif=${a.hasExifTime && b.hasExifTime}`);
-      }
-
       // Use stricter thresholds if either file lacks EXIF timestamp
       // (copied files have same OS timestamp, so we can't trust time proximity)
       const bothHaveExif = a.hasExifTime && b.hasExifTime;
@@ -1076,6 +1107,11 @@ export const scanSimilarPhotos = async ({
       }
 
       if (dist > threshold) continue;
+
+      // Debug log matches to verify thresholds are working
+      if (similarPairs.length < 5) {
+        console.log(`[DupScanner] MATCH: ${a.filename} vs ${b.filename} dist=${dist} threshold=${threshold} dt=${dt} hasExif=${bothHaveExif}`);
+      }
 
       const key = [a.asset.id, b.asset.id].sort().join('|');
       if (seen.has(key)) continue;

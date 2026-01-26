@@ -134,7 +134,24 @@ export const normalizeFilenameForCompare = (name) => {
   return trimmed.toLowerCase();
 };
 
-// Normalize email for device UUID generation
+// Check if value is a Seeker ID (.skr domain or plain username)
+export const isSeekerIdFormat = (value) => {
+  if (!value) return false;
+  const trimmed = String(value).trim().toLowerCase();
+  if (trimmed.includes('@')) return false;
+  if (trimmed.endsWith('.skr')) return true;
+  const nicknamePattern = /^[a-zA-Z0-9][a-zA-Z0-9._-]{1,28}[a-zA-Z0-9]$/;
+  return nicknamePattern.test(trimmed);
+};
+
+// Just lowercase the input - keep as-is
+export const normalizeSeekerIdForStorage = (value) => {
+  if (!value) return null;
+  const trimmed = String(value).trim().toLowerCase();
+  return trimmed || null;
+};
+
+// Normalize for device UUID - just lowercase, keep as-is
 export const normalizeEmailForDeviceUuid = (value) => {
   const raw = value == null ? '' : String(value);
   const trimmed = raw.trim();
