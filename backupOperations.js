@@ -279,13 +279,20 @@ const yieldForNavigation = () => new Promise(resolve => {
 });
 
 // Quick yield for inside tight loops - still use requestAnimationFrame
-const quickYield = () => new Promise(r => {
-  if (typeof requestAnimationFrame !== 'undefined') {
-    requestAnimationFrame(() => r());
-  } else {
-    setTimeout(r, 0);
-  }
-});
+// In fast mode, skip yields entirely for maximum throughput
+let fastModeEnabled = false;
+const setFastMode = (enabled) => { fastModeEnabled = enabled; };
+
+const quickYield = () => {
+  if (fastModeEnabled) return Promise.resolve(); // Skip yield in fast mode
+  return new Promise(r => {
+    if (typeof requestAnimationFrame !== 'undefined') {
+      requestAnimationFrame(() => r());
+    } else {
+      setTimeout(r, 0);
+    }
+  });
+};
 
 // ============================================================================
 // SERVER COMMUNICATION
@@ -958,6 +965,7 @@ export const stealthCloudBackupCore = async ({
   abortRef,
 }) => {
   resetProgress();
+  setFastMode(!!fastMode); // Enable fast mode optimizations (skip yields)
   
   // ========== PHASE 1: Permissions (instant) ==========
   onStatus(t('status.requestingPhotosPermission'));
