@@ -549,7 +549,9 @@
 		"delete": "Geselecteerd verwijderen",
 		"keep": "Houd",
 		"deleteAll": "Alle duplicaten verwijderen",
-		"spaceRecovered": "Teruggewonnen ruimte: {{size}}"
+		"spaceRecovered": "Teruggewonnen ruimte: {{size}}",
+		"tapToZoom": "Tik om te vergroten",
+		"tapToClose": "Tik om te sluiten"
 	},
 	"common": {
 		"ok": "OK",

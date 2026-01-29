@@ -549,7 +549,9 @@
 		"delete": "حذف المحدد",
 		"keep": "احتفظ",
 		"deleteAll": "حذف جميع التكرارات",
-		"spaceRecovered": "المساحة المستردة {{size}}"
+		"spaceRecovered": "المساحة المستردة {{size}}",
+		"tapToZoom": "انقر للتكبير",
+		"tapToClose": "انقر للإغلاق"
 	},
 	"common": {
 		"ok": "OK",

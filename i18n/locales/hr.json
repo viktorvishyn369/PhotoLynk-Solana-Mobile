@@ -485,7 +485,9 @@
 		"delete": "Izbriši odabrano",
 		"keep": "Zadrži",
 		"deleteAll": "Izbriši sve duplikate",
-		"spaceRecovered": "Oporavljeni prostor: {{size}}"
+		"spaceRecovered": "Oporavljeni prostor: {{size}}",
+		"tapToZoom": "Dodirnite za povećanje",
+		"tapToClose": "Dodirnite za zatvaranje"
 	},
 	"common": {
 		"ok": "OK",

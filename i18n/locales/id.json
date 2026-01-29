@@ -485,7 +485,9 @@
 		"delete": "Hapus Dipilih",
 		"keep": "Simpan",
 		"deleteAll": "Hapus Semua Duplikat",
-		"spaceRecovered": "Ruang pulih: {{size}}"
+		"spaceRecovered": "Ruang pulih: {{size}}",
+		"tapToZoom": "Ketuk untuk memperbesar",
+		"tapToClose": "Ketuk untuk menutup"
 	},
 	"common": {
 		"ok": "OK",

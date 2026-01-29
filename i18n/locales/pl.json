@@ -549,7 +549,9 @@
 		"delete": "Usuń zaznaczone",
 		"keep": "Zachowaj",
 		"deleteAll": "Usuń wszystkie duplikaty",
-		"spaceRecovered": "Miejsce odzyskane: {{size}}"
+		"spaceRecovered": "Miejsce odzyskane: {{size}}",
+		"tapToZoom": "Stuknij, aby powiększyć",
+		"tapToClose": "Stuknij, aby zamknąć"
 	},
 	"common": {
 		"ok": "OK",

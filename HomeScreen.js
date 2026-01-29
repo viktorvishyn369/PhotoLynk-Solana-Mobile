@@ -131,11 +131,13 @@ export const HomeScreen = ({
 
   // Status color based on activity
   const getStatusColor = () => {
+    // Check specific actions first, before generic loading state
+    if (isMintingNFT) return '#9945FF'; // Solana purple for NFT
+    if (isCleaning) return COLORS.accent;  // Magenta for clean duplicates
+    if (isSyncing) return COLORS.secondary;
+    if (isBackingUp) return COLORS.primary;
     if (loading) return COLORS.primary; // Blue when loading/checking files
     if (isIdle) return COLORS.secondary;
-    if (isMintingNFT) return '#9945FF'; // Solana purple for NFT
-    if (isCleaning) return COLORS.accent;
-    if (isSyncing) return COLORS.secondary;
     return COLORS.primary;
   };
 

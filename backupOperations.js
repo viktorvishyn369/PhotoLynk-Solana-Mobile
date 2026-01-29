@@ -751,12 +751,23 @@ const encryptAndUpload = async ({
     const isVideo = (asset && asset.mediaType === 'video') || /\.(mp4|mov|avi|mkv|m4v|3gp|webm)$/i.test(filename || '');
     const isPhoto = !isVideo;
     let thumbSourceUri = null;
+    let tempVideoFrameUri = null;
 
     if (isVideo) {
       const fileUri = filePath && filePath.startsWith('/') ? `file://${filePath}` : (filePath || tmpUri);
       if (fileUri) {
-        const frame = await VideoThumbnails.getThumbnailAsync(fileUri, { time: 0 });
-        if (frame?.uri) thumbSourceUri = frame.uri;
+        for (const time of [0, 500, 1000, 2000]) {
+          try {
+            const frame = await VideoThumbnails.getThumbnailAsync(fileUri, { time });
+            if (frame?.uri) {
+              thumbSourceUri = frame.uri;
+              tempVideoFrameUri = frame.uri;
+              break;
+            }
+          } catch (e) {
+            // Try another timestamp
+          }
+        }
       }
     } else if (isPhoto) {
       thumbSourceUri = (filePath && filePath.startsWith('/')) ? `file://${filePath}` : (filePath || tmpUri);
@@ -786,6 +797,10 @@ const encryptAndUpload = async ({
 
         try { await FileSystem.deleteAsync(manip.uri, { idempotent: true }); } catch (e) {}
       }
+    }
+
+    if (tempVideoFrameUri) {
+      try { await FileSystem.deleteAsync(tempVideoFrameUri, { idempotent: true }); } catch (e) {}
     }
   } catch (e) {
     // Best-effort: thumbnail failures must not fail backup
@@ -836,6 +851,10 @@ const encryptAndUpload = async ({
         fileHash,
         perceptualHash,
         creationTime: asset.creationTime,
+        // EXIF metadata for cross-platform HEIC deduplication
+        exifCaptureTime: exifData?.captureTime || null,
+        exifMake: exifData?.make || null,
+        exifModel: exifData?.model || null,
         thumbChunkId,
         thumbNonce: thumbNonceB64,
         thumbSize,

@@ -785,31 +785,36 @@ export const stripExifFromImage = async (filePath) => {
     // Validate file path
     if (!filePath) {
       console.log('[NFT] No file path provided for EXIF stripping');
-      return { success: false, error: 'No image file provided' };
+      return { success: true, cleanPath: filePath, stripped: false };
     }
     
     // Check if file exists
-    const fileInfo = await FileSystem.getInfoAsync(filePath);
-    if (!fileInfo.exists) {
-      console.log('[NFT] File does not exist:', filePath);
-      return { success: false, error: 'File not found' };
-    }
-    
-    // Read the original image as base64
-    const originalBase64 = await FileSystem.readAsStringAsync(filePath, {
-      encoding: FileSystem.EncodingType.Base64,
-    });
-    
-    // Decode base64 to find and remove EXIF data
-    // JPEG EXIF is stored in APP1 marker (0xFFE1)
-    // We'll re-encode the image data without EXIF by using a canvas approach
-    
-    // For React Native, the simplest approach is to use expo-image-manipulator
-    // which re-encodes the image and strips EXIF in the process
-    if (!ImageManipulator || !ImageManipulator.manipulateAsync) {
-      console.log('[NFT] expo-image-manipulator not available, using fallback');
+    let fileInfo;
+    try {
+      fileInfo = await FileSystem.getInfoAsync(filePath);
+    } catch (infoErr) {
+      console.warn('[NFT] Could not check file info:', infoErr?.message);
       return { success: true, cleanPath: filePath, stripped: false };
     }
+    
+    if (!fileInfo || !fileInfo.exists) {
+      console.log('[NFT] File does not exist:', filePath);
+      return { success: true, cleanPath: filePath, stripped: false };
+    }
+    
+    // For React Native, use expo-image-manipulator which re-encodes and strips EXIF
+    if (!ImageManipulator || !ImageManipulator.manipulateAsync) {
+      console.log('[NFT] expo-image-manipulator not available, using original');
+      return { success: true, cleanPath: filePath, stripped: false };
+    }
+    
+    // Determine output format based on input file extension
+    const lowerPath = (filePath || '').toLowerCase();
+    const isPng = lowerPath.endsWith('.png');
+    const outputFormat = isPng ? ImageManipulator.SaveFormat.PNG : ImageManipulator.SaveFormat.JPEG;
+    const compress = isPng ? 1.0 : 0.95; // PNG is lossless, JPEG use high quality
+    
+    console.log('[NFT] Stripping EXIF from:', filePath, 'format:', isPng ? 'PNG' : 'JPEG');
     
     // Use ImageManipulator to re-encode without EXIF
     // The manipulate function with no operations still re-encodes and strips EXIF
@@ -817,13 +822,18 @@ export const stripExifFromImage = async (filePath) => {
       filePath,
       [], // No transformations, just re-encode
       { 
-        compress: 0.95, // High quality
-        format: ImageManipulator.SaveFormat.JPEG,
-        // Note: manipulateAsync strips EXIF by default
+        compress,
+        format: outputFormat,
       }
     );
     
-    console.log('[NFT] EXIF stripped, clean image at:', result.uri);
+    // Verify the result has a valid URI
+    if (!result || !result.uri) {
+      console.warn('[NFT] ImageManipulator returned no URI, using original');
+      return { success: true, cleanPath: filePath, stripped: false };
+    }
+    
+    console.log('[NFT] EXIF stripped successfully, clean image at:', result.uri);
     
     return {
       success: true,
@@ -831,8 +841,8 @@ export const stripExifFromImage = async (filePath) => {
       stripped: true,
     };
   } catch (e) {
-    console.error('[NFT] EXIF stripping failed:', e.message);
-    return { success: false, error: e.message };
+    console.warn('[NFT] EXIF stripping failed, using original:', e?.message || e);
+    return { success: true, cleanPath: filePath, stripped: false };
   }
 };
 
@@ -2118,13 +2128,19 @@ export const mintPhotoNFT = async ({
       onStatus?.('Removing private data...');
       onProgress?.(0.2);
       
-      const stripResult = await stripExifFromImage(filePath);
-      if (stripResult.success && stripResult.stripped) {
-        uploadFilePath = stripResult.cleanPath;
-        cleanupTempFile = stripResult.cleanPath;
-        console.log('[NFT] Using EXIF-stripped image');
-      } else {
-        console.log('[NFT] EXIF stripping skipped or failed, using original');
+      try {
+        const stripResult = await stripExifFromImage(filePath);
+        if (stripResult.success && stripResult.stripped) {
+          uploadFilePath = stripResult.cleanPath;
+          cleanupTempFile = stripResult.cleanPath;
+          console.log('[NFT] Using EXIF-stripped image');
+        } else {
+          // Best effort - proceed with original if stripping fails
+          console.warn('[NFT] EXIF stripping skipped, using original:', stripResult.error || 'not stripped');
+        }
+      } catch (stripError) {
+        // Best effort - proceed with original if stripping throws
+        console.warn('[NFT] EXIF stripping error, using original:', stripError?.message || stripError);
       }
     }
     

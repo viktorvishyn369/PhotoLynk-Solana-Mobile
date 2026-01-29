@@ -551,7 +551,9 @@
 		"delete": "Supprimer la sélection",
 		"keep": "Garder",
 		"deleteAll": "Supprimer tous les doublons",
-		"spaceRecovered": "Espace récupéré : {{size}}"
+		"spaceRecovered": "Espace récupéré : {{size}}",
+		"tapToZoom": "Appuyez pour agrandir",
+		"tapToClose": "Appuyez pour fermer"
 	},
 	"common": {
 		"ok": "OK",

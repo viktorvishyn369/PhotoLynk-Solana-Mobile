@@ -2,13 +2,20 @@ package com.photolynk.solana
 
 import android.app.Activity
 import android.content.ContentUris
+import android.content.ContentValues
 import android.net.Uri
 import android.os.Build
+import android.os.Environment
 import android.provider.MediaStore
 import android.util.Log
 import com.facebook.react.bridge.*
+import java.io.File
+import java.io.FileInputStream
+import java.io.FileOutputStream
 
 class MediaDeleteModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaModule(reactContext) {
+
+    private val deletedFolderName = "PhotoLynkDeleted"
 
     private val activityEventListener: ActivityEventListener = object : BaseActivityEventListener() {
         override fun onActivityResult(activity: Activity?, requestCode: Int, resultCode: Int, data: android.content.Intent?) {
@@ -37,6 +44,74 @@ class MediaDeleteModule(reactContext: ReactApplicationContext) : ReactContextBas
     }
 
     override fun getName(): String = "MediaDelete"
+
+    // Get or create the PhotoLynkDeleted folder
+    private fun getOrCreateDeletedFolder(): File? {
+        try {
+            val picturesDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES)
+            val deletedFolder = File(picturesDir, deletedFolderName)
+            
+            if (!deletedFolder.exists()) {
+                val created = deletedFolder.mkdirs()
+                Log.d("MediaDelete", "Created PhotoLynkDeleted folder: $created at ${deletedFolder.absolutePath}")
+            } else {
+                Log.d("MediaDelete", "PhotoLynkDeleted folder exists at ${deletedFolder.absolutePath}")
+            }
+            
+            return if (deletedFolder.exists()) deletedFolder else null
+        } catch (e: Exception) {
+            Log.e("MediaDelete", "Failed to create PhotoLynkDeleted folder: ${e.message}")
+            return null
+        }
+    }
+
+    // Copy a file to the PhotoLynkDeleted folder
+    private fun copyToDeletedFolder(uri: Uri, deletedFolder: File): Boolean {
+        try {
+            val contentResolver = reactApplicationContext.contentResolver
+            
+            // Get the original filename
+            var fileName = "deleted_${System.currentTimeMillis()}"
+            val cursor = contentResolver.query(uri, arrayOf(MediaStore.MediaColumns.DISPLAY_NAME), null, null, null)
+            cursor?.use {
+                if (it.moveToFirst()) {
+                    fileName = it.getString(0) ?: fileName
+                }
+            }
+            
+            // Ensure unique filename
+            var destFile = File(deletedFolder, fileName)
+            var counter = 1
+            while (destFile.exists()) {
+                val nameWithoutExt = fileName.substringBeforeLast(".")
+                val ext = if (fileName.contains(".")) ".${fileName.substringAfterLast(".")}" else ""
+                destFile = File(deletedFolder, "${nameWithoutExt}_$counter$ext")
+                counter++
+            }
+            
+            // Copy the file
+            contentResolver.openInputStream(uri)?.use { input ->
+                FileOutputStream(destFile).use { output ->
+                    input.copyTo(output)
+                }
+            }
+            
+            Log.d("MediaDelete", "Copied to: ${destFile.absolutePath}")
+            
+            // Notify MediaStore about the new file so it appears in gallery
+            android.media.MediaScannerConnection.scanFile(
+                reactApplicationContext,
+                arrayOf(destFile.absolutePath),
+                null,
+                null
+            )
+            
+            return true
+        } catch (e: Exception) {
+            Log.e("MediaDelete", "Failed to copy file: ${e.message}")
+            return false
+        }
+    }
 
     @ReactMethod
     fun deleteAssets(assetIds: ReadableArray, promise: Promise) {
@@ -73,6 +148,23 @@ class MediaDeleteModule(reactContext: ReactApplicationContext) : ReactContextBas
                 return
             }
 
+            // Step 1: Copy files to PhotoLynkDeleted folder (best effort)
+            val deletedFolder = getOrCreateDeletedFolder()
+            if (deletedFolder != null) {
+                Log.d("MediaDelete", "Copying ${uris.size} files to PhotoLynkDeleted folder...")
+                for (uri in uris) {
+                    try {
+                        copyToDeletedFolder(uri, deletedFolder)
+                    } catch (e: Exception) {
+                        Log.w("MediaDelete", "Failed to copy $uri: ${e.message}")
+                        // Continue anyway - best effort
+                    }
+                }
+            } else {
+                Log.w("MediaDelete", "Could not create PhotoLynkDeleted folder, proceeding with delete only")
+            }
+
+            // Step 2: Delete the original files
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                 // Android 11+ (API 30+): Use createDeleteRequest for scoped storage
                 if (pendingDeletePromise != null) {

@@ -551,7 +551,9 @@
 		"delete": "선택 항목 삭제",
 		"keep": "유지",
 		"deleteAll": "모든 중복 삭제",
-		"spaceRecovered": "공간이 복구되었습니다: {{size}}"
+		"spaceRecovered": "공간이 복구되었습니다: {{size}}",
+		"tapToZoom": "탭하여 확대",
+		"tapToClose": "탭하여 닫기"
 	},
 	"common": {
 		"ok": "OK",

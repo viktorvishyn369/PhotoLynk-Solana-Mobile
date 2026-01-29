@@ -485,7 +485,9 @@
 		"delete": "Odstranit vybrané",
 		"keep": "Udržujte",
 		"deleteAll": "Odstranění všech duplicit",
-		"spaceRecovered": "Získaný prostor: {{size}}"
+		"spaceRecovered": "Získaný prostor: {{size}}",
+		"tapToZoom": "Klepněte pro zvětšení",
+		"tapToClose": "Klepněte pro zavření"
 	},
 	"common": {
 		"ok": "OK",

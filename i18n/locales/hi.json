@@ -548,7 +548,9 @@
 		"delete": "चयनित हटाएँ",
 		"keep": "रखो",
 		"deleteAll": "सभी डुप्लिकेट हटाएँ",
-		"spaceRecovered": "पुनः प्राप्त स्थान: {{size}}"
+		"spaceRecovered": "पुनः प्राप्त स्थान: {{size}}",
+		"tapToZoom": "ज़ूम करने के लिए टैप करें",
+		"tapToClose": "बंद करने के लिए टैप करें"
 	},
 	"common": {
 		"ok": "OK",

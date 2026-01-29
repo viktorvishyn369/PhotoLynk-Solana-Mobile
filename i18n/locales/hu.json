@@ -485,7 +485,9 @@
 		"delete": "Kijelöltek törlése",
 		"keep": "Tartsa a  címet.",
 		"deleteAll": "Minden duplikátum törlése",
-		"spaceRecovered": "Az űr visszaszerezve: {{size}}"
+		"spaceRecovered": "Az űr visszaszerezve: {{size}}",
+		"tapToZoom": "Koppintson a nagyításhoz",
+		"tapToClose": "Koppintson a bezáráshoz"
 	},
 	"common": {
 		"ok": "OK",

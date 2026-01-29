@@ -560,7 +560,9 @@
 		"delete": "删除选定",
 		"keep": "保持",
 		"deleteAll": "删除所有副本",
-		"spaceRecovered": "已恢复空间：{{size}}"
+		"spaceRecovered": "已恢复空间：{{size}}",
+		"tapToZoom": "点击放大",
+		"tapToClose": "点击关闭"
 	},
 	"common": {
 		"ok": "OK",

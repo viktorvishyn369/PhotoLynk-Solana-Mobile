@@ -548,7 +548,9 @@
 		"delete": "Radera markerad",
 		"keep": "Håll",
 		"deleteAll": "Ta bort alla dubbletter",
-		"spaceRecovered": "Utrymme återställt: {{size}}"
+		"spaceRecovered": "Utrymme återställt: {{size}}",
+		"tapToZoom": "Tryck för att zooma",
+		"tapToClose": "Tryck för att stänga"
 	},
 	"common": {
 		"ok": "OK",

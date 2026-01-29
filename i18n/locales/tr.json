@@ -549,7 +549,9 @@
 		"delete": "Seçileni Sil",
 		"keep": "Sakla",
 		"deleteAll": "Tüm Kopyaları Sil",
-		"spaceRecovered": "Alan kurtarıldı: {{size}}"
+		"spaceRecovered": "Alan kurtarıldı: {{size}}",
+		"tapToZoom": "Yakınlaştırmak için dokun",
+		"tapToClose": "Kapatmak için dokun"
 	},
 	"common": {
 		"ok": "OK",

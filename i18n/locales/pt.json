@@ -551,7 +551,9 @@
 		"delete": "Apagar selecionado",
 		"keep": "Manter",
 		"deleteAll": "Eliminar todos os duplicados",
-		"spaceRecovered": "Espaço recuperado: {{size}}"
+		"spaceRecovered": "Espaço recuperado: {{size}}",
+		"tapToZoom": "Toque para ampliar",
+		"tapToClose": "Toque para fechar"
 	},
 	"common": {
 		"ok": "OK",

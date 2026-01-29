@@ -485,7 +485,9 @@
 		"delete": "Ștergeți selectat",
 		"keep": "Păstrați",
 		"deleteAll": "Ștergeți toate duplicatele",
-		"spaceRecovered": "Spațiu recuperat: {{size}}"
+		"spaceRecovered": "Spațiu recuperat: {{size}}",
+		"tapToZoom": "Atingeți pentru a mări",
+		"tapToClose": "Atingeți pentru a închide"
 	},
 	"common": {
 		"ok": "OK",

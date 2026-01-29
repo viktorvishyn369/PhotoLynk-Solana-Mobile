@@ -566,20 +566,20 @@ export const autoUploadStealthCloudUploadOneAsset = async ({
 
   if (!chunkIds.length) return { uploaded: 0, skipped: 0, failed: 1 };
 
-  // Extract EXIF data for HEIC files to store in manifest for cross-platform deduplication
+  // Extract EXIF data for all images to store in manifest for cross-platform deduplication
   let exifCaptureTime = null, exifMake = null, exifModel = null;
-  if (isHEIC) {
+  if (isImage) {
     try {
-      const { extractExifFromHEIC } = require('./exifExtractor');
-      const exifData = await extractExifFromHEIC(filePath);
+      const { extractExifForDedupNative } = require('./duplicateScanner');
+      const exifData = await extractExifForDedupNative(filePath, assetInfo, asset);
       if (exifData) {
         exifCaptureTime = exifData.captureTime || null;
         exifMake = exifData.make || null;
         exifModel = exifData.model || null;
-        console.log(`AutoUpload: Extracted EXIF for ${filename}: time=${exifCaptureTime}, make=${exifMake}, model=${exifModel}`);
       }
     } catch (e) {
-      console.warn('AutoUpload: EXIF extraction for manifest failed:', filename, e?.message);
+      // EXIF extraction is best-effort - don't fail upload
+      console.warn('AutoUpload: EXIF extraction failed (non-critical):', filename, e?.message);
     }
   }
 
@@ -596,19 +596,22 @@ export const autoUploadStealthCloudUploadOneAsset = async ({
     const isVideo = (asset && asset.mediaType === 'video') || /\.(mp4|mov|avi|mkv|m4v|3gp|webm)$/i.test(filename || '');
     const isPhoto = !isVideo;
     let thumbSourceUri = null;
+    let tempVideoFrameUri = null;
 
     if (isVideo) {
       const videoFileUri = filePath && filePath.startsWith('/') ? `file://${filePath}` : filePath;
       if (videoFileUri) {
-        try {
-          const frame = await VideoThumbnails.getThumbnailAsync(videoFileUri, { time: 0 });
-          if (frame?.uri) thumbSourceUri = frame.uri;
-        } catch (e) {
-          // Try time=1000 as fallback
+        for (const time of [0, 500, 1000, 2000]) {
           try {
-            const frame2 = await VideoThumbnails.getThumbnailAsync(videoFileUri, { time: 1000 });
-            if (frame2?.uri) thumbSourceUri = frame2.uri;
-          } catch (e2) {}
+            const frame = await VideoThumbnails.getThumbnailAsync(videoFileUri, { time });
+            if (frame?.uri) {
+              thumbSourceUri = frame.uri;
+              tempVideoFrameUri = frame.uri;
+              break;
+            }
+          } catch (e) {
+            // Try another timestamp
+          }
         }
       }
     } else if (isPhoto) {
@@ -640,6 +643,10 @@ export const autoUploadStealthCloudUploadOneAsset = async ({
 
         try { await FileSystem.deleteAsync(manip.uri, { idempotent: true }); } catch (e) {}
       }
+    }
+
+    if (tempVideoFrameUri) {
+      try { await FileSystem.deleteAsync(tempVideoFrameUri, { idempotent: true }); } catch (e) {}
     }
   } catch (e) {
     // Best-effort: thumbnail failures must not fail backup
@@ -676,6 +683,10 @@ export const autoUploadStealthCloudUploadOneAsset = async ({
         fileHash: exactFileHash,
         perceptualHash,
         creationTime: asset.creationTime,
+        // EXIF metadata for cross-platform HEIC deduplication
+        exifCaptureTime,
+        exifMake,
+        exifModel,
         thumbChunkId,
         thumbNonce: thumbNonceB64,
         thumbSize,
@@ -713,7 +724,7 @@ export const autoUploadStealthCloudUploadOneAsset = async ({
     try { await FileSystem.deleteAsync(staged.tmpUri, { idempotent: true }); } catch (e) {}
   }
 
-  return { uploaded: 1, skipped: 0, failed: 0, manifestId };
+  return { uploaded: 1, skipped: 0, failed: 0, manifestId, perceptualHash, fileHash: exactFileHash, filename };
 };
 
 // Concurrency helpers

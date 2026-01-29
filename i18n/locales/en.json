@@ -551,7 +551,9 @@
 		"delete": "Delete Selected",
 		"keep": "Keep",
 		"deleteAll": "Delete All Duplicates",
-		"spaceRecovered": "Space recovered: {{size}}"
+		"spaceRecovered": "Space recovered: {{size}}",
+		"tapToZoom": "Tap to zoom",
+		"tapToClose": "Tap anywhere to close"
 	},
 	"common": {
 		"ok": "OK",

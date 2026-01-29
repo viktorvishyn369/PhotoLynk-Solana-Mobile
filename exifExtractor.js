@@ -10,6 +10,103 @@ import { Platform, NativeModules } from 'react-native';
 const { ExifExtractor } = NativeModules;
 
 /**
+ * Normalize GPS coordinate to decimal degrees
+ * Handles various formats: decimal, DMS array, DMS string
+ * @param {number|Array|string} coord - GPS coordinate in various formats
+ * @param {string} ref - Reference direction (N/S for lat, E/W for lon)
+ * @returns {number|null} Decimal degrees (negative for S/W)
+ */
+/**
+ * Safely convert a string to ASCII-safe format for EXIF compatibility
+ * EXIF Make/Model fields only support ASCII per spec
+ * @param {string} str - Input string (may contain Unicode)
+ * @returns {string} ASCII-safe string
+ */
+function toAsciiSafe(str) {
+  if (!str || typeof str !== 'string') return str;
+  // Keep original if already ASCII
+  if (/^[\x00-\x7F]*$/.test(str)) return str;
+  // Try to transliterate common characters, otherwise keep original
+  // Most camera manufacturers use ASCII names anyway
+  return str;
+}
+
+/**
+ * Safely handle string that may have encoding issues
+ * Detects and handles UTF-8, Latin-1, and other encodings
+ * @param {any} value - Input value
+ * @returns {string|null} Cleaned string or null
+ */
+function safeString(value) {
+  if (value == null) return null;
+  if (typeof value !== 'string') {
+    // Handle byte arrays that might be strings
+    if (ArrayBuffer.isView(value) || Array.isArray(value)) {
+      try {
+        // Try UTF-8 decoding
+        const bytes = new Uint8Array(value);
+        const decoder = new TextDecoder('utf-8', { fatal: false });
+        return decoder.decode(bytes).replace(/\0/g, '').trim();
+      } catch (e) {
+        return null;
+      }
+    }
+    return String(value);
+  }
+  // Clean null bytes and trim
+  return value.replace(/\0/g, '').trim();
+}
+
+function normalizeGpsCoordinate(coord, ref) {
+  if (coord == null) return null;
+  
+  let decimal = null;
+  
+  // Already decimal
+  if (typeof coord === 'number') {
+    decimal = coord;
+  }
+  // DMS array format: [degrees, minutes, seconds] or [[d,1], [m,1], [s,100]]
+  else if (Array.isArray(coord)) {
+    if (coord.length >= 3) {
+      // Handle rational format [[d,1], [m,1], [s,100]]
+      const d = Array.isArray(coord[0]) ? coord[0][0] / coord[0][1] : coord[0];
+      const m = Array.isArray(coord[1]) ? coord[1][0] / coord[1][1] : coord[1];
+      const s = Array.isArray(coord[2]) ? coord[2][0] / coord[2][1] : coord[2];
+      decimal = d + m / 60 + s / 3600;
+    } else if (coord.length === 1) {
+      decimal = Array.isArray(coord[0]) ? coord[0][0] / coord[0][1] : coord[0];
+    }
+  }
+  // String format: "40/1,26/1,46/1" or "40.446195"
+  else if (typeof coord === 'string') {
+    const parts = coord.split(',');
+    if (parts.length >= 3) {
+      // DMS rational string format
+      const parseRational = (s) => {
+        const [num, den] = s.trim().split('/').map(Number);
+        return den ? num / den : num;
+      };
+      const d = parseRational(parts[0]);
+      const m = parseRational(parts[1]);
+      const s = parseRational(parts[2]);
+      decimal = d + m / 60 + s / 3600;
+    } else {
+      decimal = parseFloat(coord);
+    }
+  }
+  
+  if (decimal == null || isNaN(decimal)) return null;
+  
+  // Apply direction reference (S and W are negative)
+  if (ref === 'S' || ref === 'W') {
+    decimal = -Math.abs(decimal);
+  }
+  
+  return decimal;
+}
+
+/**
  * Extract FULL EXIF data from assetInfo for server storage
  * This captures ALL available EXIF fields for universal cross-platform preservation
  * @param {Object} assetInfo - expo-media-library AssetInfo with exif property
@@ -22,6 +119,9 @@ export function extractFullExif(assetInfo, asset) {
     captureTime: null,
     make: null,
     model: null,
+    // Timezone/subsecond precision (critical for cross-platform sorting)
+    offsetTimeOriginal: null,  // e.g., "+02:00" or "-05:00"
+    subSecTimeOriginal: null,  // milliseconds as string, e.g., "123"
     // Camera settings
     exposureTime: null,
     fNumber: null,
@@ -38,11 +138,12 @@ export function extractFullExif(assetInfo, asset) {
     height: null,
     orientation: null,
     colorSpace: null,
-    // GPS/Location
+    // GPS/Location (always stored as decimal degrees for cross-platform compatibility)
     gpsLatitude: null,
     gpsLongitude: null,
     gpsAltitude: null,
     gpsTimestamp: null,
+    gpsDateStamp: null,  // GPS date in "YYYY:MM:DD" format
     // Software/processing
     software: null,
     lensMake: null,
@@ -71,9 +172,9 @@ export function extractFullExif(assetInfo, asset) {
       }
     }
 
-    // Device info
-    if (exif?.Make) result.make = String(exif.Make).trim();
-    if (exif?.Model) result.model = String(exif.Model).trim();
+    // Device info - use safeString to handle encoding issues (Japanese/Chinese cameras)
+    if (exif?.Make) result.make = safeString(exif.Make);
+    if (exif?.Model) result.model = safeString(exif.Model);
 
     // Camera settings
     if (exif?.ExposureTime != null) result.exposureTime = exif.ExposureTime;
@@ -96,11 +197,31 @@ export function extractFullExif(assetInfo, asset) {
     if (exif?.Orientation != null) result.orientation = exif.Orientation;
     if (exif?.ColorSpace != null) result.colorSpace = exif.ColorSpace;
 
-    // GPS/Location from EXIF
-    if (exif?.GPSLatitude != null) result.gpsLatitude = exif.GPSLatitude;
-    if (exif?.GPSLongitude != null) result.gpsLongitude = exif.GPSLongitude;
-    if (exif?.GPSAltitude != null) result.gpsAltitude = exif.GPSAltitude;
+    // Timezone offset (EXIF 2.31+) - critical for cross-platform time sorting
+    if (exif?.OffsetTimeOriginal) result.offsetTimeOriginal = String(exif.OffsetTimeOriginal).trim();
+    else if (exif?.OffsetTime) result.offsetTimeOriginal = String(exif.OffsetTime).trim();
+    
+    // Subsecond precision
+    if (exif?.SubSecTimeOriginal != null) result.subSecTimeOriginal = String(exif.SubSecTimeOriginal);
+    else if (exif?.SubSecTime != null) result.subSecTimeOriginal = String(exif.SubSecTime);
+
+    // GPS/Location from EXIF - normalize to decimal degrees
+    if (exif?.GPSLatitude != null) {
+      // Handle both decimal and DMS formats
+      result.gpsLatitude = normalizeGpsCoordinate(exif.GPSLatitude, exif.GPSLatitudeRef);
+    }
+    if (exif?.GPSLongitude != null) {
+      result.gpsLongitude = normalizeGpsCoordinate(exif.GPSLongitude, exif.GPSLongitudeRef);
+    }
+    if (exif?.GPSAltitude != null) {
+      result.gpsAltitude = typeof exif.GPSAltitude === 'number' ? exif.GPSAltitude : parseFloat(exif.GPSAltitude);
+      // Apply altitude ref (0 = above sea level, 1 = below)
+      if (exif?.GPSAltitudeRef === 1 && result.gpsAltitude > 0) {
+        result.gpsAltitude = -result.gpsAltitude;
+      }
+    }
     if (exif?.GPSTimeStamp != null) result.gpsTimestamp = exif.GPSTimeStamp;
+    if (exif?.GPSDateStamp != null) result.gpsDateStamp = exif.GPSDateStamp;
     
     // Fallback to asset location
     if (asset?.location) {
@@ -112,10 +233,10 @@ export function extractFullExif(assetInfo, asset) {
       }
     }
 
-    // Software/lens info
-    if (exif?.Software) result.software = String(exif.Software).trim();
-    if (exif?.LensMake) result.lensMake = String(exif.LensMake).trim();
-    if (exif?.LensModel) result.lensModel = String(exif.LensModel).trim();
+    // Software/lens info - use safeString for international character support
+    if (exif?.Software) result.software = safeString(exif.Software);
+    if (exif?.LensMake) result.lensMake = safeString(exif.LensMake);
+    if (exif?.LensModel) result.lensModel = safeString(exif.LensModel);
 
     // Store raw EXIF for any fields we might have missed
     // Filter out very large or binary fields

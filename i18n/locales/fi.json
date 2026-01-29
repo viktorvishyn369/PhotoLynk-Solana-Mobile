@@ -498,7 +498,9 @@
 		"delete": "Poista valittu",
 		"keep": "Pidä",
 		"deleteAll": "Poista kaikki kaksoiskappaleet",
-		"spaceRecovered": "Avaruus talteen: {{size}}"
+		"spaceRecovered": "Avaruus talteen: {{size}}",
+		"tapToZoom": "Napauta zoomataksesi",
+		"tapToClose": "Napauta sulkeaksesi"
 	},
 	"common": {
 		"ok": "OK",

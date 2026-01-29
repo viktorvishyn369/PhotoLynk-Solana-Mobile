@@ -498,7 +498,9 @@
 		"delete": "Ištrinti pasirinktą",
 		"keep": "Laikyti",
 		"deleteAll": "Ištrinti visus dublikatus",
-		"spaceRecovered": "Atgauta erdvė: {{size}}"
+		"spaceRecovered": "Atgauta erdvė: {{size}}",
+		"tapToZoom": "Bakstelėkite, kad padidintumėte",
+		"tapToClose": "Bakstelėkite, kad uždarytumėte"
 	},
 	"common": {
 		"ok": "OK",

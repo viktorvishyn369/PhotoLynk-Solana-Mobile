@@ -551,7 +551,9 @@
 		"delete": "選択削除",
 		"keep": "キープ",
 		"deleteAll": "すべての重複を削除する",
-		"spaceRecovered": "スペースが回復した：{{size}}"
+		"spaceRecovered": "スペースが回復した：{{size}}",
+		"tapToZoom": "タップして拡大",
+		"tapToClose": "タップして閉じる"
 	},
 	"common": {
 		"ok": "OK",

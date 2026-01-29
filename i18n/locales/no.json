@@ -497,7 +497,9 @@
 		"delete": "Slett valgt",
 		"keep": "Behold",
 		"deleteAll": "Slett alle duplikater",
-		"spaceRecovered": "Plass gjenvunnet: {{size}}"
+		"spaceRecovered": "Plass gjenvunnet: {{size}}",
+		"tapToZoom": "Trykk for å zoome",
+		"tapToClose": "Trykk for å lukke"
 	},
 	"common": {
 		"ok": "OK",

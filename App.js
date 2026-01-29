@@ -298,6 +298,7 @@ export default function App() {
   const [progress, setProgress] = useState(0);
   const [progressAction, setProgressAction] = useState(null); // 'cleanup' | 'backup' | 'sync' | null
   const [duplicateReview, setDuplicateReview] = useState(null);
+  const [duplicateZoomImage, setDuplicateZoomImage] = useState(null); // { uri, filename, created, size } for fullscreen zoom
   const [loading, setLoading] = useState(false);
   const [wasBackgroundedDuringWork, setWasBackgroundedDuringWork] = useState(false);
   const [backgroundWarnEligible, setBackgroundWarnEligible] = useState(false);
@@ -1379,6 +1380,10 @@ export default function App() {
               uploaded += 1;
               cumulativeUploaded += 1;
               if (r.manifestId) already.add(r.manifestId);
+              // Update dedup sets with newly uploaded file's hashes to prevent duplicates within same session
+              if (r.perceptualHash) alreadyPerceptualHashes.add(r.perceptualHash);
+              if (r.fileHash) alreadyFileHashes.add(r.fileHash);
+              if (r.filename) alreadyFilenames.add(normalizeFilenameForCompare(r.filename));
               // Update status with current progress (only if not cancelled)
               if (totalEstimatedCount !== null && !autoUploadNightRunnerCancelRef.current && autoUploadEnabledRef.current) {
                 const displayCurrent = Math.min(cumulativeUploaded, totalEstimatedCount);
@@ -2493,7 +2498,11 @@ export default function App() {
           if (result.total !== syncPickerTotal) setSyncPickerTotal(result.total);
           setSyncPickerOffset(result.nextOffset);
           if (result.items.length > 0) {
-            setSyncPickerItems(prev => [...prev, ...result.items]);
+            setSyncPickerItems(prev => {
+              const existingIds = new Set(prev.map(it => it?.manifestId));
+              const newItems = result.items.filter(it => it?.manifestId && !existingIds.has(it.manifestId));
+              return [...prev, ...newItems];
+            });
           }
         } else {
           const result = await fetchLocalRemotePickerPage({
@@ -2502,7 +2511,11 @@ export default function App() {
           if (result.total !== syncPickerTotal) setSyncPickerTotal(result.total);
           setSyncPickerOffset(result.nextOffset);
           if (result.items.length > 0) {
-            setSyncPickerItems(prev => [...prev, ...result.items]);
+            setSyncPickerItems(prev => {
+              const existingIds = new Set(prev.map(it => it?.filename));
+              const newItems = result.items.filter(it => it?.filename && !existingIds.has(it.filename));
+              return [...prev, ...newItems];
+            });
           }
         }
       } catch (e) {
@@ -4882,6 +4895,7 @@ export default function App() {
       )}
 
       {similarReviewOpen && (() => {
+        const CLEANUP_MAGENTA = '#DC1FFF'; // Magenta color for clean duplicates
         const currentGroup = (similarGroups || [])[similarGroupIndex] || [];
         const currentPhoto = currentGroup[similarPhotoIndex] || null;
         const currentPhotoId = currentPhoto && currentPhoto.id ? String(currentPhoto.id) : '';
@@ -4900,15 +4914,13 @@ export default function App() {
             {/* Header */}
             <View style={{ paddingTop: Platform.OS === 'ios' ? 50 : 30, paddingHorizontal: 16, paddingBottom: 12, backgroundColor: 'rgba(0,0,0,0.8)' }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                <TouchableOpacity onPress={closeSimilarReview} style={{ padding: 8, minWidth: 60 }}>
-                  <Text style={{ color: THEME.secondary, fontSize: scale(16), fontWeight: '600' }}>{t('common.cancel')}</Text>
+                <TouchableOpacity onPress={closeSimilarReview} style={{ padding: 8 }}>
+                  <Text style={{ color: CLEANUP_MAGENTA, fontSize: scale(16), fontWeight: '600' }}>{t('common.cancel')}</Text>
                 </TouchableOpacity>
-                <View style={{ flex: 1, alignItems: 'center', marginHorizontal: 8 }}>
-                  <Text style={{ color: '#FFF', fontSize: scale(16), fontWeight: '700' }} numberOfLines={1}>{t('similarPhotos.title')}</Text>
-                  <Text style={{ color: '#888', fontSize: scale(12) }} numberOfLines={1}>{t('similarPhotos.setInfo', { set: similarGroupIndex + 1, total: totalGroups })} • {t('similarPhotos.photoInfo', { photo: similarPhotoIndex + 1, total: totalInGroup })}</Text>
-                </View>
-                <View style={{ minWidth: 60 }} />
+                <Text style={{ color: '#FFF', fontSize: scale(16), fontWeight: '700' }}>{t('similarPhotos.title')}</Text>
+                <View style={{ width: 60 }} />
               </View>
+              <Text style={{ color: '#888', fontSize: scale(12), textAlign: 'center', marginTop: 4 }} numberOfLines={1}>{t('similarPhotos.setInfo', { set: similarGroupIndex + 1, total: totalGroups })} • {t('similarPhotos.photoInfo', { photo: similarPhotoIndex + 1, total: totalInGroup })}</Text>
             </View>
 
             {/* Full-screen photo */}
@@ -4930,10 +4942,10 @@ export default function App() {
               
               {/* Photo info */}
               {currentPhoto && (
-                <View style={{ position: 'absolute', bottom: 20, left: 20, right: 20, backgroundColor: 'rgba(0,0,0,0.7)', padding: 12, borderRadius: 12 }}>
-                  <Text style={{ color: '#FFF', fontSize: scale(13), fontWeight: '600' }}>{currentPhoto.filename || 'Unknown'}</Text>
+                <View style={{ position: 'absolute', bottom: 20, left: 20, right: 20, backgroundColor: 'rgba(0,0,0,0.7)', padding: 12, borderRadius: 12, alignItems: 'center' }}>
+                  <Text style={{ color: '#FFF', fontSize: scale(13), fontWeight: '600', textAlign: 'center' }}>{currentPhoto.filename || 'Unknown'}</Text>
                   {(currentPhoto.created > 0 || currentPhoto.creationTime > 0) ? (
-                    <Text style={{ color: '#AAA', fontSize: scale(11), marginTop: 4 }}>
+                    <Text style={{ color: '#AAA', fontSize: scale(11), marginTop: 4, textAlign: 'center' }}>
                       {new Date(currentPhoto.created || currentPhoto.creationTime).toLocaleString()}
                     </Text>
                   ) : null}
@@ -4966,7 +4978,7 @@ export default function App() {
                   return (
                     <TouchableOpacity
                       key={String(a.id)}
-                      style={{ width: 70, height: 70, marginRight: 8, borderRadius: 8, overflow: 'hidden', borderWidth: isCurrent ? 3 : 2, borderColor: isCurrent ? THEME.secondary : (thumbSelected ? '#FF3B30' : '#333') }}
+                      style={{ width: 70, height: 70, marginRight: 8, borderRadius: 8, overflow: 'hidden', borderWidth: isCurrent ? 3 : 2, borderColor: isCurrent ? CLEANUP_MAGENTA : (thumbSelected ? '#FF3B30' : '#333') }}
                       onPress={() => setSimilarPhotoIndex(idx)}>
                       <Image source={{ uri: a.uri }} style={{ width: '100%', height: '100%' }} />
                       {thumbSelected && (
@@ -4995,7 +5007,7 @@ export default function App() {
                 {/* Delete selected */}
                 <TouchableOpacity
                   disabled={selectedCount === 0 || loading}
-                  style={{ flex: 1, marginRight: 5, backgroundColor: selectedCount > 0 ? THEME.secondary : '#333', paddingVertical: 14, borderRadius: 12, alignItems: 'center', opacity: selectedCount === 0 ? 0.5 : 1 }}
+                  style={{ flex: 1, marginRight: 5, backgroundColor: selectedCount > 0 ? CLEANUP_MAGENTA : '#333', paddingVertical: 14, borderRadius: 12, alignItems: 'center', opacity: selectedCount === 0 ? 0.5 : 1 }}
                   onPress={async () => {
                     const ids = getSimilarSelectedIds();
                     if (ids.length === 0) return;
@@ -5053,7 +5065,7 @@ export default function App() {
                     setSimilarSelected(buildDefaultSimilarSelection(nextGroups[nextIndex] || []));
                     setSimilarPhotoIndex(0);
                   }}>
-                  <Text style={{ color: selectedCount > 0 ? '#000' : '#888', fontSize: scale(14), fontWeight: '700' }}>
+                  <Text style={{ color: selectedCount > 0 ? '#FFF' : '#888', fontSize: scale(14), fontWeight: '700' }}>
                     {t('similarPhotos.delete')} {selectedCount > 0 ? `(${selectedCount})` : ''}
                   </Text>
                 </TouchableOpacity>
@@ -5564,23 +5576,35 @@ export default function App() {
         </Modal>
       )}
 
-      {duplicateReview && (
-        <View style={[styles.overlay, glassModeEnabled && styles.overlayGlass]}>
-          <View style={[styles.overlayCard, glassModeEnabled && styles.overlayCardGlass]}>
-            <Text style={styles.overlayTitle}>{t('duplicates.review')}</Text>
-            <Text style={styles.overlaySubtitle}>
+      {duplicateReview && (() => {
+        const CLEANUP_MAGENTA = '#DC1FFF'; // Magenta color for clean duplicates
+        return (
+        <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: '#000' }}>
+          {/* Header */}
+          <View style={{ paddingTop: Platform.OS === 'ios' ? 50 : 30, paddingHorizontal: 16, paddingBottom: 12, backgroundColor: 'rgba(0,0,0,0.95)' }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+              <TouchableOpacity onPress={() => { setDuplicateReview(null); setStatus(t('status.duplicateScanCancelled')); }} style={{ padding: 8 }}>
+                <Text style={{ color: CLEANUP_MAGENTA, fontSize: scale(16), fontWeight: '600' }}>{t('common.cancel')}</Text>
+              </TouchableOpacity>
+              <Text style={{ color: '#FFF', fontSize: scale(16), fontWeight: '700' }}>{t('duplicates.review')}</Text>
+              <View style={{ width: 60 }} />
+            </View>
+            <Text style={{ color: '#888', fontSize: scale(11), textAlign: 'center', marginTop: 4 }} numberOfLines={2} ellipsizeMode="tail">
               {t('duplicates.reviewSubtitle', { count: duplicateReview.duplicateCount, groups: duplicateReview.groupCount })}
             </Text>
-            <ScrollView style={{ maxHeight: 420 }}>
-              {duplicateReview.groups.map((group) => (
-                <View key={`grp-${group.groupIndex}`} style={{ marginBottom: 12, padding: 10, backgroundColor: '#111', borderRadius: 8 }}>
-                  <Text style={{ color: '#fff', fontWeight: '700', marginBottom: 6 }}>
-                    {group.type === 'similar' ? t('duplicates.similarGroup', { index: group.groupIndex }) : t('duplicates.bestMatchGroup', { index: group.groupIndex })}
-                  </Text>
-                  {group.items.map((item, idx) => (
+          </View>
+
+          {/* Scrollable content - fullscreen */}
+          <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 20 }}>
+            {duplicateReview.groups.map((group) => (
+              <View key={`grp-${group.groupIndex}`} style={{ marginBottom: 16, padding: 12, backgroundColor: '#111', borderRadius: 12 }}>
+                <Text style={{ color: '#fff', fontWeight: '700', marginBottom: 10, fontSize: scale(14) }}>
+                  {group.type === 'similar' ? t('duplicates.similarGroup', { index: group.groupIndex }) : t('duplicates.bestMatchGroup', { index: group.groupIndex })}
+                </Text>
+                {group.items.map((item, idx) => (
+                  <View key={item.id} style={{ flexDirection: 'row', alignItems: 'center', marginVertical: 6, backgroundColor: '#1a1a1a', padding: 8, borderRadius: 8 }}>
+                    {/* Checkbox */}
                     <TouchableOpacity
-                      key={item.id}
-                      style={{ flexDirection: 'row', alignItems: 'center', marginVertical: 4 }}
                       onPress={() => {
                         setDuplicateReview(prev => {
                           if (!prev) return prev;
@@ -5594,14 +5618,24 @@ export default function App() {
                           return next;
                         });
                       }}
+                      style={{ padding: 4 }}
                     >
                       <View style={{
-                        width: 22, height: 22, borderRadius: 4,
-                        borderWidth: 2, borderColor: item.delete ? THEME.secondary : '#555',
-                        backgroundColor: item.delete ? THEME.secondary : 'transparent',
-                        marginRight: 10
-                      }} />
-                      <View style={{ width: 44, height: 44, borderRadius: 6, overflow: 'hidden', marginRight: 10, backgroundColor: '#222', borderWidth: 1, borderColor: '#333' }}>
+                        width: 24, height: 24, borderRadius: 4,
+                        borderWidth: 2, borderColor: item.delete ? CLEANUP_MAGENTA : '#555',
+                        backgroundColor: item.delete ? CLEANUP_MAGENTA : 'transparent',
+                        justifyContent: 'center', alignItems: 'center'
+                      }}>
+                        {item.delete && <Text style={{ color: '#FFF', fontSize: 14, fontWeight: '900' }}>✓</Text>}
+                      </View>
+                    </TouchableOpacity>
+                    
+                    {/* Thumbnail - tap to zoom */}
+                    <TouchableOpacity 
+                      onPress={() => setDuplicateZoomImage({ uri: item.uri, filename: item.filename, created: item.created, size: item.size })}
+                      style={{ marginLeft: 10 }}
+                    >
+                      <View style={{ width: 60, height: 60, borderRadius: 8, overflow: 'hidden', backgroundColor: '#222', borderWidth: 2, borderColor: CLEANUP_MAGENTA + '40' }}>
                         {item.uri ? (
                           <Image
                             source={{ uri: item.uri }}
@@ -5610,27 +5644,39 @@ export default function App() {
                           />
                         ) : null}
                       </View>
-                      <View style={{ flex: 1 }}>
-                        <Text style={{ color: '#fff' }} numberOfLines={1}>{item.filename}</Text>
-                        <Text style={{ color: '#888', fontSize: 12 }}>
-                          {new Date(item.created).toLocaleString()} {item.size ? `· ${item.size} bytes` : ''}
-                        </Text>
-                      </View>
-                      {idx === 0 && <Text style={{ color: THEME.secondary, fontSize: 12 }}>{t('duplicates.keepOldest')}</Text>}
+                      <Text style={{ color: '#FFF', fontSize: 9, textAlign: 'center', marginTop: 2 }}>{t('duplicates.tapToZoom')}</Text>
                     </TouchableOpacity>
-                  ))}
-                </View>
-              ))}
-            </ScrollView>
-            <View style={{ flexDirection: 'row', marginTop: 12, gap: 10 }}>
+                    
+                    {/* File info */}
+                    <View style={{ flex: 1, marginLeft: 10 }}>
+                      <Text style={{ color: '#fff', fontSize: scale(13) }} numberOfLines={1}>{item.filename}</Text>
+                      <Text style={{ color: '#888', fontSize: scale(11), marginTop: 2 }}>
+                        {new Date(item.created).toLocaleString()}
+                      </Text>
+                      {item.size ? <Text style={{ color: '#666', fontSize: scale(10) }}>{(item.size / 1024).toFixed(1)} KB</Text> : null}
+                    </View>
+                    
+                    {/* Keep oldest badge */}
+                    {idx === 0 && <View style={{ backgroundColor: CLEANUP_MAGENTA + '30', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 }}>
+                      <Text style={{ color: '#FFF', fontSize: scale(10), fontWeight: '600' }}>{t('duplicates.keepOldest')}</Text>
+                    </View>}
+                  </View>
+                ))}
+              </View>
+            ))}
+          </ScrollView>
+
+          {/* Bottom action bar */}
+          <View style={{ backgroundColor: 'rgba(0,0,0,0.95)', paddingBottom: Platform.OS === 'ios' ? 34 : 20, paddingTop: 12, paddingHorizontal: 16 }}>
+            <View style={{ flexDirection: 'row', gap: 10 }}>
               <TouchableOpacity
-                style={[styles.overlayBtnSecondary, glassModeEnabled && styles.overlayBtnSecondaryGlass, { flex: 1 }]}
+                style={{ flex: 1, backgroundColor: '#222', paddingVertical: 14, borderRadius: 12, alignItems: 'center', borderWidth: 1, borderColor: '#444' }}
                 onPress={() => { setDuplicateReview(null); setStatus(t('status.duplicateScanCancelled')); }}
               >
-                <Text style={styles.overlayBtnSecondaryText}>{t('common.cancel')}</Text>
+                <Text style={{ color: '#FFF', fontSize: scale(14), fontWeight: '600' }}>{t('common.cancel')}</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[styles.overlayBtnPrimary, glassModeEnabled && styles.overlayBtnPrimaryGlass, { flex: 1 }]}
+                style={{ flex: 1, backgroundColor: CLEANUP_MAGENTA, paddingVertical: 14, borderRadius: 12, alignItems: 'center' }}
                 onPress={async () => {
                   try {
                     const idsToDelete = [];
@@ -5678,12 +5724,36 @@ export default function App() {
                   }
                 }}
               >
-                <Text style={styles.overlayBtnPrimaryText}>{t('duplicates.delete')}</Text>
+                <Text style={{ color: '#FFF', fontSize: scale(14), fontWeight: '700' }}>{t('duplicates.delete')}</Text>
               </TouchableOpacity>
             </View>
           </View>
+          
+          {/* Zoom overlay */}
+          {duplicateZoomImage && (
+            <TouchableOpacity 
+              activeOpacity={1}
+              onPress={() => setDuplicateZoomImage(null)}
+              style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.95)', justifyContent: 'center', alignItems: 'center' }}
+            >
+              <Image
+                source={{ uri: duplicateZoomImage.uri }}
+                style={{ width: '100%', height: '70%' }}
+                resizeMode="contain"
+              />
+              <View style={{ position: 'absolute', bottom: 100, left: 20, right: 20, backgroundColor: 'rgba(0,0,0,0.8)', padding: 16, borderRadius: 12, alignItems: 'center' }}>
+                <Text style={{ color: '#FFF', fontSize: scale(15), fontWeight: '600', textAlign: 'center' }}>{duplicateZoomImage.filename}</Text>
+                <Text style={{ color: '#AAA', fontSize: scale(12), marginTop: 4, textAlign: 'center' }}>
+                  {new Date(duplicateZoomImage.created).toLocaleString()}
+                </Text>
+                {duplicateZoomImage.size ? <Text style={{ color: '#888', fontSize: scale(11), marginTop: 2, textAlign: 'center' }}>{(duplicateZoomImage.size / 1024).toFixed(1)} KB</Text> : null}
+              </View>
+              <Text style={{ position: 'absolute', top: Platform.OS === 'ios' ? 60 : 40, color: '#FFF', fontSize: scale(14) }}>{t('duplicates.tapToClose')}</Text>
+            </TouchableOpacity>
+          )}
         </View>
-      )}
+        );
+      })()}
 
       {customAlert && (
         <View style={[styles.overlay, { backgroundColor: 'rgba(0,0,0,0.97)' }]}>

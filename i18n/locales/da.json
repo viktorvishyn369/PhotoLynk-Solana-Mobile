@@ -498,7 +498,9 @@
 		"delete": "Slet det valgte",
 		"keep": "Behold",
 		"deleteAll": "Slet alle dubletter",
-		"spaceRecovered": "Genvundet plads: {{size}}"
+		"spaceRecovered": "Genvundet plads: {{size}}",
+		"tapToZoom": "Tryk for at zoome",
+		"tapToClose": "Tryk for at lukke"
 	},
 	"common": {
 		"ok": "OK",

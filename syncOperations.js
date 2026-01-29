@@ -12,13 +12,15 @@
  * - No race conditions (sequential analysis, parallel downloads with limits)
  */
 
-import { Platform, AppState, InteractionManager } from 'react-native';
+import { Platform, AppState, InteractionManager, NativeModules } from 'react-native';
 import * as MediaLibrary from 'expo-media-library';
 import * as FileSystem from 'expo-file-system';
 import axios from 'axios';
 import nacl from 'tweetnacl';
 import naclUtil from 'tweetnacl-util';
 import { sha256 } from 'js-sha256';
+
+const { ExifExtractor } = NativeModules;
 
 import { t } from './i18n';
 import {
@@ -956,10 +958,17 @@ export const stealthCloudRestoreCore = async ({
             validateStatus: (status) => status < 500, // Don't throw on 404
           });
           if (exifRes.status === 200 && exifRes.data?.exif) {
-            // TODO: Apply EXIF to file using native module (ExifWriter)
-            // For now, log that EXIF was retrieved for this file
-            console.log(`[EXIF] Retrieved EXIF for ${filename} (hash: ${fileHash.slice(0, 16)}...)`);
-            // Future: await ExifWriter.writeExif(outPath, exifRes.data.exif);
+            // Apply EXIF to file using native module
+            if (ExifExtractor && typeof ExifExtractor.writeExif === 'function') {
+              try {
+                await ExifExtractor.writeExif(outPath, exifRes.data.exif);
+                console.log(`[EXIF] Applied EXIF to ${filename}`);
+              } catch (writeErr) {
+                console.log('[EXIF] Write failed (non-critical):', writeErr?.message);
+              }
+            } else {
+              console.log(`[EXIF] Retrieved EXIF for ${filename} (writeExif not available)`);
+            }
           }
         } catch (e) {
           // Non-critical - don't fail restore if EXIF retrieval fails
@@ -1278,9 +1287,18 @@ export const localRemoteRestoreCore = async ({
                 validateStatus: (status) => status < 500,
               });
               if (exifRes.status === 200 && exifRes.data?.exif) {
-                console.log(`[EXIF] Retrieved EXIF for ${file.filename} (hash: ${fileHash.slice(0, 16)}...)`);
-                // TODO: Apply EXIF to file using native module (ExifWriter)
-                // Future: await ExifWriter.writeExif(filePath, exifRes.data.exif);
+                // Apply EXIF to file using native module
+                if (ExifExtractor && typeof ExifExtractor.writeExif === 'function') {
+                  try {
+                    const filePath = localUri.replace('file://', '');
+                    await ExifExtractor.writeExif(filePath, exifRes.data.exif);
+                    console.log(`[EXIF] Applied EXIF to ${file.filename}`);
+                  } catch (writeErr) {
+                    console.log('[EXIF] Write failed (non-critical):', writeErr?.message);
+                  }
+                } else {
+                  console.log(`[EXIF] Retrieved EXIF for ${file.filename} (writeExif not available)`);
+                }
               }
             } catch (e) {
               // Non-critical

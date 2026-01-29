@@ -486,7 +486,9 @@
 		"delete": "Excluir selecionados",
 		"keep": "Manter",
 		"deleteAll": "Excluir todas as duplicatas",
-		"spaceRecovered": "Espaço recuperado: {{size}}"
+		"spaceRecovered": "Espaço recuperado: {{size}}",
+		"tapToZoom": "Toque para ampliar",
+		"tapToClose": "Toque para fechar"
 	},
 	"common": {
 		"ok": "OK",

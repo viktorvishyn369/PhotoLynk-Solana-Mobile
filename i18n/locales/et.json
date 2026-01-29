@@ -498,7 +498,9 @@
 		"delete": "Kustuta valitud",
 		"keep": "Hoidke",
 		"deleteAll": "Kustuta kõik duplikaadid",
-		"spaceRecovered": "Kosmos taastunud: {{size}}"
+		"spaceRecovered": "Kosmos taastunud: {{size}}",
+		"tapToZoom": "Puudutage suurendamiseks",
+		"tapToClose": "Puudutage sulgemiseks"
 	},
 	"common": {
 		"ok": "OK",

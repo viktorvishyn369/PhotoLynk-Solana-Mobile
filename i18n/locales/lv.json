@@ -498,7 +498,9 @@
 		"delete": "Dzēst atlasīto",
 		"keep": "Saglabājiet",
 		"deleteAll": "Dzēst visus dublētos eksemplārus",
-		"spaceRecovered": "Atgūta telpa: {{size}}"
+		"spaceRecovered": "Atgūta telpa: {{size}}",
+		"tapToZoom": "Pieskarieties, lai palielinātu",
+		"tapToClose": "Pieskarieties, lai aizvērtu"
 	},
 	"common": {
 		"ok": "OK",
