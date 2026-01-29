@@ -199,7 +199,7 @@ export const storeCredentialsWithBiometrics = async ({ password, normalizedEmail
     if (Platform.OS === 'ios') {
       await SecureStore.setItemAsync(SAVED_PASSWORD_KEY, password, {
         requireAuthentication: true,
-        authenticationPrompt: type === 'register' ? 'Secure your account with biometrics' : 'Unlock to sign in'
+        authenticationPrompt: type === 'register' ? t('auth.secureWithBiometrics') : t('auth.unlockToSignIn')
       });
       await SecureStore.setItemAsync(SAVED_PASSWORD_EMAIL_KEY, normalizedEmail);
       // Track storage mode for downstream logic
@@ -210,7 +210,7 @@ export const storeCredentialsWithBiometrics = async ({ password, normalizedEmail
       try {
         await SecureStore.setItemAsync(SAVED_PASSWORD_KEY, password, {
           requireAuthentication: true,
-          authenticationPrompt: type === 'register' ? 'Secure your account with fingerprint' : 'Use fingerprint to unlock'
+          authenticationPrompt: type === 'register' ? t('auth.secureWithFingerprint') : t('auth.useFingerprint')
         });
         storedWithBiometric = true;
       } catch (e) {
@@ -335,7 +335,7 @@ export const validateToken = async ({ storedToken, storedEmail, storedUserId, uu
   }
 
   try {
-    onStatus?.('Verifying session...');
+    onStatus?.(t('auth.verifyingSession'));
     const headers = {
       'Authorization': `Bearer ${storedToken}`,
       'X-Device-UUID': uuid || 'unknown'
@@ -354,7 +354,7 @@ export const validateToken = async ({ storedToken, storedEmail, storedUserId, uu
         try {
           savedPassword = await SecureStore.getItemAsync(SAVED_PASSWORD_KEY, {
             requireAuthentication: true,
-            authenticationPrompt: 'Unlock to sign in'
+            authenticationPrompt: t('auth.unlockToSignIn')
           });
         } catch (e) {
           // Biometric cancelled/failed - still allow login but without master key
@@ -386,7 +386,7 @@ export const getSavedPasswordWithBiometrics = async () => {
   try {
     return await SecureStore.getItemAsync(SAVED_PASSWORD_KEY, {
       requireAuthentication: true,
-      authenticationPrompt: 'Unlock to sign in'
+      authenticationPrompt: t('auth.unlockToSignIn')
     });
   } catch (e) {
     // Fallback to non-biometric retrieval
@@ -430,7 +430,7 @@ export const attemptBiometricReauth = async ({ storedEmail, baseUrl, getDeviceUU
       try {
         savedPassword = await SecureStore.getItemAsync(SAVED_PASSWORD_KEY, {
           requireAuthentication: true,
-          authenticationPrompt: 'Unlock to sign in'
+          authenticationPrompt: t('auth.unlockToSignIn')
         });
       } catch (e) {
         const errMsg = e?.message?.toLowerCase() || '';

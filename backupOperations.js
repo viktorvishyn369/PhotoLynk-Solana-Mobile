@@ -9,6 +9,8 @@ import axios from 'axios';
 import nacl from 'tweetnacl';
 import naclUtil from 'tweetnacl-util';
 import { sha256 } from 'js-sha256';
+import * as ImageManipulator from 'expo-image-manipulator';
+import * as VideoThumbnails from 'expo-video-thumbnails';
 
 import { t } from './i18n';
 import {
@@ -735,6 +737,60 @@ const encryptAndUpload = async ({
     throw new Error('StealthCloud backup read 0 bytes (no chunks).');
   }
 
+  // Generate and upload a small encrypted thumbnail for Sync Select previews (best-effort)
+  // Thumbnail is encrypted with masterKey so it can be fetched without downloading the full file.
+  let thumbChunkId = null;
+  let thumbNonceB64 = null;
+  let thumbSize = null;
+  let thumbW = null;
+  let thumbH = null;
+  const thumbMime = 'image/jpeg';
+  try {
+    const THUMB_WIDTH = 220;
+    const THUMB_COMPRESS = 0.6;
+    const isVideo = (asset && asset.mediaType === 'video') || /\.(mp4|mov|avi|mkv|m4v|3gp|webm)$/i.test(filename || '');
+    const isPhoto = !isVideo;
+    let thumbSourceUri = null;
+
+    if (isVideo) {
+      const fileUri = filePath && filePath.startsWith('/') ? `file://${filePath}` : (filePath || tmpUri);
+      if (fileUri) {
+        const frame = await VideoThumbnails.getThumbnailAsync(fileUri, { time: 0 });
+        if (frame?.uri) thumbSourceUri = frame.uri;
+      }
+    } else if (isPhoto) {
+      thumbSourceUri = (filePath && filePath.startsWith('/')) ? `file://${filePath}` : (filePath || tmpUri);
+    }
+
+    if (thumbSourceUri) {
+      const manip = await ImageManipulator.manipulateAsync(
+        thumbSourceUri,
+        [{ resize: { width: THUMB_WIDTH } }],
+        { compress: THUMB_COMPRESS, format: ImageManipulator.SaveFormat.JPEG }
+      );
+      if (manip?.uri) {
+        thumbW = typeof manip.width === 'number' ? manip.width : null;
+        thumbH = typeof manip.height === 'number' ? manip.height : null;
+
+        const b64 = await FileSystem.readAsStringAsync(manip.uri, { encoding: FileSystem.EncodingType.Base64 });
+        const plain = naclUtil.decodeBase64(b64);
+        thumbSize = plain?.length || null;
+        if (plain && plain.length > 0) {
+          const thumbNonce = new Uint8Array(24);
+          global.crypto.getRandomValues(thumbNonce);
+          const boxed = nacl.secretbox(plain, thumbNonce, masterKey);
+          thumbChunkId = sha256.create().update(boxed).hex();
+          thumbNonceB64 = naclUtil.encodeBase64(thumbNonce);
+          await stealthCloudUploadEncryptedChunk({ SERVER_URL, config, chunkId: thumbChunkId, encryptedBytes: boxed });
+        }
+
+        try { await FileSystem.deleteAsync(manip.uri, { idempotent: true }); } catch (e) {}
+      }
+    }
+  } catch (e) {
+    // Best-effort: thumbnail failures must not fail backup
+  }
+
   // Build and encrypt manifest
   const exifData = extractExifForDedup(assetInfo, asset);
   const manifest = {
@@ -775,10 +831,17 @@ const encryptAndUpload = async ({
         chunkCount: chunkIds.length,
         // Include metadata for fast dedup on future backups
         filename,
+        mediaType: asset?.mediaType || null,
         originalSize,
         fileHash,
         perceptualHash,
         creationTime: asset.creationTime,
+        thumbChunkId,
+        thumbNonce: thumbNonceB64,
+        thumbSize,
+        thumbW,
+        thumbH,
+        thumbMime,
       },
       { headers: config.headers, timeout: 30000 }
     );

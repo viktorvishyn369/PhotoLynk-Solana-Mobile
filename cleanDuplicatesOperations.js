@@ -23,9 +23,10 @@ export const startSimilarShotsReviewCore = async ({
   onStatus,
   onProgress,
   abortRef,
+  t,
 }) => {
   // Scanner handles all progress updates internally (0-100%)
-  onStatus('Preparing...');
+  onStatus(t ? t('status.comparingPreparing') : 'Comparing: Preparing...');
   onProgress(0);
   
   try {
@@ -147,9 +148,10 @@ export const startExactDuplicatesScanCore = async ({
   onStatus,
   onProgress,
   abortRef,
+  t,
 }) => {
   // Scanner handles all progress updates internally (0-100%)
-  onStatus('Preparing...');
+  onStatus(t ? t('status.comparingPreparing') : 'Comparing: Preparing...');
   onProgress(0);
   
   try {

@@ -21,19 +21,54 @@ import { Feather } from '@expo/vector-icons';
 import { t, SUPPORTED_LANGUAGES, isUsingEnglish, setUseEnglish, getSystemLanguage, getCurrentLanguage } from './i18n';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
-const isTablet = Math.min(SCREEN_WIDTH, SCREEN_HEIGHT) >= 600;
-const isLargeTablet = Math.min(SCREEN_WIDTH, SCREEN_HEIGHT) >= 768;
+const MIN_DIMENSION = Math.min(SCREEN_WIDTH, SCREEN_HEIGHT);
+
+// Device categories based on viewport widths:
+// iPhone SE (1st-3rd): 320px | iPhone 6/7/8/X/XS/11Pro/12mini/13mini: 375px
+// iPhone 6+/7+/8+: 414px | iPhone XR/11/12/13/14: 390px | iPhone 12-15 Pro: 390-393px
+// iPhone 12-15 Pro Max/Plus: 428-430px | Small Android: 320-360px
+// Tablets: 600px+ | Large tablets: 768px+
+const isVerySmallPhone = MIN_DIMENSION < 340; // iPhone SE 1st gen, very small Android
+const isSmallPhone = MIN_DIMENSION >= 340 && MIN_DIMENSION < 375; // Small Android
+const isMediumPhone = MIN_DIMENSION >= 375 && MIN_DIMENSION < 400; // iPhone X/12/13, most phones
+const isLargePhone = MIN_DIMENSION >= 400 && MIN_DIMENSION < 600; // iPhone Plus/Max
+const isTablet = MIN_DIMENSION >= 600;
+const isLargeTablet = MIN_DIMENSION >= 768;
+
+// Height-based scaling for fitting content within screen bounds
+// Base height: 844px (iPhone 12/13/14)
+const BASE_HEIGHT = 844;
+const heightRatio = SCREEN_HEIGHT / BASE_HEIGHT;
+const isShortScreen = SCREEN_HEIGHT < 700; // iPhone SE, small Android
+const isTallScreen = SCREEN_HEIGHT > 900; // iPhone Pro Max, tall Android
+
+// Responsive scale factor based on screen width (base: 390px - iPhone 12/13)
+const BASE_WIDTH = 390;
+const scaleFactor = Math.min(Math.max(SCREEN_WIDTH / BASE_WIDTH, 0.75), 1.5);
 
 const scale = (size) => {
-  if (isLargeTablet) return size * 1.35;
-  if (isTablet) return size * 1.2;
-  return size;
+  let result = size;
+  if (isLargeTablet) result = size * 1.3;
+  else if (isTablet) result = size * 1.15;
+  else if (isVerySmallPhone) result = size * 0.78;
+  else if (isSmallPhone) result = size * 0.85;
+  else if (isMediumPhone) result = size * 0.92;
+  // Apply height-based compression for short screens
+  if (isShortScreen) result *= 0.9;
+  return result;
 };
 
 const scaleSpacing = (size) => {
-  if (isLargeTablet) return size * 1.25;
-  if (isTablet) return size * 1.15;
-  return size;
+  let result = size;
+  if (isLargeTablet) result = size * 1.2;
+  else if (isTablet) result = size * 1.1;
+  else if (isVerySmallPhone) result = size * 0.6;
+  else if (isSmallPhone) result = size * 0.7;
+  else if (isMediumPhone) result = size * 0.8;
+  else result = size * 0.9;
+  // Apply height-based compression for short screens
+  if (isShortScreen) result *= 0.75;
+  return result;
 };
 
 // Reusable Card Component
@@ -122,6 +157,8 @@ export const SettingsScreen = ({
   remoteHost,
   setRemoteHost,
   getServerUrl,
+  autoUploadEnabled,
+  persistAutoUploadEnabled,
   fastModeEnabled,
   persistFastModeEnabled,
   glassModeEnabled,
@@ -187,7 +224,12 @@ export const SettingsScreen = ({
         style={styles.scrollView}
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
+        bounces={false}
+        alwaysBounceVertical={false}
+        scrollEnabled={false}
+        contentInsetAdjustmentBehavior="automatic"
       >
+        <View style={styles.sectionsContainer}>
         {/* Server Selection */}
         <Text style={styles.sectionTitle}>{t('settings.server')}</Text>
         <Card glassModeEnabled={glassModeEnabled}>
@@ -286,6 +328,26 @@ export const SettingsScreen = ({
         {/* Preferences */}
         <Text style={styles.sectionTitle}>{t('settings.preferences')}</Text>
         <Card glassModeEnabled={glassModeEnabled}>
+          {serverType === 'stealthcloud' && (
+            <>
+              <ToggleSetting
+                icon="upload-cloud"
+                title={t('settings.autoUpload') || 'Auto Upload'}
+                subtitle={autoUploadEnabled 
+                  ? (t('settings.autoUploadOnDesc') || 'New photos will be backed up automatically')
+                  : (t('settings.autoUploadOffDesc') || 'Manual backup only')}
+                value={autoUploadEnabled}
+                onValueChange={persistAutoUploadEnabled}
+                glassModeEnabled={glassModeEnabled}
+              />
+              <View style={styles.autoUploadNote}>
+                <Text style={styles.autoUploadNoteText}>
+                  {t('settings.autoUploadNote') || 'Background uploads depend on iOS/Android policies. For best results: keep the app open occasionally, connect to WiFi, and charge your device.'}
+                </Text>
+              </View>
+              <View style={styles.divider} />
+            </>
+          )}
           <ToggleSetting
             icon="zap"
             title={t('settings.fastMode')}
@@ -326,7 +388,7 @@ export const SettingsScreen = ({
             <Switch
               value={useEnglish}
               onValueChange={handleLanguageToggle}
-              trackColor={{ false: '#333', true: '#4CAF50' }}
+              trackColor={{ false: '#333', true: '#03E1FF' }}
               thumbColor={useEnglish ? '#fff' : '#888'}
             />
           </View>
@@ -337,20 +399,22 @@ export const SettingsScreen = ({
           </View>
         </Card>
 
-        {/* Danger Zone */}
-        <Text style={[styles.sectionTitle, { color: '#EF4444' }]}>{t('settings.dangerZone')}</Text>
-        <Card glassModeEnabled={glassModeEnabled} style={styles.dangerCard}>
-          <ActionButton
-            title={t('settings.deleteAllServerData')}
-            subtitle={t('settings.cannotBeUndone')}
-            onPress={serverType === 'stealthcloud' ? purgeStealthCloudData : purgeClassicServerData}
-            danger
-            disabled={loading}
-            glassModeEnabled={glassModeEnabled}
-          />
-        </Card>
+        </View>
 
-        <View style={{ height: scaleSpacing(40) }} />
+        {/* Danger Zone - pushed to bottom */}
+        <View style={styles.dangerSection}>
+          <Text style={[styles.sectionTitle, { color: '#EF4444', marginTop: 0 }]}>{t('settings.dangerZone')}</Text>
+          <Card glassModeEnabled={glassModeEnabled} style={styles.dangerCard}>
+            <ActionButton
+              title={t('settings.deleteAllServerData')}
+              subtitle={t('settings.cannotBeUndone')}
+              onPress={serverType === 'stealthcloud' ? purgeStealthCloudData : purgeClassicServerData}
+              danger
+              disabled={loading}
+              glassModeEnabled={glassModeEnabled}
+            />
+          </Card>
+        </View>
       </ScrollView>
     </View>
   );
@@ -389,18 +453,26 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   scrollContent: {
-    paddingHorizontal: scaleSpacing(20),
-    paddingTop: scaleSpacing(8),
-    paddingBottom: Platform.OS === 'android' ? 60 : scaleSpacing(20),
+    flexGrow: 1,
+    paddingHorizontal: scaleSpacing(16),
+    paddingTop: scaleSpacing(4),
+    paddingBottom: Platform.OS === 'android' ? scaleSpacing(24) : scaleSpacing(20),
+    justifyContent: 'space-between',
+  },
+  sectionsContainer: {
+    flex: 1,
+  },
+  dangerSection: {
+    marginTop: scaleSpacing(8),
   },
   sectionTitle: {
-    fontSize: scale(13),
+    fontSize: scale(12),
     fontWeight: '600',
     color: '#888888',
     textTransform: 'uppercase',
     letterSpacing: 1,
-    marginTop: scaleSpacing(24),
-    marginBottom: scaleSpacing(12),
+    marginTop: scaleSpacing(16),
+    marginBottom: scaleSpacing(8),
     marginLeft: scaleSpacing(4),
   },
   card: {
@@ -428,8 +500,8 @@ const styles = StyleSheet.create({
   serverOption: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: scaleSpacing(16),
-    paddingHorizontal: scaleSpacing(16),
+    paddingVertical: scaleSpacing(12),
+    paddingHorizontal: scaleSpacing(14),
   },
   serverOptionSelected: {
     backgroundColor: 'transparent',
@@ -441,13 +513,13 @@ const styles = StyleSheet.create({
   },
   serverOptionGlass: {},
   serverOptionIcon: {
-    width: scaleSpacing(40),
-    height: scaleSpacing(40),
-    borderRadius: scaleSpacing(10),
+    width: scaleSpacing(36),
+    height: scaleSpacing(36),
+    borderRadius: scaleSpacing(9),
     backgroundColor: '#2A2A2A',
     justifyContent: 'center',
     alignItems: 'center',
-    marginRight: scaleSpacing(12),
+    marginRight: scaleSpacing(10),
   },
   serverOptionIconSelected: {
     backgroundColor: 'rgba(59, 130, 246, 0.2)',
@@ -478,16 +550,16 @@ const styles = StyleSheet.create({
   settingRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: scaleSpacing(14),
-    paddingHorizontal: scaleSpacing(16),
+    paddingVertical: scaleSpacing(10),
+    paddingHorizontal: scaleSpacing(14),
   },
   settingRowGlass: {},
   settingIcon: {
-    width: scaleSpacing(40),
-    height: scaleSpacing(40),
+    width: scaleSpacing(36),
+    height: scaleSpacing(36),
     justifyContent: 'center',
     alignItems: 'center',
-    marginRight: scaleSpacing(12),
+    marginRight: scaleSpacing(10),
   },
   settingContent: {
     flex: 1,
@@ -540,9 +612,9 @@ const styles = StyleSheet.create({
   },
   // Action Button
   actionButton: {
-    marginHorizontal: scaleSpacing(16),
-    marginVertical: scaleSpacing(16),
-    paddingVertical: scaleSpacing(14),
+    marginHorizontal: scaleSpacing(14),
+    marginVertical: scaleSpacing(12),
+    paddingVertical: scaleSpacing(12),
     backgroundColor: '#03E1FF',
     borderRadius: scaleSpacing(10),
     alignItems: 'center',
@@ -581,13 +653,24 @@ const styles = StyleSheet.create({
   },
   // Language Note
   languageNote: {
-    paddingHorizontal: scaleSpacing(16),
-    paddingBottom: scaleSpacing(12),
-    paddingTop: scaleSpacing(4),
+    paddingHorizontal: scaleSpacing(14),
+    paddingBottom: scaleSpacing(8),
+    paddingTop: scaleSpacing(2),
   },
   languageNoteText: {
     fontSize: scale(11),
     color: '#666666',
     fontStyle: 'italic',
+  },
+  // Auto Upload Note
+  autoUploadNote: {
+    paddingHorizontal: scaleSpacing(14),
+    paddingBottom: scaleSpacing(6),
+    paddingTop: scaleSpacing(1),
+  },
+  autoUploadNoteText: {
+    fontSize: scale(10),
+    color: '#888888',
+    lineHeight: scale(14),
   },
 });

@@ -5,6 +5,7 @@ import axios from 'axios';
 import { Buffer } from 'buffer';
 import nacl from 'tweetnacl';
 import naclUtil from 'tweetnacl-util';
+import * as FileSystem from 'expo-file-system';
 
 /**
  * Decrypts a single manifest and returns a picker item
@@ -94,9 +95,9 @@ export const fetchStealthCloudPickerPage = async ({
   offset,
   limit,
 }) => {
-  const listRes = await axios.get(`${SERVER_URL}/api/cloud/manifests`, { 
-    ...config, 
-    params: { offset, limit } 
+  const listRes = await axios.get(`${SERVER_URL}/api/cloud/manifests`, {
+    ...config,
+    params: { offset, limit, meta: 'true' }
   });
   const manifests = (listRes.data && listRes.data.manifests) || [];
   const total = typeof listRes.data?.total === 'number' ? listRes.data.total : manifests.length;
@@ -108,22 +109,70 @@ export const fetchStealthCloudPickerPage = async ({
   for (const m of manifests) {
     const mid = m && m.manifestId ? String(m.manifestId) : '';
     if (!mid) continue;
-    
+
+    const filename = m && typeof m.filename === 'string' ? m.filename : null;
+    if (filename) {
+      items.push({
+        manifestId: mid,
+        filename,
+        size: (typeof m.originalSize === 'number' ? m.originalSize : null),
+        mediaType: (m && typeof m.mediaType === 'string' ? m.mediaType : 'photo'),
+        assetId: null,
+        thumbChunkId: (m && typeof m.thumbChunkId === 'string' ? m.thumbChunkId : null),
+        thumbNonce: (m && typeof m.thumbNonce === 'string' ? m.thumbNonce : null),
+        thumbW: (typeof m.thumbW === 'number' ? m.thumbW : null),
+        thumbH: (typeof m.thumbH === 'number' ? m.thumbH : null),
+        thumbMime: (m && typeof m.thumbMime === 'string' ? m.thumbMime : null),
+        thumbSize: (typeof m.thumbSize === 'number' ? m.thumbSize : null),
+        thumbUri: null,
+      });
+      continue;
+    }
+
     const result = await decryptManifestForPicker(mid, config, SERVER_URL, masterKey);
     if (result.item) {
-      items.push(result.item);
-      if (result.success) {
-        decryptSuccess++;
-      } else {
-        decryptFail++;
-      }
+      items.push({ ...result.item, thumbChunkId: null, thumbNonce: null, thumbW: null, thumbH: null, thumbMime: null, thumbSize: null, thumbUri: null });
+      if (result.success) decryptSuccess++;
+      else decryptFail++;
     }
   }
 
   const nextOffset = offset + manifests.length;
-  console.log(`Sync picker: loaded ${items.length} items (${decryptSuccess} decrypted, ${decryptFail} failed) offset ${nextOffset}/${total}`);
-
   return { items, total, nextOffset, decryptSuccess, decryptFail };
+};
+
+export const fetchStealthCloudThumbFileUri = async ({
+  config,
+  SERVER_URL,
+  masterKey,
+  thumbChunkId,
+  thumbNonce,
+  thumbMime,
+}) => {
+  const chunkId = thumbChunkId ? String(thumbChunkId).toLowerCase() : '';
+  if (!chunkId || !thumbNonce || !masterKey) return null;
+  if (!chunkId.match(/^[a-f0-9]{64}$/i)) return null;
+
+  try {
+    const url = `${SERVER_URL}/api/cloud/chunks/${chunkId}`;
+    const response = await axios.get(url, {
+      ...config,
+      responseType: 'arraybuffer',
+      timeout: 15000,
+    });
+    const encryptedBytes = new Uint8Array(response.data);
+    const nonce = naclUtil.decodeBase64(String(thumbNonce));
+    const plain = nacl.secretbox.open(encryptedBytes, nonce, masterKey);
+    if (!plain) return null;
+
+    const ext = (thumbMime && String(thumbMime).includes('png')) ? 'png' : 'jpg';
+    const fileUri = `${FileSystem.cacheDirectory}sc_thumb_${chunkId}.${ext}`;
+    const b64 = Buffer.from(plain).toString('base64');
+    await FileSystem.writeAsStringAsync(fileUri, b64, { encoding: FileSystem.EncodingType.Base64 });
+    return fileUri;
+  } catch (e) {
+    return null;
+  }
 };
 
 /**

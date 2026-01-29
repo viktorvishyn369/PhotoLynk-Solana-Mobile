@@ -495,6 +495,9 @@ export const styles = StyleSheet.create({
     borderColor: '#1A1A1A',
   },
   pickerItemSelected: {
+    borderColor: THEME.accent,
+  },
+  pickerItemSelectedGreen: {
     borderColor: THEME.secondary,
   },
   pickerThumb: {
@@ -522,7 +525,18 @@ export const styles = StyleSheet.create({
     width: isTablet ? 28 : 22,
     height: isTablet ? 28 : 22,
     borderRadius: isTablet ? 14 : 11,
-    backgroundColor: 'rgba(3, 218, 198, 0.92)',
+    backgroundColor: 'rgba(3, 225, 255, 0.92)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pickerCheckGreen: {
+    position: 'absolute',
+    right: scaleSpacing(6),
+    top: scaleSpacing(6),
+    width: isTablet ? 28 : 22,
+    height: isTablet ? 28 : 22,
+    borderRadius: isTablet ? 14 : 11,
+    backgroundColor: 'rgba(0, 255, 163, 0.92)',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -575,8 +589,8 @@ export const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   syncPickerCheckOn: {
-    backgroundColor: 'rgba(3, 218, 198, 0.92)',
-    borderColor: 'rgba(3, 218, 198, 0.92)',
+    backgroundColor: 'rgba(0, 255, 163, 0.92)',
+    borderColor: 'rgba(0, 255, 163, 0.92)',
   },
   syncPickerCheckText: {
     color: '#FFFFFF',

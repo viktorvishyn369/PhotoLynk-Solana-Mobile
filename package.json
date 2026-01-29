@@ -38,6 +38,7 @@
     "expo-file-system": "~18.0.6",
     "expo-image-manipulator": "~13.0.6",
     "expo-keep-awake": "~14.0.2",
+    "expo-linear-gradient": "~14.0.2",
     "expo-localization": "~16.0.1",
     "expo-media-library": "~17.0.6",
     "expo-network": "~7.0.2",

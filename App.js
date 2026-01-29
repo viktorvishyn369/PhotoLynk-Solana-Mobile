@@ -27,6 +27,7 @@ import {
   View,
   Keyboard,
   KeyboardAvoidingView,
+  Modal,
 } from 'react-native';
 import Clipboard from '@react-native-clipboard/clipboard';
 import Ionicons from '@expo/vector-icons/Ionicons';
@@ -134,7 +135,7 @@ import {
   stealthCloudRestoreCore,
   localRemoteRestoreCore,
 } from './syncOperations';
-import { fetchStealthCloudPickerPage, fetchLocalRemotePickerPage } from './syncPickerOperations';
+import { fetchStealthCloudPickerPage, fetchLocalRemotePickerPage, fetchStealthCloudThumbFileUri } from './syncPickerOperations';
 import { SettingsScreen } from './SettingsScreen';
 import { InfoScreen } from './InfoScreen';
 import { LoginScreen } from './LoginScreen';
@@ -241,7 +242,13 @@ export default function App() {
   const [backupPickerAfter, setBackupPickerAfter] = useState(null);
   const [backupPickerHasNext, setBackupPickerHasNext] = useState(true);
   const [backupPickerLoading, setBackupPickerLoading] = useState(false);
+  const [backupPickerTotal, setBackupPickerTotal] = useState(0);
   const [backupPickerSelected, setBackupPickerSelected] = useState({});
+  const [backupPickerPreview, setBackupPickerPreview] = useState(null);
+  const backupPickerThumbFixingRef = useRef(new Map());
+  const backupPickerThumbCacheRef = useRef(new Map());
+  const backupPickerMetaInFlightRef = useRef(new Set());
+  const backupPickerMetaLimiterRef = useRef(createConcurrencyLimiter(3));
   const [syncModeOpen, setSyncModeOpen] = useState(false);
   const [syncPickerOpen, setSyncPickerOpen] = useState(false);
   const [syncPickerItems, setSyncPickerItems] = useState([]);
@@ -250,7 +257,12 @@ export default function App() {
   const [syncPickerLoading, setSyncPickerLoading] = useState(false);
   const [syncPickerLoadingMore, setSyncPickerLoadingMore] = useState(false);
   const [syncPickerSelected, setSyncPickerSelected] = useState({});
+  const [syncPickerPreview, setSyncPickerPreview] = useState(null); // { uri, filename } for enlarged preview
   const [syncPickerAuthHeaders, setSyncPickerAuthHeaders] = useState(null);
+  const syncPickerMasterKeyRef = useRef(null);
+  const syncPickerThumbCacheRef = useRef(new Map());
+  const syncPickerThumbInFlightRef = useRef(new Set());
+  const syncPickerThumbLimiterRef = useRef(createConcurrencyLimiter(3));
   const SYNC_PICKER_PAGE_SIZE = 18; // Items per page (18 for thumbnails)
   const [cleanupModeOpen, setCleanupModeOpen] = useState(false);
   const [quickSetupOpen, setQuickSetupOpen] = useState(false);
@@ -408,7 +420,8 @@ export default function App() {
         if (!pairEmail || !pairPassword) {
           try {
             pairEmail = await SecureStore.getItemAsync('user_email');
-            pairPassword = await SecureStore.getItemAsync('user_password');
+            // Password is stored in 'user_password_v1' (SAVED_PASSWORD_KEY from authHelpers)
+            pairPassword = await SecureStore.getItemAsync('user_password_v1');
           } catch (e) {
             console.log('[QR] Failed to get credentials from SecureStore:', e.message);
           }
@@ -1061,6 +1074,28 @@ export default function App() {
         }
         let already = new Set(existingManifests.map(m => m.manifestId));
 
+        let initialDeviceTotalCount = null;
+        try {
+          const firstPage = await MediaLibrary.getAssetsAsync({
+            mediaType: [MediaLibrary.MediaType.photo, MediaLibrary.MediaType.video],
+            first: 1,
+            sortBy: [MediaLibrary.SortBy.creationTime]
+          });
+          if (firstPage && typeof firstPage.totalCount === 'number') {
+            initialDeviceTotalCount = firstPage.totalCount;
+          }
+        } catch (e) {}
+        const canCompareTotalsAtStart = (typeof initialDeviceTotalCount === 'number');
+        const allBackedUpAtStart = canCompareTotalsAtStart && existingManifests.length >= initialDeviceTotalCount;
+        const shouldShowPreparingAtStart = canCompareTotalsAtStart && existingManifests.length > 0 && existingManifests.length < initialDeviceTotalCount;
+        console.log('AutoUpload: early check -', { serverManifests: existingManifests.length, deviceTotal: initialDeviceTotalCount, allBackedUpAtStart, shouldShowPreparingAtStart });
+        let backupCompleted = false;
+        if (allBackedUpAtStart) {
+          setStatus(t('status.autoBackupActive'));
+          backupCompleted = true;
+          console.log('AutoUpload: all files already backed up at start, skipping manifest decryption');
+        }
+
         // Build deduplication sets for cross-device duplicate detection (auto-upload has more time)
         const alreadyFilenames = new Set();
         const alreadyBaseFilenames = new Set();
@@ -1073,8 +1108,9 @@ export default function App() {
         const alreadyExifFull = new Set(); // captureTime|make|model (highest confidence)
         const alreadyExifTimeModel = new Set(); // captureTime|model
         const alreadyExifTimeMake = new Set(); // captureTime|make
-        if (existingManifests.length > 0) {
-          setStatus(t('status.autoBackupPreparing'));
+        // Only decrypt manifests if there are new files to upload (skip when all backed up)
+        if (existingManifests.length > 0 && !allBackedUpAtStart) {
+          if (shouldShowPreparingAtStart) setStatus(t('status.autoBackupPreparing'));
           const masterKey = await getStealthCloudMasterKey();
           for (const m of existingManifests) {
             try {
@@ -1146,8 +1182,9 @@ export default function App() {
         }
 
         let after = null;
+        const cursorKey = await getAutoUploadCursorKey();
         try {
-          const savedCursor = await SecureStore.getItemAsync(AUTO_UPLOAD_CURSOR_KEY);
+          const savedCursor = await SecureStore.getItemAsync(cursorKey);
           after = savedCursor ? savedCursor : null;
         } catch (e) {
           after = null;
@@ -1160,9 +1197,6 @@ export default function App() {
         // Track cumulative progress across sessions
         let totalEstimatedCount = null;
         let cumulativeUploaded = 0;
-
-        // Track if we've detected completion
-        let backupCompleted = false;
 
         // Get current uploaded count from server manifests (primary source)
         config = await getAuthHeaders();
@@ -1194,6 +1228,26 @@ export default function App() {
           } catch (e) {
             console.log('AutoUpload: failed to load manifest IDs, will check individually');
           }
+        }
+
+        // Get total count early to check if all files are already backed up
+        try {
+          const firstPage = await MediaLibrary.getAssetsAsync({
+            mediaType: [MediaLibrary.MediaType.photo, MediaLibrary.MediaType.video],
+            first: 1,
+            sortBy: [MediaLibrary.SortBy.creationTime]
+          });
+          if (firstPage && typeof firstPage.totalCount === 'number') {
+            totalEstimatedCount = firstPage.totalCount;
+            // If all files are already backed up, show Active status immediately
+            if (cumulativeUploaded >= totalEstimatedCount) {
+              setStatus(t('status.autoBackupActive'));
+              console.log('AutoUpload: all files already backed up, showing Active status');
+              backupCompleted = true;
+            }
+          }
+        } catch (e) {
+          console.log('AutoUpload: failed to get initial total count');
         }
 
         while (true) {
@@ -1242,10 +1296,10 @@ export default function App() {
                 });
                 // If we've reached the end with no assets, notify user backup is complete
                 if (!page || page.hasNextPage !== true) {
-                  console.log('AutoUpload: reached end of assets, clearing cursor and setting completion');
-                  await SecureStore.deleteItemAsync(AUTO_UPLOAD_CURSOR_KEY);
-                  setStatus(t('status.autoBackupComplete'));
-                  console.log('AutoUpload: full backup cycle complete, all photos backed up');
+                  console.log('AutoUpload: reached end of assets, clearing cursor and setting active');
+                  await SecureStore.deleteItemAsync(cursorKey);
+                  setStatus(t('status.autoBackupActive'));
+                  console.log('AutoUpload: full backup cycle complete, all photos backed up, monitoring');
                   backupCompleted = true;
                 }
               }
@@ -1253,15 +1307,17 @@ export default function App() {
             break;
           }
 
-          // Set total count from first page
-          if (totalEstimatedCount === null && page && typeof page.totalCount === 'number') {
-            totalEstimatedCount = page.totalCount;
+          // Update total count from each page (in case new files were added)
+          if (page && typeof page.totalCount === 'number') {
+            if (totalEstimatedCount === null || page.totalCount > totalEstimatedCount) {
+              totalEstimatedCount = page.totalCount;
+            }
             console.log('AutoUpload: estimated total assets to upload:', totalEstimatedCount);
             // Update status with current progress or completion
             console.log('AutoUpload: initial status - backupCompleted:', backupCompleted, 'cumulativeUploaded:', cumulativeUploaded, 'totalEstimatedCount:', totalEstimatedCount);
             if (backupCompleted || cumulativeUploaded === totalEstimatedCount) {
-              setStatus(t('status.autoBackupComplete'));
-              console.log('AutoUpload: showing completion message');
+              setStatus(t('status.autoBackupActive'));
+              console.log('AutoUpload: showing active status (all backed up, monitoring)');
             } else {
               setStatus(t('status.autoBackupProgress', { current: cumulativeUploaded, total: totalEstimatedCount }));
               console.log('AutoUpload: showing progress message');
@@ -1293,7 +1349,8 @@ export default function App() {
 
             autoUploadNightRunnerHeartbeatMsRef.current = Date.now();
 
-            console.log('AutoUpload: attempting upload for asset:', asset.id);
+            const assetFilename = asset.filename || 'file';
+            console.log('AutoUpload: attempting upload for asset:', asset.id, assetFilename);
             const r = await autoUploadStealthCloudUploadOneAsset({
               asset,
               config,
@@ -1312,7 +1369,8 @@ export default function App() {
               onStatus: (phase) => {
                 if (totalEstimatedCount !== null && !autoUploadNightRunnerCancelRef.current && autoUploadEnabledRef.current) {
                   if (phase === 'encrypting' || phase === 'uploading') {
-                    setStatus(t('status.autoBackupProgress', { current: cumulativeUploaded + 1, total: totalEstimatedCount }));
+                    const displayCurrent = Math.min(cumulativeUploaded + 1, totalEstimatedCount);
+                    setStatus(t('status.autoBackupProgressFile', { current: displayCurrent, total: totalEstimatedCount, filename: assetFilename }));
                   }
                 }
               }
@@ -1323,11 +1381,17 @@ export default function App() {
               if (r.manifestId) already.add(r.manifestId);
               // Update status with current progress (only if not cancelled)
               if (totalEstimatedCount !== null && !autoUploadNightRunnerCancelRef.current && autoUploadEnabledRef.current) {
-                setStatus(t('status.autoBackupProgress', { current: cumulativeUploaded, total: totalEstimatedCount }));
+                const displayCurrent = Math.min(cumulativeUploaded, totalEstimatedCount);
+                setStatus(t('status.autoBackupProgressFile', { current: displayCurrent, total: totalEstimatedCount, filename: assetFilename }));
               }
               console.log('AutoUpload: successfully uploaded asset:', asset.id, 'cumulative:', cumulativeUploaded);
             } else if (r && r.skipped) {
               skipped += 1;
+              // Update status with filename even for skipped files
+              if (totalEstimatedCount !== null && !autoUploadNightRunnerCancelRef.current && autoUploadEnabledRef.current) {
+                const displayCurrent = Math.min(cumulativeUploaded, totalEstimatedCount);
+                setStatus(t('status.autoBackupProgressFile', { current: displayCurrent, total: totalEstimatedCount, filename: assetFilename }));
+              }
             } else {
               failed += 1;
               console.log('AutoUpload: upload failed for asset:', asset.id);
@@ -1348,19 +1412,19 @@ export default function App() {
 
           after = page && page.endCursor ? page.endCursor : null;
           try {
-            if (after) await SecureStore.setItemAsync(AUTO_UPLOAD_CURSOR_KEY, after);
+            if (after) await SecureStore.setItemAsync(cursorKey, after);
           } catch (e) {}
           if (!page || page.hasNextPage !== true || !after) break;
         }
 
         try {
           if (!after) {
-            await SecureStore.deleteItemAsync(AUTO_UPLOAD_CURSOR_KEY);
+            await SecureStore.deleteItemAsync(cursorKey);
             // If we completed a full cycle and uploaded nothing, all photos are backed up
             if (uploaded === 0 && totalEstimatedCount !== null) {
               backupCompleted = true;
-              setStatus(t('status.autoBackupComplete'));
-              console.log('AutoUpload: full backup cycle complete, all photos backed up');
+              setStatus(t('status.autoBackupActive'));
+              console.log('AutoUpload: full backup cycle complete, all photos backed up, monitoring for new files');
             }
           }
         } catch (e) {}
@@ -1803,9 +1867,49 @@ export default function App() {
 
   const setWasBackgroundedDuringWorkSafe = (value) => { wasBackgroundedDuringWorkRef.current = value; setWasBackgroundedDuringWork(value); };
 
-  const resetBackupPickerState = () => { setBackupPickerAssets([]); setBackupPickerAfter(null); setBackupPickerHasNext(true); setBackupPickerLoading(false); setBackupPickerSelected({}); };
+  const resetBackupPickerState = () => { setBackupPickerAssets([]); setBackupPickerAfter(null); setBackupPickerHasNext(true); setBackupPickerLoading(false); setBackupPickerTotal(0); setBackupPickerSelected({}); };
   const openBackupModeChooser = () => { if (loadingRef.current) return; setBackupModeOpen(true); };
   const closeBackupModeChooser = () => setBackupModeOpen(false);
+
+  const fixBackupPickerThumbnail = useCallback(async (asset) => {
+    try {
+      if (!asset?.id) return;
+      const attempts = Number(backupPickerThumbFixingRef.current.get(asset.id) || 0);
+      if (attempts >= 2) return;
+      backupPickerThumbFixingRef.current.set(asset.id, attempts + 1);
+
+      const ext = (asset.filename || '').split('.').pop()?.toLowerCase();
+      const isVideo = asset.mediaType === 'video' || ['mov', 'mp4', 'avi', 'mkv', 'm4v', '3gp', 'webm'].includes(ext);
+      if (isVideo) return;
+
+      const info = await MediaLibrary.getAssetInfoAsync(asset.id, { shouldDownloadFromNetwork: true });
+      const sourceUri = info?.localUri || info?.uri || asset?.uri || asset?.thumbUri;
+      let thumbUri = sourceUri || null;
+
+      if (Platform.OS === 'android' && asset.mediaType === 'photo') {
+        try {
+          const shouldForceThumb = !!(sourceUri && typeof sourceUri === 'string' && sourceUri.startsWith('content://'));
+          if (sourceUri && (shouldForceThumb || ext === 'heic' || ext === 'heif' || ext === 'avif')) {
+            const manipResult = await ImageManipulator.manipulateAsync(
+              sourceUri,
+              [{ resize: { width: 200 } }],
+              { compress: 0.7, format: ImageManipulator.SaveFormat.JPEG }
+            );
+            if (manipResult?.uri) thumbUri = manipResult.uri;
+          }
+        } catch (e) {}
+      }
+
+      if (thumbUri) {
+        backupPickerThumbCacheRef.current.set(asset.id, thumbUri);
+        if (backupPickerThumbCacheRef.current.size > 800) {
+          const firstKey = backupPickerThumbCacheRef.current.keys().next().value;
+          if (firstKey) backupPickerThumbCacheRef.current.delete(firstKey);
+        }
+        setBackupPickerAssets(prev => (prev || []).map(a => (a && a.id === asset.id ? { ...a, thumbUri } : a)));
+      }
+    } catch (e) {}
+  }, []);
 
   const loadBackupPickerPage = async ({ reset }) => {
     if (backupPickerLoading) return;
@@ -1818,9 +1922,27 @@ export default function App() {
       const after = reset ? null : backupPickerAfter;
       const page = await MediaLibrary.getAssetsAsync({ first, after: after || undefined, mediaType: ['photo', 'video'] });
       const assets = page && Array.isArray(page.assets) ? page.assets : [];
+      if (page && typeof page.totalCount === 'number') {
+        setBackupPickerTotal(Number(page.totalCount) || 0);
+      } else if (reset) {
+        setBackupPickerTotal(assets.length);
+      }
       // Use a.uri for thumbnails - works on Android for both photos and videos
-      const basicAssets = assets.map(a => ({ ...a, thumbUri: a.uri || null }));
+      const basicAssets = assets.map(a => {
+        const cached = a && a.id ? backupPickerThumbCacheRef.current.get(a.id) : null;
+        return { ...a, thumbUri: cached || a.uri || null };
+      });
       setBackupPickerAssets(prev => reset ? basicAssets : prev.concat(basicAssets));
+
+      if (serverType === 'stealthcloud') {
+        setTimeout(() => {
+          try {
+            for (const a of assets) {
+              if (a && a.id) ensureBackupPickerAssetMeta(a);
+            }
+          } catch (e) {}
+        }, 0);
+      }
       
       // Only enrich iOS formats (HEIC, HEIF) on Android - other formats work with a.uri
       // This makes loading much faster while still supporting iOS photo formats
@@ -1828,9 +1950,42 @@ export default function App() {
         try {
           const ext = (asset.filename || '').split('.').pop()?.toLowerCase();
           const isVideo = asset.mediaType === 'video' || ['mov', 'mp4', 'avi', 'mkv', 'm4v', '3gp', 'webm'].includes(ext);
+          const androidNeedsThumb = Platform.OS === 'android' && asset.mediaType === 'photo' && typeof asset?.uri === 'string' && asset.uri.startsWith('content://');
           
           // Skip videos - a.uri works fine
           if (isVideo) {
+            return;
+          }
+
+          if (androidNeedsThumb) {
+            const info = await MediaLibrary.getAssetInfoAsync(asset.id, { shouldDownloadFromNetwork: true });
+            const sourceUri = info?.localUri || info?.uri || asset?.uri;
+            console.log('[ThumbGen]', asset.filename, 'localUri:', info?.localUri?.substring(0, 60), 'uri:', info?.uri?.substring(0, 60), 'asset.uri:', asset?.uri?.substring(0, 60));
+            if (sourceUri) {
+              try {
+                const manipResult = await ImageManipulator.manipulateAsync(
+                  sourceUri,
+                  [{ resize: { width: 200 } }],
+                  { compress: 0.7, format: ImageManipulator.SaveFormat.JPEG }
+                );
+                const thumbUri = manipResult?.uri || null;
+                console.log('[ThumbGen] SUCCESS', asset.filename, thumbUri?.substring(0, 60));
+                if (thumbUri) {
+                  setBackupPickerAssets(prev => {
+                    const updated = [...prev];
+                    const targetIndex = reset ? index : prev.length - assets.length + index;
+                    if (updated[targetIndex] && updated[targetIndex].id === asset.id) {
+                      updated[targetIndex] = { ...updated[targetIndex], thumbUri };
+                    }
+                    return updated;
+                  });
+                }
+              } catch (e) {
+                console.log('[ThumbGen] FAIL', asset.filename, e?.message);
+              }
+            } else {
+              console.log('[ThumbGen] NO SOURCE URI', asset.filename);
+            }
             return;
           }
           
@@ -1903,6 +2058,11 @@ export default function App() {
           
           // Only update if we have a valid thumbUri - don't overwrite with null/undefined
           if (thumbUri) {
+            backupPickerThumbCacheRef.current.set(asset.id, thumbUri);
+            if (backupPickerThumbCacheRef.current.size > 800) {
+              const firstKey = backupPickerThumbCacheRef.current.keys().next().value;
+              if (firstKey) backupPickerThumbCacheRef.current.delete(firstKey);
+            }
             setBackupPickerAssets(prev => {
               const updated = [...prev];
               const targetIndex = reset ? index : prev.length - assets.length + index;
@@ -1928,8 +2088,58 @@ export default function App() {
     } catch (e) {} finally { setBackupPickerLoading(false); }
   };
 
-  const openBackupPicker = async () => { if (loadingRef.current) return; resetBackupPickerState(); setBackupPickerOpen(true); await loadBackupPickerPage({ reset: true }); };
-  const closeBackupPicker = () => { setBackupPickerOpen(false); resetBackupPickerState(); };
+  const openBackupPicker = async () => { if (loadingRef.current) return; resetBackupPickerState(); setBackupPickerPreview(null); setBackupPickerOpen(true); await loadBackupPickerPage({ reset: true }); };
+  const closeBackupPicker = () => { setBackupPickerOpen(false); setBackupPickerPreview(null); resetBackupPickerState(); };
+
+  const ensureBackupPickerAssetMeta = useCallback(async (asset) => {
+    try {
+      if (serverType !== 'stealthcloud') return;
+      const id = asset && asset.id ? String(asset.id) : '';
+      if (!id) return;
+      if (asset && typeof asset.fileSize === 'number' && asset.fileSize > 0) return;
+      if (backupPickerMetaInFlightRef.current.has(id)) return;
+      backupPickerMetaInFlightRef.current.add(id);
+      await backupPickerMetaLimiterRef.current(async () => {
+        try {
+          const info = await MediaLibrary.getAssetInfoAsync(id, { shouldDownloadFromNetwork: true });
+          let fileSize = info && typeof info.fileSize === 'number' ? Number(info.fileSize) : null;
+          if ((!fileSize || fileSize <= 0) && info) {
+            const uri = info.localUri || info.uri || (asset && asset.uri) || null;
+            if (uri) {
+              try {
+                const fsInfo = await FileSystem.getInfoAsync(uri);
+                const sz = fsInfo && typeof fsInfo.size === 'number' ? Number(fsInfo.size) : null;
+                if (sz && sz > 0) fileSize = sz;
+              } catch (e) {}
+            }
+          }
+          if (fileSize && fileSize > 0) {
+            setBackupPickerAssets(prev => (prev || []).map(a => (a && String(a.id) === id ? { ...a, fileSize } : a)));
+          }
+        } catch (e) {
+        } finally {
+          backupPickerMetaInFlightRef.current.delete(id);
+        }
+      });
+    } catch (e) {}
+  }, [serverType]);
+
+  const onBackupPickerViewableItemsChangedRef = useRef(null);
+  onBackupPickerViewableItemsChangedRef.current = ({ viewableItems }) => {
+    if (serverType !== 'stealthcloud') return;
+    try {
+      const vis = Array.isArray(viewableItems) ? viewableItems : [];
+      for (const v of vis) {
+        const a = v && v.item ? v.item : null;
+        if (a && a.id) ensureBackupPickerAssetMeta(a);
+      }
+    } catch (e) {}
+  };
+  const onBackupPickerViewableItemsChanged = useRef(({ viewableItems }) => {
+    if (onBackupPickerViewableItemsChangedRef.current) {
+      onBackupPickerViewableItemsChangedRef.current({ viewableItems });
+    }
+  });
 
   const toggleBackupPickerSelected = (assetId) => {
     if (!assetId) return;
@@ -1943,7 +2153,7 @@ export default function App() {
     return (backupPickerAssets || []).filter(a => a && a.id && setIds.has(a.id));
   };
 
-  const resetSyncPickerState = () => { setSyncPickerItems([]); setSyncPickerTotal(0); setSyncPickerOffset(0); setSyncPickerLoading(false); setSyncPickerLoadingMore(false); setSyncPickerSelected({}); setSyncPickerAuthHeaders(null); syncPickerLocalFilenamesRef.current = null; };
+  const resetSyncPickerState = () => { setSyncPickerItems([]); setSyncPickerTotal(0); setSyncPickerOffset(0); setSyncPickerLoading(false); setSyncPickerLoadingMore(false); setSyncPickerSelected({}); setSyncPickerAuthHeaders(null); syncPickerLocalFilenamesRef.current = null; syncPickerMasterKeyRef.current = null; syncPickerThumbCacheRef.current = new Map(); syncPickerThumbInFlightRef.current = new Set(); };
   const openSyncModeChooser = () => { if (loadingRef.current) return; setSyncModeOpen(true); };
   const closeSyncModeChooser = () => setSyncModeOpen(false);
   const openCleanupModeChooser = () => { if (loadingRef.current) return; setCleanupModeOpen(true); };
@@ -2181,6 +2391,7 @@ export default function App() {
       resolveReadableFilePath,
       onStatus: (s) => setStatusSafe(opId, s),
       onProgress: (p) => setProgressSafe(opId, p),
+      t,
       abortRef: abortOperationsRef,
     });
 
@@ -2232,12 +2443,22 @@ export default function App() {
 
       if (serverType === 'stealthcloud') {
         const masterKey = await getStealthCloudMasterKey();
+        syncPickerMasterKeyRef.current = masterKey;
         const result = await fetchStealthCloudPickerPage({
           config, SERVER_URL, masterKey, offset: 0, limit: SYNC_PICKER_PAGE_SIZE
         });
         setSyncPickerItems(result.items);
         setSyncPickerTotal(result.total);
         setSyncPickerOffset(result.nextOffset);
+        // Trigger thumbnail loading for initial visible items
+        setTimeout(() => {
+          const initialItems = result.items.slice(0, 12);
+          for (const it of initialItems) {
+            if (it && it.thumbChunkId && it.thumbNonce && !it.thumbUri) {
+              ensureStealthCloudSyncThumb(it);
+            }
+          }
+        }, 100);
       } else {
         const result = await fetchLocalRemotePickerPage({
           config, SERVER_URL, offset: 0, limit: SYNC_PICKER_PAGE_SIZE
@@ -2265,6 +2486,7 @@ export default function App() {
 
         if (serverType === 'stealthcloud') {
           const masterKey = await getStealthCloudMasterKey();
+          syncPickerMasterKeyRef.current = masterKey;
           const result = await fetchStealthCloudPickerPage({
             config, SERVER_URL, masterKey, offset: syncPickerOffset, limit: SYNC_PICKER_PAGE_SIZE
           });
@@ -2292,6 +2514,70 @@ export default function App() {
   };
 
   const syncPickerHasMore = (syncPickerTotal > 0 && syncPickerOffset < syncPickerTotal);
+
+  const ensureStealthCloudSyncThumb = useCallback(async (item) => {
+    try {
+      if (!item || !item.manifestId) return;
+      if (serverType !== 'stealthcloud') return;
+      const manifestId = String(item.manifestId);
+      if (item.thumbUri) return;
+
+      const cached = syncPickerThumbCacheRef.current.get(manifestId);
+      if (cached) {
+        setSyncPickerItems(prev => (prev || []).map(it => (it && String(it.manifestId || '') === manifestId ? { ...it, thumbUri: cached } : it)));
+        return;
+      }
+
+      const thumbChunkId = item.thumbChunkId ? String(item.thumbChunkId) : '';
+      const thumbNonce = item.thumbNonce ? String(item.thumbNonce) : '';
+      if (!thumbChunkId || !thumbNonce) return;
+
+      const inFlightKey = `${manifestId}:${thumbChunkId}`;
+      if (syncPickerThumbInFlightRef.current.has(inFlightKey)) return;
+      syncPickerThumbInFlightRef.current.add(inFlightKey);
+
+      await syncPickerThumbLimiterRef.current(async () => {
+        try {
+          const headers = syncPickerAuthHeaders && typeof syncPickerAuthHeaders === 'object' ? syncPickerAuthHeaders : null;
+          const masterKey = syncPickerMasterKeyRef.current;
+          if (!headers || !masterKey) return;
+          const SERVER_URL = getServerUrl();
+          const uri = await fetchStealthCloudThumbFileUri({
+            config: { headers },
+            SERVER_URL,
+            masterKey,
+            thumbChunkId,
+            thumbNonce,
+            thumbMime: item.thumbMime,
+          });
+          if (uri) {
+            syncPickerThumbCacheRef.current.set(manifestId, uri);
+            setSyncPickerItems(prev => (prev || []).map(it => (it && String(it.manifestId || '') === manifestId ? { ...it, thumbUri: uri } : it)));
+          }
+        } finally {
+          syncPickerThumbInFlightRef.current.delete(inFlightKey);
+        }
+      });
+    } catch (e) {
+    }
+  }, [serverType, syncPickerAuthHeaders]);
+
+  const onSyncPickerViewableItemsChangedRef = useRef(null);
+  onSyncPickerViewableItemsChangedRef.current = ({ viewableItems }) => {
+    if (serverType !== 'stealthcloud') return;
+    try {
+      const vis = Array.isArray(viewableItems) ? viewableItems : [];
+      for (const v of vis) {
+        const it = v && v.item ? v.item : null;
+        if (it) ensureStealthCloudSyncThumb(it);
+      }
+    } catch (e) {}
+  };
+  const onSyncPickerViewableItemsChanged = useRef(({ viewableItems }) => {
+    if (onSyncPickerViewableItemsChangedRef.current) {
+      onSyncPickerViewableItemsChangedRef.current({ viewableItems });
+    }
+  });
 
   const closeSyncPicker = () => { setSyncPickerOpen(false); resetSyncPickerState(); };
 
@@ -2964,10 +3250,11 @@ export default function App() {
     if (serverSettings.savedLocalHost) setLocalHost(serverSettings.savedLocalHost);
     if (serverSettings.normalizedRemoteHost) setRemoteHost(serverSettings.normalizedRemoteHost);
 
-    // Auto Upload UI is hidden for now; prevent auto-start on app relaunch.
-    // Force it OFF even if it was previously enabled.
-    try { await SecureStore.setItemAsync('auto_upload_enabled', 'false'); } catch (e) {}
-    setAutoUploadEnabledSafe(false);
+    // Restore saved Auto Upload state
+    const savedAutoUpload = await SecureStore.getItemAsync('auto_upload_enabled');
+    if (savedAutoUpload === 'true') {
+      setAutoUploadEnabledSafe(true);
+    }
 
     const savedFastMode = await SecureStore.getItemAsync('fast_mode_enabled');
     if (savedFastMode === 'true' || savedFastMode === 'false') {
@@ -3369,9 +3656,11 @@ export default function App() {
 
         setTokenSafe(token);
 
-        // Auto Upload UI is hidden for now; prevent auto-start after login.
-        try { await SecureStore.setItemAsync('auto_upload_enabled', 'false'); } catch (e) {}
-        setAutoUploadEnabledSafe(false);
+        // Restore saved Auto Upload state after login
+        const savedAutoUpload = await SecureStore.getItemAsync('auto_upload_enabled');
+        if (savedAutoUpload === 'true') {
+          setAutoUploadEnabledSafe(true);
+        }
 
         // Clear logout flag on successful login
         await SecureStore.deleteItemAsync('user_logged_out');
@@ -3550,6 +3839,7 @@ export default function App() {
         resolveReadableFilePath,
         onStatus: (s) => setStatusSafe(opId, s),
         onProgress: (p) => setProgressSafe(opId, p),
+        t,
         abortRef: abortOperationsRef,
       });
 
@@ -4012,51 +4302,58 @@ export default function App() {
       )}
 
       {qrScannerOpen && (
-        <View style={[styles.overlay, {backgroundColor: 'rgba(0,0,0,0.95)'}]}>
-          <View style={{flex: 1, width: '100%', justifyContent: 'center', alignItems: 'center'}}>
-            <Text style={{color: '#fff', fontSize: scale(20), fontWeight: '600', marginBottom: scaleSpacing(8)}}>
-              {t('qrScanner.title')}
-            </Text>
-            <Text style={{color: '#aaa', fontSize: scale(14), marginBottom: scaleSpacing(20), textAlign: 'center', paddingHorizontal: scaleSpacing(40)}}>
-              {t('qrScanner.instruction')}
-            </Text>
-
-            <View style={{width: isTablet ? 350 : 280, height: isTablet ? 350 : 280, borderRadius: scaleSpacing(16), overflow: 'hidden', backgroundColor: '#000'}}>
-              {cameraPermission?.granted ? (
-                <CameraView
-                  style={{flex: 1}}
-                  facing="back"
-                  autofocus="on"
-                  zoom={0}
-                  barcodeScannerSettings={{
-                    barcodeTypes: ['qr'],
-                    interval: 100,
-                  }}
-                  onBarcodeScanned={(result) => {
-                    if (result && result.data) {
-                      handleQRCodeScanned(result.data);
-                    }
-                  }}
-                />
-              ) : (
-                <View style={{flex: 1, justifyContent: 'center', alignItems: 'center'}}>
-                  <Text style={{color: '#888', textAlign: 'center', padding: scaleSpacing(20), fontSize: scale(14)}}>
-                    {t('permissions.cameraRequired')}
-                  </Text>
-                  <TouchableOpacity
-                    style={{backgroundColor: '#03E1FF', paddingHorizontal: scaleSpacing(20), paddingVertical: scaleSpacing(10), borderRadius: scaleSpacing(8)}}
-                    onPress={requestCameraPermission}>
-                    <Text style={{color: '#000000', fontWeight: '700', fontSize: scale(14)}}>{t('permissions.grant')}</Text>
-                  </TouchableOpacity>
-                </View>
-              )}
+        <View style={{position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: '#000'}}>
+          {cameraPermission?.granted ? (
+            <CameraView
+              style={{flex: 1}}
+              facing="back"
+              autofocus="on"
+              zoom={0}
+              barcodeScannerSettings={{
+                barcodeTypes: ['qr'],
+                interval: 100,
+              }}
+              onBarcodeScanned={(result) => {
+                if (result && result.data) {
+                  handleQRCodeScanned(result.data);
+                }
+              }}
+            />
+          ) : (
+            <View style={{flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#000'}}>
+              <Text style={{color: '#888', textAlign: 'center', padding: scaleSpacing(20), fontSize: scale(14)}}>
+                {t('permissions.cameraRequired')}
+              </Text>
+              <TouchableOpacity
+                style={{backgroundColor: '#03E1FF', paddingHorizontal: scaleSpacing(20), paddingVertical: scaleSpacing(10), borderRadius: scaleSpacing(8)}}
+                onPress={requestCameraPermission}>
+                <Text style={{color: '#000000', fontWeight: '700', fontSize: scale(14)}}>{t('permissions.grant')}</Text>
+              </TouchableOpacity>
             </View>
-
-            <TouchableOpacity
-              style={{marginTop: scaleSpacing(24), paddingVertical: scaleSpacing(14), paddingHorizontal: scaleSpacing(40), backgroundColor: '#000', borderRadius: scaleSpacing(8), borderWidth: 1, borderColor: '#fff'}}
-              onPress={() => setQrScannerOpen(false)}>
-              <Text style={{color: '#fff', fontSize: scale(16), fontWeight: '600'}}>{t('login.cancel')}</Text>
-            </TouchableOpacity>
+          )}
+          {/* Overlay UI on top of camera */}
+          <View style={{position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, pointerEvents: 'box-none'}}>
+            {/* Top bar with title */}
+            <View style={{paddingTop: Platform.OS === 'ios' ? scaleSpacing(60) : scaleSpacing(40), paddingHorizontal: scaleSpacing(20), backgroundColor: 'rgba(0,0,0,0.5)'}}>
+              <Text style={{color: '#fff', fontSize: scale(18), fontWeight: '600', textAlign: 'center'}}>
+                {t('qrScanner.title')}
+              </Text>
+              <Text style={{color: '#aaa', fontSize: scale(13), textAlign: 'center', marginTop: scaleSpacing(4)}}>
+                {t('qrScanner.instruction')}
+              </Text>
+            </View>
+            {/* Center scanning frame */}
+            <View style={{flex: 1, justifyContent: 'center', alignItems: 'center'}}>
+              <View style={{width: isTablet ? 280 : 240, height: isTablet ? 280 : 240, borderWidth: 2, borderColor: '#03E1FF', borderRadius: scaleSpacing(16)}} />
+            </View>
+            {/* Bottom bar with cancel button */}
+            <View style={{paddingBottom: Platform.OS === 'ios' ? scaleSpacing(50) : scaleSpacing(30), paddingHorizontal: scaleSpacing(20), backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center'}}>
+              <TouchableOpacity
+                style={{paddingVertical: scaleSpacing(14), paddingHorizontal: scaleSpacing(50), backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: scaleSpacing(12), borderWidth: 1, borderColor: 'rgba(255,255,255,0.3)'}}
+                onPress={() => setQrScannerOpen(false)}>
+                <Text style={{color: '#fff', fontSize: scale(16), fontWeight: '600'}}>{t('common.cancel')}</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
       )}
@@ -4299,6 +4596,8 @@ export default function App() {
           remoteHost={remoteHost}
           setRemoteHost={setRemoteHost}
           getServerUrl={getServerUrl}
+          autoUploadEnabled={autoUploadEnabled}
+          persistAutoUploadEnabled={persistAutoUploadEnabled}
           fastModeEnabled={fastModeEnabled}
           persistFastModeEnabled={persistFastModeEnabled}
           glassModeEnabled={glassModeEnabled}
@@ -4338,51 +4637,58 @@ export default function App() {
         />
 
         {qrScannerOpen && (
-          <View style={[styles.overlay, {backgroundColor: 'rgba(0,0,0,0.95)'}]}>
-            <View style={{flex: 1, width: '100%', justifyContent: 'center', alignItems: 'center'}}>
-              <Text style={{color: '#fff', fontSize: scale(20), fontWeight: '600', marginBottom: scaleSpacing(8)}}>
-                📷 {t('qrScanner.title')}
-              </Text>
-              <Text style={{color: '#aaa', fontSize: scale(14), marginBottom: scaleSpacing(20), textAlign: 'center', paddingHorizontal: scaleSpacing(40)}}>
-                {t('qrScanner.instruction')}
-              </Text>
-
-              <View style={{width: isTablet ? 350 : 280, height: isTablet ? 350 : 280, borderRadius: scaleSpacing(16), overflow: 'hidden', backgroundColor: '#000'}}>
-                {cameraPermission?.granted ? (
-                  <CameraView
-                    style={{flex: 1}}
-                    facing="back"
-                    autofocus="on"
-                    zoom={0}
-                    barcodeScannerSettings={{
-                      barcodeTypes: ['qr'],
-                      interval: 100,
-                    }}
-                    onBarcodeScanned={(result) => {
-                      if (result && result.data) {
-                        handleQRCodeScanned(result.data);
-                      }
-                    }}
-                  />
-                ) : (
-                  <View style={{flex: 1, justifyContent: 'center', alignItems: 'center'}}>
-                    <Text style={{color: '#888', textAlign: 'center', padding: scaleSpacing(20), fontSize: scale(14)}}>
-                      {t('permissions.cameraRequired')}
-                    </Text>
-                    <TouchableOpacity
-                      style={{backgroundColor: '#03E1FF', paddingHorizontal: scaleSpacing(20), paddingVertical: scaleSpacing(10), borderRadius: scaleSpacing(8)}}
-                      onPress={requestCameraPermission}>
-                      <Text style={{color: '#000000', fontWeight: '700', fontSize: scale(14)}}>{t('permissions.grant')}</Text>
-                    </TouchableOpacity>
-                  </View>
-                )}
+          <View style={{position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: '#000'}}>
+            {cameraPermission?.granted ? (
+              <CameraView
+                style={{flex: 1}}
+                facing="back"
+                autofocus="on"
+                zoom={0}
+                barcodeScannerSettings={{
+                  barcodeTypes: ['qr'],
+                  interval: 100,
+                }}
+                onBarcodeScanned={(result) => {
+                  if (result && result.data) {
+                    handleQRCodeScanned(result.data);
+                  }
+                }}
+              />
+            ) : (
+              <View style={{flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#000'}}>
+                <Text style={{color: '#888', textAlign: 'center', padding: scaleSpacing(20), fontSize: scale(14)}}>
+                  {t('permissions.cameraRequired')}
+                </Text>
+                <TouchableOpacity
+                  style={{backgroundColor: '#03E1FF', paddingHorizontal: scaleSpacing(20), paddingVertical: scaleSpacing(10), borderRadius: scaleSpacing(8)}}
+                  onPress={requestCameraPermission}>
+                  <Text style={{color: '#000000', fontWeight: '700', fontSize: scale(14)}}>{t('permissions.grant')}</Text>
+                </TouchableOpacity>
               </View>
-
-              <TouchableOpacity
-                style={{marginTop: scaleSpacing(24), paddingVertical: scaleSpacing(14), paddingHorizontal: scaleSpacing(40), backgroundColor: '#000', borderRadius: scaleSpacing(8), borderWidth: 1, borderColor: '#fff'}}
-                onPress={() => setQrScannerOpen(false)}>
-                <Text style={{color: '#fff', fontSize: scale(16), fontWeight: '600'}}>{t('login.cancel')}</Text>
-              </TouchableOpacity>
+            )}
+            {/* Overlay UI on top of camera */}
+            <View style={{position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, pointerEvents: 'box-none'}}>
+              {/* Top bar with title */}
+              <View style={{paddingTop: Platform.OS === 'ios' ? scaleSpacing(60) : scaleSpacing(40), paddingHorizontal: scaleSpacing(20), backgroundColor: 'rgba(0,0,0,0.5)'}}>
+                <Text style={{color: '#fff', fontSize: scale(18), fontWeight: '600', textAlign: 'center'}}>
+                  {t('qrScanner.title')}
+                </Text>
+                <Text style={{color: '#aaa', fontSize: scale(13), textAlign: 'center', marginTop: scaleSpacing(4)}}>
+                  {t('qrScanner.instruction')}
+                </Text>
+              </View>
+              {/* Center scanning frame */}
+              <View style={{flex: 1, justifyContent: 'center', alignItems: 'center'}}>
+                <View style={{width: isTablet ? 280 : 240, height: isTablet ? 280 : 240, borderWidth: 2, borderColor: '#03E1FF', borderRadius: scaleSpacing(16)}} />
+              </View>
+              {/* Bottom bar with cancel button */}
+              <View style={{paddingBottom: Platform.OS === 'ios' ? scaleSpacing(50) : scaleSpacing(30), paddingHorizontal: scaleSpacing(20), backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center'}}>
+                <TouchableOpacity
+                  style={{paddingVertical: scaleSpacing(14), paddingHorizontal: scaleSpacing(50), backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: scaleSpacing(12), borderWidth: 1, borderColor: 'rgba(255,255,255,0.3)'}}
+                  onPress={() => setQrScannerOpen(false)}>
+                  <Text style={{color: '#fff', fontSize: scale(16), fontWeight: '600'}}>{t('common.cancel')}</Text>
+                </TouchableOpacity>
+              </View>
             </View>
           </View>
         )}
@@ -4418,7 +4724,7 @@ export default function App() {
         <InfoScreen
           onBack={() => setView('home')}
           appDisplayName={APP_DISPLAY_NAME}
-          appVersion="1.5.0"
+          appVersion="1.5.1"
           deviceUuid={deviceUuid}
           serverType={serverType}
           stealthUsage={stealthUsage}
@@ -4545,8 +4851,8 @@ export default function App() {
       {cleanupModeOpen && (
         <View style={[styles.overlay, glassModeEnabled && styles.overlayGlass]}>
           <View style={[styles.overlayCard, glassModeEnabled && styles.overlayCardGlass]}>
-            <Text style={styles.overlayTitle}>Clean Up Duplicates</Text>
-            <Text style={styles.overlaySubtitle}>Remove identical photos/videos & similar photos.{"\n"}Nothing is deleted without your confirmation.</Text>
+            <Text style={styles.overlayTitle}>{t('cleanup.title')}</Text>
+            <Text style={styles.overlaySubtitle}>{t('cleanup.subtitle')}</Text>
 
             <TouchableOpacity
               style={[styles.overlayBtnPrimary, glassModeEnabled && styles.overlayBtnPrimaryGlass]}
@@ -4554,7 +4860,7 @@ export default function App() {
                 closeCleanupModeChooser();
                 await cleanDeviceDuplicates();
               }}>
-              <Text style={styles.overlayBtnPrimaryText}>Identical Photos & Videos</Text>
+              <Text style={styles.overlayBtnPrimaryText}>{t('cleanup.identicalPhotosVideos')}</Text>
             </TouchableOpacity>
 
             <TouchableOpacity
@@ -4563,13 +4869,13 @@ export default function App() {
                 closeCleanupModeChooser();
                 await startSimilarShotsReview();
               }}>
-              <Text style={styles.overlayBtnSecondaryText}>Similar Photos</Text>
+              <Text style={styles.overlayBtnSecondaryText}>{t('similarPhotos.title')}</Text>
             </TouchableOpacity>
 
             <TouchableOpacity
               style={[styles.overlayBtnGhost, glassModeEnabled && styles.overlayBtnGhostGlass]}
               onPress={closeCleanupModeChooser}>
-              <Text style={styles.overlayBtnGhostText}>Cancel</Text>
+              <Text style={styles.overlayBtnGhostText}>{t('common.cancel')}</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -4675,7 +4981,7 @@ export default function App() {
             </View>
 
             {/* Bottom action bar */}
-            <View style={{ backgroundColor: 'rgba(0,0,0,0.95)', paddingBottom: Platform.OS === 'ios' ? 34 : 20, paddingTop: 12, paddingHorizontal: 16 }}>
+            <View style={{ backgroundColor: 'rgba(0,0,0,0.95)', paddingBottom: Platform.OS === 'ios' ? 34 : 60, paddingTop: 12, paddingHorizontal: 16 }}>
               {/* Toggle selection button */}
               <TouchableOpacity
                 style={{ backgroundColor: isSelected ? '#333' : '#FF3B30', paddingVertical: 14, borderRadius: 12, marginBottom: 10, alignItems: 'center' }}
@@ -4806,7 +5112,7 @@ export default function App() {
           <View style={[styles.pickerCard, glassModeEnabled && styles.pickerCardGlass]}>
             <View style={styles.pickerHeader}>
               <TouchableOpacity onPress={closeBackupPicker} style={styles.pickerHeaderBtn}>
-                <Text style={styles.pickerHeaderBtnText}>{t('picker.cancel')}</Text>
+                <Text style={[styles.pickerHeaderBtnText, { color: THEME.accent }]}>{t('picker.cancel')}</Text>
               </TouchableOpacity>
               <View style={{ flex: 1, alignItems: 'center' }}>
                 <Text style={styles.pickerHeaderTitle}>{t('picker.selectMedia')}</Text>
@@ -4820,64 +5126,192 @@ export default function App() {
                   await backupSelectedAssets({ assets: selected });
                 }}
                 style={styles.pickerHeaderBtn}>
-                <Text style={styles.pickerHeaderBtnText}>{t('picker.start')}</Text>
+                <Text style={[styles.pickerHeaderBtnText, { color: THEME.accent }]}>{t('picker.start')}</Text>
               </TouchableOpacity>
             </View>
 
-            {/* Info about missing thumbnails */}
-            <View style={{ paddingHorizontal: scaleSpacing(12), paddingVertical: scaleSpacing(6), backgroundColor: '#1a1a1a' }}>
-              <Text style={{ color: '#666', fontSize: scale(11), textAlign: 'center' }}>
-                {t('picker.previewsUnavailable')}
-              </Text>
-            </View>
-
-            <ScrollView contentContainerStyle={styles.pickerGrid}>
-              {(backupPickerAssets || []).map((a, idx) => {
-                const selected = !!(backupPickerSelected && backupPickerSelected[a.id]);
-                return (
-                  <TouchableOpacity
-                    key={`${a.id}-${idx}`}
-                    style={[styles.pickerItem, selected && styles.pickerItemSelected]}
-                    onPress={() => toggleBackupPickerSelected(a.id)}>
-                    <View style={[styles.pickerThumb, { backgroundColor: '#1a1a1a', justifyContent: 'center', alignItems: 'center' }]}>
-                      {(a.thumbUri || a.uri) && (
-                        <Image 
-                          source={{ uri: a.thumbUri || a.uri }} 
-                          style={[styles.pickerThumb, { position: 'absolute', top: 0, left: 0 }]} 
-                        />
-                      )}
-                      <Text style={{ color: '#444', fontSize: 10, textAlign: 'center' }}>{a.mediaType === 'video' ? '🎬' : '📷'}</Text>
-                    </View>
-                    {a.mediaType === 'video' && (
-                      <View style={styles.pickerBadge}>
-                        <Text style={styles.pickerBadgeText}>{t('picker.video')}</Text>
-                      </View>
-                    )}
-                    {selected && (
-                      <View style={styles.pickerCheck}>
-                        <Text style={styles.pickerCheckText}>✓</Text>
-                      </View>
-                    )}
-                  </TouchableOpacity>
-                );
-              })}
-
-              <View style={{ width: '100%', paddingVertical: 12, paddingHorizontal: scaleSpacing(12) }}>
-                {backupPickerLoading ? (
-                  <ActivityIndicator size="small" color={THEME.accent} />
-                ) : (
-                  backupPickerHasNext && (
-                    <TouchableOpacity
-                      style={{ backgroundColor: '#000000', borderWidth: 1.5, borderColor: '#FFFFFF', borderRadius: scaleSpacing(10), paddingVertical: scaleSpacing(14), alignItems: 'center' }}
-                      onPress={() => loadBackupPickerPage({ reset: false })}>
-                      <Text style={{ color: '#FFFFFF', fontWeight: '600', fontSize: scale(15) }}>{t('picker.loadMore')}</Text>
-                    </TouchableOpacity>
-                  )
-                )}
+            {serverType !== 'stealthcloud' ? (
+              <View style={{ paddingHorizontal: scaleSpacing(12), paddingVertical: scaleSpacing(6), backgroundColor: '#1a1a1a' }}>
+                <Text style={{ color: '#666', fontSize: scale(11), textAlign: 'center' }}>
+                  {t('picker.previewsUnavailable')}
+                </Text>
               </View>
-            </ScrollView>
+            ) : null}
+
+            {serverType === 'stealthcloud' ? (
+              <FlatList
+                data={backupPickerAssets || []}
+                keyExtractor={(a, idx) => `${a?.id}-${idx}`}
+                ListHeaderComponent={() => (
+                  <View style={{ paddingHorizontal: scaleSpacing(12), paddingVertical: scaleSpacing(8), borderBottomWidth: 1, borderBottomColor: '#222', backgroundColor: '#121212' }}>
+                    <Text style={{ color: '#888', fontSize: scale(12) }}>
+                      {t('picker.showingFiles', { count: backupPickerAssets.length, total: backupPickerTotal > 0 ? backupPickerTotal : backupPickerAssets.length })}
+                    </Text>
+                  </View>
+                )}
+                stickyHeaderIndices={[0]}
+                contentContainerStyle={styles.syncPickerList}
+                removeClippedSubviews={Platform.OS === 'android'}
+                initialNumToRender={24}
+                maxToRenderPerBatch={24}
+                windowSize={7}
+                onViewableItemsChanged={onBackupPickerViewableItemsChanged.current}
+                viewabilityConfig={{ itemVisiblePercentThreshold: 55 }}
+                onEndReachedThreshold={0.7}
+                onEndReached={() => {
+                  if (backupPickerHasNext && !backupPickerLoading) {
+                    loadBackupPickerPage({ reset: false });
+                  }
+                }}
+                renderItem={({ item: a, index: idx }) => {
+                  const id = a && a.id ? String(a.id) : '';
+                  if (!id) return null;
+                  const selected = !!(backupPickerSelected && backupPickerSelected[id]);
+                  const displayName = a && a.filename ? a.filename : id;
+                  const rawSize = a && typeof a.fileSize === 'number' ? a.fileSize : null;
+                  const fileSize = rawSize !== null && rawSize > 0 ? rawSize : null;
+                  const ext = (displayName || '').split('.').pop()?.toLowerCase() || '';
+                  const isVideo = a && (a.mediaType === 'video' || ['mp4', 'mov', 'avi', 'mkv', 'm4v', '3gp', 'webm'].includes(ext));
+                  const isImage = a && (a.mediaType === 'photo' || ['jpg', 'jpeg', 'png', 'heic', 'heif', 'webp', 'gif', 'bmp', 'tiff'].includes(ext));
+                  const fileIcon = isVideo ? '🎬' : isImage ? '🖼️' : '📄';
+                  const thumbUri = (a && (a.thumbUri || a.uri)) ? (a.thumbUri || a.uri) : null;
+                  return (
+                    <TouchableOpacity
+                      key={`${id}-${idx}`}
+                      style={[styles.syncPickerRow, selected && { borderColor: THEME.accent }]}
+                      onPress={() => toggleBackupPickerSelected(id)}>
+                      <TouchableOpacity
+                        style={{ width: isTablet ? 56 : 44, height: isTablet ? 56 : 44, borderRadius: scaleSpacing(6), marginRight: scaleSpacing(10), backgroundColor: isVideo ? '#1a1a2e' : '#1e3a2e', alignItems: 'center', justifyContent: 'center' }}
+                        onPress={(e) => {
+                          e.stopPropagation();
+                          if (thumbUri) {
+                            setBackupPickerPreview({ uri: thumbUri, filename: displayName });
+                          }
+                        }}
+                        disabled={!thumbUri}
+                        activeOpacity={thumbUri ? 0.7 : 1}>
+                        {thumbUri ? (
+                          <Image
+                            source={{ uri: thumbUri }}
+                            style={{ width: '100%', height: '100%', borderRadius: scaleSpacing(6) }}
+                            onError={() => fixBackupPickerThumbnail(a)}
+                          />
+                        ) : (
+                          <Text style={{ fontSize: scale(22) }}>{fileIcon}</Text>
+                        )}
+                      </TouchableOpacity>
+                      <View style={[styles.syncPickerRowLeft, { flex: 1 }]}>
+                        <Text style={styles.syncPickerRowTitle} numberOfLines={1} ellipsizeMode="middle">{displayName}</Text>
+                        {fileSize !== null && (
+                          <Text style={styles.syncPickerRowMeta}>{formatBytesHuman(fileSize)}</Text>
+                        )}
+                      </View>
+                      <View style={[styles.syncPickerCheck, selected && { backgroundColor: 'rgba(3, 225, 255, 0.92)', borderColor: 'rgba(3, 225, 255, 0.92)' }]}>
+                        <Text style={[styles.syncPickerCheckText, selected && styles.syncPickerCheckTextOn]}>{selected ? '✓' : ''}</Text>
+                      </View>
+                    </TouchableOpacity>
+                  );
+                }}
+                ListFooterComponent={() => (
+                  <View style={{ width: '100%', paddingVertical: 12, paddingHorizontal: scaleSpacing(12), alignItems: 'center' }}>
+                    {backupPickerLoading ? (
+                      <ActivityIndicator size={isTablet ? 'large' : 'small'} color={THEME.accent} />
+                    ) : (
+                      <View style={{ height: 8 }} />
+                    )}
+                  </View>
+                )}
+              />
+            ) : (
+              <FlatList
+                data={backupPickerAssets || []}
+                keyExtractor={(a, idx) => `${a?.id}-${idx}`}
+                numColumns={isTablet ? 4 : 3}
+                contentContainerStyle={{ padding: scaleSpacing(10) }}
+                columnWrapperStyle={{ justifyContent: 'space-between' }}
+                removeClippedSubviews={Platform.OS === 'android'}
+                initialNumToRender={24}
+                maxToRenderPerBatch={24}
+                windowSize={7}
+                onEndReachedThreshold={0.7}
+                onEndReached={() => {
+                  if (backupPickerHasNext && !backupPickerLoading) {
+                    loadBackupPickerPage({ reset: false });
+                  }
+                }}
+                renderItem={({ item: a, index: idx }) => {
+                  const selected = !!(backupPickerSelected && a && backupPickerSelected[a.id]);
+                  return (
+                    <TouchableOpacity
+                      key={`${a?.id}-${idx}`}
+                      style={[styles.pickerItem, selected && styles.pickerItemSelected]}
+                      onPress={() => toggleBackupPickerSelected(a.id)}>
+                      <View style={[styles.pickerThumb, { backgroundColor: '#1a1a1a', justifyContent: 'center', alignItems: 'center' }]}>
+                        {(a.thumbUri || a.uri) && (
+                          <Image
+                            source={{ uri: a.thumbUri || a.uri }}
+                            style={[styles.pickerThumb, { position: 'absolute', top: 0, left: 0 }]}
+                            onError={() => fixBackupPickerThumbnail(a)}
+                          />
+                        )}
+                        <Text style={{ color: '#444', fontSize: 10, textAlign: 'center' }}>{a.mediaType === 'video' ? '🎬' : '📷'}</Text>
+                      </View>
+                      {a.mediaType === 'video' && (
+                        <View style={styles.pickerBadge}>
+                          <Text style={styles.pickerBadgeText}>{t('picker.video')}</Text>
+                        </View>
+                      )}
+                      {selected && (
+                        <View style={styles.pickerCheck}>
+                          <Text style={styles.pickerCheckText}>✓</Text>
+                        </View>
+                      )}
+                    </TouchableOpacity>
+                  );
+                }}
+                ListFooterComponent={() => (
+                  <View style={{ width: '100%', paddingVertical: 12, paddingHorizontal: scaleSpacing(12), alignItems: 'center' }}>
+                    {backupPickerLoading ? (
+                      <ActivityIndicator size="small" color={THEME.accent} />
+                    ) : (
+                      <View style={{ height: 8 }} />
+                    )}
+                  </View>
+                )}
+              />
+            )}
           </View>
         </View>
+      )}
+
+      {backupPickerPreview && serverType === 'stealthcloud' && (
+        <Modal
+          visible={true}
+          transparent={true}
+          animationType="fade"
+          onRequestClose={() => setBackupPickerPreview(null)}>
+          <TouchableOpacity
+            style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.9)', justifyContent: 'center', alignItems: 'center' }}
+            activeOpacity={1}
+            onPress={() => setBackupPickerPreview(null)}>
+            <View style={{ width: '90%', maxWidth: 400, backgroundColor: '#1a1a1a', borderRadius: scaleSpacing(12), overflow: 'hidden' }}>
+              <Image
+                source={{ uri: backupPickerPreview.uri }}
+                style={{ width: '100%', aspectRatio: 1, resizeMode: 'contain', backgroundColor: '#000' }}
+              />
+              <View style={{ padding: scaleSpacing(12), borderTopWidth: 1, borderTopColor: '#333' }}>
+                <Text style={{ color: '#fff', fontSize: scale(13), textAlign: 'center' }} numberOfLines={2} ellipsizeMode="middle">
+                  {backupPickerPreview.filename}
+                </Text>
+              </View>
+            </View>
+            <TouchableOpacity
+              style={{ marginTop: scaleSpacing(16), paddingVertical: scaleSpacing(10), paddingHorizontal: scaleSpacing(24), backgroundColor: '#333', borderRadius: scaleSpacing(8) }}
+              onPress={() => setBackupPickerPreview(null)}>
+              <Text style={{ color: '#fff', fontSize: scale(14) }}>{t('common.close') || 'Close'}</Text>
+            </TouchableOpacity>
+          </TouchableOpacity>
+        </Modal>
       )}
 
       {syncModeOpen && (
@@ -4918,7 +5352,7 @@ export default function App() {
           <View style={[styles.pickerCard, glassModeEnabled && styles.pickerCardGlass]}>
             <View style={styles.pickerHeader}>
               <TouchableOpacity onPress={closeSyncPicker} style={styles.pickerHeaderBtn}>
-                <Text style={styles.pickerHeaderBtnText}>{t('picker.cancel')}</Text>
+                <Text style={[styles.pickerHeaderBtnText, { color: THEME.secondary }]}>{t('picker.cancel')}</Text>
               </TouchableOpacity>
               <View style={{ flex: 1, alignItems: 'center' }}>
                 <Text style={styles.pickerHeaderTitle}>{t('picker.selectFiles')}</Text>
@@ -4936,137 +5370,198 @@ export default function App() {
                   }
                 }}
                 style={styles.pickerHeaderBtn}>
-                <Text style={styles.pickerHeaderBtnText}>{t('picker.start')}</Text>
+                <Text style={[styles.pickerHeaderBtnText, { color: THEME.secondary }]}>{t('picker.start')}</Text>
               </TouchableOpacity>
             </View>
 
-            <ScrollView contentContainerStyle={serverType === 'stealthcloud' ? styles.syncPickerList : styles.pickerGrid}>
-              {syncPickerLoading ? (
-                <View style={{ width: '100%', paddingVertical: scaleSpacing(32), alignItems: 'center' }}>
-                  <ActivityIndicator size={isTablet ? 'large' : 'small'} color={THEME.secondary} />
-                  <Text style={{ color: '#888', fontSize: scale(13), marginTop: scaleSpacing(10) }}>{t('picker.loadingFiles')}</Text>
-                </View>
-              ) : serverType === 'stealthcloud' ? (
-                <>
-                  {/* StealthCloud: list view with icons (encrypted, no thumbnails) */}
-                  <View style={{ paddingHorizontal: scaleSpacing(12), paddingVertical: scaleSpacing(8), borderBottomWidth: 1, borderBottomColor: '#222' }}>
-                    <Text style={{ color: '#666', fontSize: scale(11), textAlign: 'center', marginBottom: scaleSpacing(4) }}>
-                      {t('picker.filesEncrypted')}
-                    </Text>
+            {!syncPickerLoading && serverType !== 'stealthcloud' ? (
+              <View style={{ width: '100%', paddingHorizontal: scaleSpacing(12), paddingVertical: scaleSpacing(6), backgroundColor: '#1a1a1a' }}>
+                <Text style={{ color: '#666', fontSize: scale(11), textAlign: 'center' }}>
+                  Some previews may not load if files were modified externally
+                </Text>
+              </View>
+            ) : null}
+
+            {syncPickerLoading ? (
+              <View style={{ width: '100%', paddingVertical: scaleSpacing(32), alignItems: 'center' }}>
+                <ActivityIndicator size={isTablet ? 'large' : 'small'} color={THEME.secondary} />
+                <Text style={{ color: '#888', fontSize: scale(13), marginTop: scaleSpacing(10) }}>{t('picker.loadingFiles')}</Text>
+              </View>
+            ) : serverType === 'stealthcloud' ? (
+              <FlatList
+                data={syncPickerItems || []}
+                keyExtractor={(it, idx) => String((it && it.manifestId) ? it.manifestId : idx)}
+                ListHeaderComponent={() => (
+                  <View style={{ paddingHorizontal: scaleSpacing(12), paddingVertical: scaleSpacing(8), borderBottomWidth: 1, borderBottomColor: '#222', backgroundColor: '#121212' }}>
                     <Text style={{ color: '#888', fontSize: scale(12) }}>
                       {t('picker.showingFiles', { count: syncPickerItems.length, total: syncPickerTotal > 0 ? syncPickerTotal : syncPickerItems.length })}
                     </Text>
                   </View>
-
-                  {(syncPickerItems || []).map((it) => {
-                    const key = String(it && it.manifestId ? it.manifestId : '');
-                    if (!key) return null;
-                    const selected = !!(syncPickerSelected && syncPickerSelected[key]);
-                    const displayName = it && it.filename ? it.filename : key;
-                    const rawSize = it && typeof it.size === 'number' ? it.size : null;
-                    const fileSize = rawSize !== null && rawSize > 0 ? rawSize : null;
-                    const mediaType = it && it.mediaType ? it.mediaType : null;
-                    const ext = (displayName || '').split('.').pop()?.toLowerCase() || '';
-                    const isVideo = mediaType === 'video' || ['mp4', 'mov', 'avi', 'mkv', 'm4v', '3gp', 'webm'].includes(ext);
-                    const isImage = mediaType === 'photo' || ['jpg', 'jpeg', 'png', 'heic', 'heif', 'webp', 'gif', 'bmp', 'tiff'].includes(ext);
-                    const fileIcon = isVideo ? '🎬' : isImage ? '🖼️' : '📄';
-                    return (
-                      <TouchableOpacity
-                        key={key}
-                        style={[styles.syncPickerRow, selected && styles.syncPickerRowSelected]}
-                        onPress={() => toggleSyncPickerSelected(key)}>
-                        <View style={{ width: isTablet ? 56 : 44, height: isTablet ? 56 : 44, borderRadius: scaleSpacing(6), marginRight: scaleSpacing(10), backgroundColor: isVideo ? '#1a1a2e' : '#1e3a2e', alignItems: 'center', justifyContent: 'center' }}>
-                          <Text style={{ fontSize: scale(22) }}>{fileIcon}</Text>
-                        </View>
-                        <View style={[styles.syncPickerRowLeft, { flex: 1 }]}>
-                          <Text style={styles.syncPickerRowTitle} numberOfLines={1} ellipsizeMode="middle">{displayName}</Text>
-                          {fileSize !== null && (
-                            <Text style={styles.syncPickerRowMeta}>{formatBytesHuman(fileSize)}</Text>
-                          )}
-                        </View>
-                        <View style={[styles.syncPickerCheck, selected && styles.syncPickerCheckOn]}>
-                          <Text style={[styles.syncPickerCheckText, selected && styles.syncPickerCheckTextOn]}>{selected ? '✓' : ''}</Text>
-                        </View>
-                      </TouchableOpacity>
-                    );
-                  })}
-
-                  {syncPickerHasMore && (
+                )}
+                stickyHeaderIndices={[0]}
+                contentContainerStyle={styles.syncPickerList}
+                removeClippedSubviews={Platform.OS === 'android'}
+                initialNumToRender={24}
+                maxToRenderPerBatch={24}
+                windowSize={7}
+                onViewableItemsChanged={onSyncPickerViewableItemsChanged.current}
+                viewabilityConfig={{ itemVisiblePercentThreshold: 55 }}
+                onEndReachedThreshold={0.7}
+                onEndReached={() => {
+                  if (syncPickerHasMore && !syncPickerLoadingMore) {
+                    loadMoreSyncPickerItems();
+                  }
+                }}
+                renderItem={({ item: it }) => {
+                  const key = String(it && it.manifestId ? it.manifestId : '');
+                  if (!key) return null;
+                  const selected = !!(syncPickerSelected && syncPickerSelected[key]);
+                  const displayName = it && it.filename ? it.filename : key;
+                  const rawSize = it && typeof it.size === 'number' ? it.size : null;
+                  const fileSize = rawSize !== null && rawSize > 0 ? rawSize : null;
+                  const mediaType = it && it.mediaType ? it.mediaType : null;
+                  const ext = (displayName || '').split('.').pop()?.toLowerCase() || '';
+                  const isVideo = mediaType === 'video' || ['mp4', 'mov', 'avi', 'mkv', 'm4v', '3gp', 'webm'].includes(ext);
+                  const isImage = mediaType === 'photo' || ['jpg', 'jpeg', 'png', 'heic', 'heif', 'webp', 'gif', 'bmp', 'tiff'].includes(ext);
+                  const fileIcon = isVideo ? '🎬' : isImage ? '🖼️' : '📄';
+                  return (
                     <TouchableOpacity
-                      style={{ marginVertical: scaleSpacing(16), marginHorizontal: scaleSpacing(12), paddingVertical: scaleSpacing(14), backgroundColor: '#000000', borderWidth: 1.5, borderColor: '#FFFFFF', borderRadius: scaleSpacing(10), alignItems: 'center' }}
-                      onPress={loadMoreSyncPickerItems}
-                      disabled={syncPickerLoadingMore}>
-                      {syncPickerLoadingMore ? (
-                        <ActivityIndicator size={isTablet ? 'large' : 'small'} color={THEME.accent} />
-                      ) : (
-                        <Text style={{ color: '#FFFFFF', fontWeight: '600', fontSize: scale(15) }}>
-                          Load More ({Math.max(0, (syncPickerTotal || 0) - (syncPickerItems?.length || 0))} remaining)
-                        </Text>
+                      key={key}
+                      style={[styles.syncPickerRow, selected && styles.syncPickerRowSelected]}
+                      onPress={() => toggleSyncPickerSelected(key)}>
+                      <TouchableOpacity 
+                        style={{ width: isTablet ? 56 : 44, height: isTablet ? 56 : 44, borderRadius: scaleSpacing(6), marginRight: scaleSpacing(10), backgroundColor: isVideo ? '#1a1a2e' : '#1e3a2e', alignItems: 'center', justifyContent: 'center' }}
+                        onPress={(e) => {
+                          e.stopPropagation();
+                          if (it && it.thumbUri) {
+                            setSyncPickerPreview({ uri: it.thumbUri, filename: displayName });
+                          }
+                        }}
+                        disabled={!it || !it.thumbUri}
+                        activeOpacity={it && it.thumbUri ? 0.7 : 1}>
+                        {it && it.thumbUri ? (
+                          <Image source={{ uri: it.thumbUri }} style={{ width: '100%', height: '100%', borderRadius: scaleSpacing(6) }} />
+                        ) : (
+                          <Text style={{ fontSize: scale(22) }}>{fileIcon}</Text>
+                        )}
+                      </TouchableOpacity>
+                      <View style={[styles.syncPickerRowLeft, { flex: 1 }]}>
+                        <Text style={styles.syncPickerRowTitle} numberOfLines={1} ellipsizeMode="middle">{displayName}</Text>
+                        {fileSize !== null && (
+                          <Text style={styles.syncPickerRowMeta}>{formatBytesHuman(fileSize)}</Text>
+                        )}
+                      </View>
+                      <View style={[styles.syncPickerCheck, selected && styles.syncPickerCheckOn]}>
+                        <Text style={[styles.syncPickerCheckText, selected && styles.syncPickerCheckTextOn]}>{selected ? '✓' : ''}</Text>
+                      </View>
+                    </TouchableOpacity>
+                  );
+                }}
+                ListFooterComponent={() => (
+                  <View style={{ width: '100%', paddingVertical: 12, paddingHorizontal: scaleSpacing(12), alignItems: 'center' }}>
+                    {syncPickerLoadingMore ? (
+                      <ActivityIndicator size={isTablet ? 'large' : 'small'} color={THEME.accent} />
+                    ) : (
+                      <View style={{ height: 8 }} />
+                    )}
+                  </View>
+                )}
+              />
+            ) : (
+              <FlatList
+                data={syncPickerItems || []}
+                keyExtractor={(it, idx) => String((it && it.filename) ? it.filename : idx)}
+                numColumns={isTablet ? 4 : 3}
+                contentContainerStyle={{ padding: scaleSpacing(10) }}
+                columnWrapperStyle={{ justifyContent: 'space-between' }}
+                removeClippedSubviews={Platform.OS === 'android'}
+                initialNumToRender={24}
+                maxToRenderPerBatch={24}
+                windowSize={7}
+                onEndReachedThreshold={0.7}
+                onEndReached={() => {
+                  if (syncPickerHasMore && !syncPickerLoadingMore) {
+                    loadMoreSyncPickerItems();
+                  }
+                }}
+                renderItem={({ item: it }) => {
+                  const key = String(it && it.filename ? it.filename : '');
+                  if (!key) return null;
+                  const selected = !!(syncPickerSelected && syncPickerSelected[key]);
+                  const ext = (key || '').split('.').pop()?.toLowerCase() || '';
+                  const isVideo = ['mp4', 'mov', 'avi', 'mkv', 'm4v', '3gp', 'webm'].includes(ext);
+                  const thumbUri = it.thumbUri;
+                  return (
+                    <TouchableOpacity
+                      key={key}
+                      style={[styles.pickerItem, selected && styles.pickerItemSelectedGreen]}
+                      onPress={() => toggleSyncPickerSelected(key)}>
+                      <View style={[styles.pickerThumb, { backgroundColor: isVideo ? '#1a1a2e' : '#1e3a2e', alignItems: 'center', justifyContent: 'center' }]}>
+                        {thumbUri && (
+                          <Image
+                            source={{ uri: thumbUri }}
+                            style={[styles.pickerThumb, { position: 'absolute', top: 0, left: 0 }]}
+                          />
+                        )}
+                        <Text style={{ fontSize: 10, color: '#444', textAlign: 'center' }}>{isVideo ? '🎬' : '📷'}</Text>
+                      </View>
+                      {isVideo && (
+                        <View style={styles.pickerBadge}>
+                          <Text style={styles.pickerBadgeText}>{t('picker.video')}</Text>
+                        </View>
+                      )}
+                      {selected && (
+                        <View style={styles.pickerCheckGreen}>
+                          <Text style={styles.pickerCheckText}>✓</Text>
+                        </View>
                       )}
                     </TouchableOpacity>
-                  )}
-                </>
-              ) : (
-                <>
-                  {/* Local/Remote: grid view with real thumbnails */}
-                  <View style={{ width: '100%', paddingHorizontal: scaleSpacing(12), paddingVertical: scaleSpacing(6), backgroundColor: '#1a1a1a' }}>
-                    <Text style={{ color: '#666', fontSize: scale(11), textAlign: 'center' }}>
-                      Some previews may not load if files were modified externally
-                    </Text>
-                  </View>
-                  {(syncPickerItems || []).map((it) => {
-                    const key = String(it && it.filename ? it.filename : '');
-                    if (!key) return null;
-                    const selected = !!(syncPickerSelected && syncPickerSelected[key]);
-                    const ext = (key || '').split('.').pop()?.toLowerCase() || '';
-                    const isVideo = ['mp4', 'mov', 'avi', 'mkv', 'm4v', '3gp', 'webm'].includes(ext);
-                    const thumbUri = it.thumbUri;
-                    return (
-                      <TouchableOpacity
-                        key={key}
-                        style={[styles.pickerItem, selected && styles.pickerItemSelected]}
-                        onPress={() => toggleSyncPickerSelected(key)}>
-                        <View style={[styles.pickerThumb, { backgroundColor: isVideo ? '#1a1a2e' : '#1e3a2e', alignItems: 'center', justifyContent: 'center' }]}>
-                          {thumbUri && (
-                            <Image 
-                              source={{ uri: thumbUri }} 
-                              style={[styles.pickerThumb, { position: 'absolute', top: 0, left: 0 }]} 
-                            />
-                          )}
-                          <Text style={{ fontSize: 10, color: '#444', textAlign: 'center' }}>{isVideo ? '🎬' : '📷'}</Text>
-                        </View>
-                        {isVideo && (
-                          <View style={styles.pickerBadge}>
-                            <Text style={styles.pickerBadgeText}>{t('picker.video')}</Text>
-                          </View>
-                        )}
-                        {selected && (
-                          <View style={styles.pickerCheck}>
-                            <Text style={styles.pickerCheckText}>✓</Text>
-                          </View>
-                        )}
-                      </TouchableOpacity>
-                    );
-                  })}
-
-                  <View style={{ width: '100%', paddingVertical: 12, paddingHorizontal: scaleSpacing(12) }}>
+                  );
+                }}
+                ListFooterComponent={() => (
+                  <View style={{ width: '100%', paddingVertical: 12, paddingHorizontal: scaleSpacing(12), alignItems: 'center' }}>
                     {syncPickerLoadingMore ? (
                       <ActivityIndicator size="small" color={THEME.accent} />
                     ) : (
-                      syncPickerHasMore && (
-                        <TouchableOpacity
-                          style={{ backgroundColor: '#000000', borderWidth: 1.5, borderColor: '#FFFFFF', borderRadius: scaleSpacing(10), paddingVertical: scaleSpacing(14), alignItems: 'center' }}
-                          onPress={loadMoreSyncPickerItems}>
-                          <Text style={{ color: '#FFFFFF', fontWeight: '600', fontSize: scale(15) }}>Load More ({Math.max(0, (syncPickerTotal || 0) - (syncPickerItems?.length || 0))} remaining)</Text>
-                        </TouchableOpacity>
-                      )
+                      <View style={{ height: 8 }} />
                     )}
                   </View>
-                </>
-              )}
-            </ScrollView>
+                )}
+              />
+            )}
           </View>
         </View>
+      )}
+
+      {/* Sync Picker Thumbnail Preview Modal */}
+      {syncPickerPreview && (
+        <Modal
+          visible={true}
+          transparent={true}
+          animationType="fade"
+          onRequestClose={() => setSyncPickerPreview(null)}>
+          <TouchableOpacity 
+            style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.9)', justifyContent: 'center', alignItems: 'center' }}
+            activeOpacity={1}
+            onPress={() => setSyncPickerPreview(null)}>
+            <View style={{ width: '90%', maxWidth: 400, backgroundColor: '#1a1a1a', borderRadius: scaleSpacing(12), overflow: 'hidden' }}>
+              <Image 
+                source={{ uri: syncPickerPreview.uri }} 
+                style={{ width: '100%', aspectRatio: 1, resizeMode: 'contain', backgroundColor: '#000' }} 
+              />
+              <View style={{ padding: scaleSpacing(12), borderTopWidth: 1, borderTopColor: '#333' }}>
+                <Text style={{ color: '#fff', fontSize: scale(13), textAlign: 'center' }} numberOfLines={2} ellipsizeMode="middle">
+                  {syncPickerPreview.filename}
+                </Text>
+              </View>
+            </View>
+            <TouchableOpacity 
+              style={{ marginTop: scaleSpacing(16), paddingVertical: scaleSpacing(10), paddingHorizontal: scaleSpacing(24), backgroundColor: '#333', borderRadius: scaleSpacing(8) }}
+              onPress={() => setSyncPickerPreview(null)}>
+              <Text style={{ color: '#fff', fontSize: scale(14) }}>{t('common.close') || 'Close'}</Text>
+            </TouchableOpacity>
+          </TouchableOpacity>
+        </Modal>
       )}
 
       {duplicateReview && (

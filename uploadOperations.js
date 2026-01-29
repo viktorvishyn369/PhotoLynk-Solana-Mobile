@@ -18,7 +18,7 @@ import { extractFullExif } from './exifExtractor';
 import axios from 'axios';
 
 // dHash threshold for backup dedup (6 bits = ~9% tolerance for cross-platform differences)
-const BACKUP_DHASH_THRESHOLD = 6;
+const BACKUP_DHASH_THRESHOLD = 3;
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 

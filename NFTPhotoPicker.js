@@ -16,11 +16,14 @@ import {
   ScrollView,
   Platform,
   Keyboard,
+  NativeModules,
+  UIManager,
   TouchableWithoutFeedback,
   KeyboardAvoidingView,
   Switch,
 } from 'react-native';
 import * as MediaLibrary from 'expo-media-library';
+import { LinearGradient } from 'expo-linear-gradient';
 import * as SecureStore from 'expo-secure-store';
 import { Feather } from '@expo/vector-icons';
 import { t } from './i18n';
@@ -31,6 +34,7 @@ const NFT_WELCOME_SHOWN_KEY = 'nft_welcome_shown';
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const THUMBNAIL_SIZE = (SCREEN_WIDTH - 48) / 3; // 3 columns with padding
 const LARGE_THUMBNAIL_SIZE = (SCREEN_WIDTH - 32) / 2; // 2 columns for NFT picker
+const IS_SMALL_SCREEN = SCREEN_WIDTH < 430;
 
 // ============================================================================
 // COLORS (matching app theme)
@@ -48,6 +52,33 @@ const COLORS = {
   border: '#3f3f46',
   error: '#ef4444',
   warning: '#f59e0b',
+};
+
+const HAS_EXPO_LINEAR_GRADIENT = (() => {
+  try {
+    // expo-linear-gradient view manager names differ between build modes
+    return !!(
+      UIManager.getViewManagerConfig?.('ViewManagerAdapter_ExpoLinearGradient') ||
+      UIManager.getViewManagerConfig?.('ExpoLinearGradient')
+    );
+  } catch (e) {
+    return false;
+  }
+})();
+
+const GradientBox = ({ colors, start, end, style, fallbackColor, children }) => {
+  if (HAS_EXPO_LINEAR_GRADIENT) {
+    return (
+      <LinearGradient colors={colors} start={start} end={end} style={style}>
+        {children}
+      </LinearGradient>
+    );
+  }
+  return (
+    <View style={[style, { backgroundColor: fallbackColor || colors?.[0] || COLORS.secondary }]}>
+      {children}
+    </View>
+  );
 };
 
 // ============================================================================
@@ -81,6 +112,8 @@ const NFTPhotoPicker = ({
   const [checkingCloud, setCheckingCloud] = useState(false);
   const [estimatedCost, setEstimatedCost] = useState(null);
   const [loadingCost, setLoadingCost] = useState(false);
+  const [compressedEstimate, setCompressedEstimate] = useState(null);
+  const [standardEstimate, setStandardEstimate] = useState(null);
   const [showWelcome, setShowWelcome] = useState(false);
   const [dontShowWelcomeAgain, setDontShowWelcomeAgain] = useState(false);
   const [welcomeChecked, setWelcomeChecked] = useState(false);
@@ -174,6 +207,25 @@ const NFTPhotoPicker = ({
         .finally(() => setLoadingCost(false));
     }
   }, [showMintConfirm, selectedPhoto, storageOption, nftType]);
+
+  // Card estimates for both types (used for desktop-like UI)
+  useEffect(() => {
+    if (showMintConfirm && selectedPhoto) {
+      const fileSize = selectedPhoto.fileSize || 2 * 1024 * 1024;
+      Promise.all([
+        estimateNFTMintCost(fileSize, storageOption, true).catch(() => null),
+        estimateNFTMintCost(fileSize, storageOption, false).catch(() => null),
+      ])
+        .then(([cnft, standard]) => {
+          setCompressedEstimate(cnft);
+          setStandardEstimate(standard);
+        })
+        .catch(() => {
+          setCompressedEstimate(null);
+          setStandardEstimate(null);
+        });
+    }
+  }, [showMintConfirm, selectedPhoto, storageOption]);
   
   // Load photos from media library
   const loadPhotos = async (after = null) => {
@@ -420,316 +472,216 @@ const NFTPhotoPicker = ({
     );
   };
   
-  // Render mint confirmation modal
-  const renderMintConfirmModal = () => (
-    <Modal
-      visible={showMintConfirm}
-      transparent
-      animationType="fade"
-      onRequestClose={() => setShowMintConfirm(false)}
-    >
-      <KeyboardAvoidingView 
-        style={styles.modalOverlay}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
+  // Render mint confirmation modal - Compact design matching desktop theme
+  const renderMintConfirmModal = () => {
+    if (!showMintConfirm) return null;
+
+    return (
+      <Modal
+        visible={showMintConfirm}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowMintConfirm(false)}
       >
-        <ScrollView 
-          style={styles.mintConfirmModal}
-          contentContainerStyle={styles.mintConfirmContent}
-          showsVerticalScrollIndicator={true}
-          keyboardShouldPersistTaps="handled"
-          keyboardDismissMode="on-drag"
-          bounces={true}
+        <KeyboardAvoidingView 
+          style={styles.modalOverlay}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
         >
-              <Text style={styles.modalTitle}>{t('nftMint.createNft')}</Text>
-              
-              {selectedPhoto && (
-                <Image
-                  source={{ uri: selectedPhoto.uri }}
-                  style={styles.previewImage}
-                  resizeMode="contain"
-                />
+          <View style={styles.mintPanel}>
+            <ScrollView
+              contentContainerStyle={styles.mintPanelScroll}
+              keyboardDismissMode="on-drag"
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
+            >
+              <View style={styles.mintPanelHeader}>
+                <View style={styles.mintPanelHeaderLeft}>
+                  <Feather name="hexagon" size={18} color={COLORS.primary} />
+                  <Text style={styles.mintPanelTitle}>NFT Memories</Text>
+                </View>
+                <TouchableOpacity onPress={() => setShowMintConfirm(false)} style={styles.mintPanelCloseBtn}>
+                  <Feather name="x" size={20} color={COLORS.textSecondary} />
+                </TouchableOpacity>
+              </View>
+
+              {isPromoActive() && (
+                <GradientBox
+                  colors={[COLORS.secondary, '#34d399']}
+                  start={{ x: 0, y: 0.5 }}
+                  end={{ x: 1, y: 0.5 }}
+                  style={styles.mintPromoBanner}
+                  fallbackColor={COLORS.secondary}
+                >
+                  <Text style={styles.mintPromoText}>🎉 Launch Special - {getPromoDaysRemaining()} Days Left! Up to 90% off!</Text>
+                </GradientBox>
               )}
-              
-              <View style={styles.inputContainer}>
-                <Text style={styles.inputLabel}>{t('nftMint.nftName')}</Text>
-                <TextInput
-                  style={styles.textInput}
-                  value={nftName}
-                  onChangeText={setNftName}
-                  placeholder={t('nftMint.enterNftName')}
-                  placeholderTextColor={COLORS.textSecondary}
-                  maxLength={50}
-                  returnKeyType="next"
-                  blurOnSubmit={false}
-                />
-              </View>
-              
-              <View style={styles.inputContainer}>
-                <Text style={styles.inputLabel}>{t('nftMint.descriptionOptional')}</Text>
-                <TextInput
-                  style={[styles.textInput, styles.textArea]}
-                  value={nftDescription}
-                  onChangeText={setNftDescription}
-                  placeholder={t('nftMint.enterDescription')}
-                  placeholderTextColor={COLORS.textSecondary}
-                  multiline
-                  numberOfLines={3}
-                  maxLength={200}
-                  returnKeyType="done"
-                  blurOnSubmit={true}
-                  onSubmitEditing={Keyboard.dismiss}
-                />
-              </View>
-          
-              {/* NFT Type selector */}
-              <View style={styles.storageSection}>
-                <Text style={styles.storageSectionTitle}>{t('nftMint.nftType')}</Text>
-                
-                {/* Compressed NFT Option (Recommended) */}
-                <TouchableOpacity 
-                  style={[styles.storageOption, nftType === 'compressed' && styles.storageOptionSelected]}
+
+              <Text style={styles.mintSectionLabel}>NFT TYPE</Text>
+              <View style={[styles.mintCardRow, IS_SMALL_SCREEN && styles.mintCardRowStack]}>
+                <TouchableOpacity
+                  style={[styles.mintOptionCard, nftType === 'compressed' && styles.mintOptionCardActive]}
                   onPress={() => setNftType('compressed')}
-                  activeOpacity={0.7}
+                  activeOpacity={0.85}
                 >
-                  <View style={styles.storageOptionLeft}>
-                    <Feather name="zap" size={20} color={nftType === 'compressed' ? COLORS.accent : COLORS.textSecondary} />
-                    <View style={styles.storageOptionText}>
-                      <Text style={[styles.storageOptionTitle, nftType === 'compressed' && { color: COLORS.accent }]}>
-                        {t('nftMint.compressedNft')}
-                        <Text style={styles.recommendedBadge}> ({t('nftMint.recommended')})</Text>
-                      </Text>
-                      <Text style={styles.storageOptionDesc}>
-                        ~${storageOption === 'cloud' ? '0.02' : '0.05'} {t('nftMint.total')} • {t('nftMint.compressedDesc')}
-                      </Text>
-                    </View>
-                  </View>
-                  <View style={[styles.radioOuter, nftType === 'compressed' && { borderColor: COLORS.accent }]}>
-                    {nftType === 'compressed' && <View style={[styles.radioInner, { backgroundColor: COLORS.accent }]} />}
-                  </View>
+                  <Text style={styles.mintOptionTitle} numberOfLines={2}>Compressed (cNFT)</Text>
+                  <Text style={styles.mintOptionSubtitle}>99.99% cheaper</Text>
+                  <Text style={styles.mintOptionPrice}>
+                    {compressedEstimate?.total?.usdFormatted || (storageOption === 'cloud' ? '~$0.02' : '~$0.05')}
+                  </Text>
                 </TouchableOpacity>
-                
-                {/* Standard NFT Option */}
-                <TouchableOpacity 
-                  style={[styles.storageOption, nftType === 'standard' && styles.storageOptionSelected]}
+
+                <TouchableOpacity
+                  style={[styles.mintOptionCard, nftType === 'standard' && styles.mintOptionCardActive]}
                   onPress={() => setNftType('standard')}
-                  activeOpacity={0.7}
+                  activeOpacity={0.85}
                 >
-                  <View style={styles.storageOptionLeft}>
-                    <Feather name="hexagon" size={20} color={nftType === 'standard' ? COLORS.primary : COLORS.textSecondary} />
-                    <View style={styles.storageOptionText}>
-                      <Text style={[styles.storageOptionTitle, nftType === 'standard' && styles.storageOptionTitleSelected]}>
-                        {t('nftMint.standardNft')}
-                      </Text>
-                      <Text style={styles.storageOptionDesc}>
-                        ~${storageOption === 'cloud' ? '2.80' : '3.10'} {t('nftMint.total')} • {t('nftMint.standardDesc')}
-                      </Text>
-                    </View>
-                  </View>
-                  <View style={[styles.radioOuter, nftType === 'standard' && styles.radioOuterSelected]}>
-                    {nftType === 'standard' && <View style={styles.radioInner} />}
-                  </View>
+                  <Text style={styles.mintOptionTitle} numberOfLines={2}>Standard NFT</Text>
+                  <Text style={styles.mintOptionSubtitle}>Traditional</Text>
+                  <Text style={styles.mintOptionPrice}>
+                    {standardEstimate?.total?.usdFormatted || (storageOption === 'cloud' ? '~$0.20' : '~$0.50')}
+                  </Text>
                 </TouchableOpacity>
               </View>
-              
-              {/* Storage option selector */}
-              <View style={styles.storageSection}>
-                <Text style={styles.storageSectionTitle}>{t('nftMint.imageStorage')}</Text>
-                
-                {/* IPFS Option */}
-                <TouchableOpacity 
-                  style={[styles.storageOption, storageOption === 'ipfs' && styles.storageOptionSelected]}
-                  onPress={() => setStorageOption('ipfs')}
-                  activeOpacity={0.7}
-                >
-                  <View style={styles.storageOptionLeft}>
-                    <Feather name="globe" size={20} color={storageOption === 'ipfs' ? COLORS.primary : COLORS.textSecondary} />
-                    <View style={styles.storageOptionText}>
-                      <Text style={[styles.storageOptionTitle, storageOption === 'ipfs' && styles.storageOptionTitleSelected]}>
-                        {t('nftMint.ipfsDecentralized')}
-                      </Text>
-                      <Text style={styles.storageOptionDesc}>
-                        {nftType === 'compressed' 
-                          ? `${t('nftMint.permanent')} • $0.05 fee • ${t('nftMint.decentralized')}`
-                          : `${t('nftMint.permanent')} • $0.50 fee • ${t('nftMint.decentralized')}`}
-                      </Text>
-                    </View>
-                  </View>
-                  <View style={[styles.radioOuter, storageOption === 'ipfs' && styles.radioOuterSelected]}>
-                    {storageOption === 'ipfs' && <View style={styles.radioInner} />}
-                  </View>
-                </TouchableOpacity>
-                
-                {/* StealthCloud Option */}
-                <TouchableOpacity 
+
+              <Text style={styles.mintSectionLabel}>IMAGE STORAGE</Text>
+              <View style={[styles.mintCardRow, IS_SMALL_SCREEN && styles.mintCardRowStack]}>
+                <TouchableOpacity
                   style={[
-                    styles.storageOption, 
-                    storageOption === 'cloud' && styles.storageOptionSelected,
-                    !cloudEligible && styles.storageOptionDisabled,
+                    styles.mintOptionCard,
+                    storageOption === 'cloud' && styles.mintOptionCardActive,
+                    !cloudEligible && styles.mintOptionCardDisabled,
                   ]}
                   onPress={() => cloudEligible && setStorageOption('cloud')}
-                  activeOpacity={cloudEligible ? 0.7 : 1}
                   disabled={!cloudEligible}
+                  activeOpacity={0.85}
                 >
-                  <View style={styles.storageOptionLeft}>
-                    <Feather name="cloud" size={20} color={cloudEligible ? (storageOption === 'cloud' ? COLORS.accent : COLORS.textSecondary) : COLORS.border} />
-                    <View style={styles.storageOptionText}>
-                      <Text style={[
-                        styles.storageOptionTitle, 
-                        storageOption === 'cloud' && styles.storageOptionTitleSelected,
-                        !cloudEligible && styles.storageOptionTitleDisabled,
-                      ]}>
-                        {t('nftMint.stealthCloudStorage')}
-                      </Text>
-                      <Text style={[styles.storageOptionDesc, !cloudEligible && styles.storageOptionDescDisabled]}>
-                        {cloudEligible 
-                          ? (nftType === 'compressed' 
-                              ? `${t('nftMint.freeStorage')} • $0.02 fee • ${t('nftMint.yourServer')}`
-                              : `${t('nftMint.freeStorage')} • $0.20 fee • ${t('nftMint.yourServer')}`)
-                          : checkingCloud ? t('nftMint.checking') : cloudReason || t('nftMint.noActivePlan')}
-                      </Text>
-                    </View>
-                  </View>
-                  <View style={[
-                    styles.radioOuter, 
-                    storageOption === 'cloud' && styles.radioOuterSelected,
-                    !cloudEligible && styles.radioOuterDisabled,
-                  ]}>
-                    {storageOption === 'cloud' && cloudEligible && <View style={styles.radioInner} />}
-                  </View>
+                  <Text style={styles.mintOptionTitle} numberOfLines={1} ellipsizeMode="tail">StealthCloud</Text>
+                  <Text style={styles.mintOptionSubtitle}>
+                    Free storage • ${(nftType === 'compressed' ? NFT_FEES.APP_COMMISSION_CNFT_CLOUD_USD : NFT_FEES.APP_COMMISSION_STANDARD_CLOUD_USD).toFixed(2)} fee
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.mintOptionCard, storageOption === 'ipfs' && styles.mintOptionCardActive]}
+                  onPress={() => setStorageOption('ipfs')}
+                  activeOpacity={0.85}
+                >
+                  <Text style={styles.mintOptionTitle} numberOfLines={1} ellipsizeMode="tail">IPFS</Text>
+                  <Text style={styles.mintOptionSubtitle}>
+                    Decentralized • ${(nftType === 'compressed' ? NFT_FEES.APP_COMMISSION_CNFT_IPFS_USD : NFT_FEES.APP_COMMISSION_STANDARD_IPFS_USD).toFixed(2)} fee
+                  </Text>
                 </TouchableOpacity>
               </View>
-              
-              {/* Privacy toggle for EXIF stripping */}
-              <TouchableOpacity 
-                style={styles.privacyToggle}
-                onPress={() => setStripExif(!stripExif)}
-                activeOpacity={0.7}
-              >
-                <View style={styles.privacyToggleLeft}>
-                  <Feather name="shield" size={18} color={stripExif ? COLORS.accent : COLORS.textSecondary} />
-                  <View style={styles.privacyToggleText}>
-                    <Text style={styles.privacyToggleTitle}>{t('nftMint.removePrivateData')}</Text>
-                    <Text style={styles.privacyToggleDesc}>
-                      {t('nftMint.stripsPrivateData')}
+
+              <View style={styles.mintBreakdownBox}>
+                <View style={styles.mintBreakdownRow}>
+                  <Text style={styles.mintBreakdownLabel}>App fee (you pay)</Text>
+                  <Text style={styles.mintBreakdownValue}>
+                    {estimatedCost
+                      ? `$${estimatedCost.breakdown.appCommission.usd.toFixed(2)} (${estimatedCost.breakdown.appCommission.sol.toFixed(6)} SOL)`
+                      : '—'}
+                  </Text>
+                </View>
+                <View style={styles.mintBreakdownRow}>
+                  <Text style={styles.mintBreakdownLabel}>Network (est.)</Text>
+                  <Text style={styles.mintBreakdownValue}>
+                    {estimatedCost
+                      ? `${(
+                          estimatedCost.breakdown.transactionFee.sol +
+                          estimatedCost.breakdown.solanaRent.sol +
+                          estimatedCost.breakdown.metaplexFee.sol
+                        ).toFixed(6)} SOL`
+                      : '—'}
+                  </Text>
+                </View>
+                <View style={styles.mintBreakdownRow}>
+                  <Text style={styles.mintBreakdownLabel}>Storage (est.)</Text>
+                  <Text style={styles.mintBreakdownValue}>
+                    {estimatedCost
+                      ? `$${(
+                          estimatedCost.breakdown.arweaveImage.usd +
+                          estimatedCost.breakdown.arweaveMetadata.usd
+                        ).toFixed(2)}`
+                      : '—'}
+                  </Text>
+                </View>
+                <View style={styles.mintBreakdownRow}>
+                  <Text style={styles.mintBreakdownLabel}>SOL/USD</Text>
+                  <Text style={styles.mintBreakdownValue}>{estimatedCost ? `$${estimatedCost.solPrice.toFixed(2)}` : '—'}</Text>
+                </View>
+              </View>
+
+              {selectedPhoto && (
+                <View style={styles.mintSelectedPhotoRow}>
+                  <View style={styles.mintSelectedPhotoThumb}>
+                    <Image
+                      source={{ uri: selectedPhoto.uri }}
+                      style={styles.mintSelectedPhotoThumbImage}
+                      resizeMode="cover"
+                    />
+                  </View>
+                  <View style={styles.mintSelectedPhotoMeta}>
+                    <Text style={styles.mintSelectedPhotoName} numberOfLines={1}>
+                      {selectedPhoto.filename || 'Selected photo'}
+                    </Text>
+                    <Text style={styles.mintSelectedPhotoSub} numberOfLines={1}>
+                      {selectedPhoto.width}x{selectedPhoto.height}
                     </Text>
                   </View>
                 </View>
-                <View style={[styles.toggleSwitch, stripExif && styles.toggleSwitchOn]}>
-                  <View style={[styles.toggleKnob, stripExif && styles.toggleKnobOn]} />
+              )}
+
+              <TextInput
+                style={styles.mintInput}
+                value={nftName}
+                onChangeText={setNftName}
+                placeholder={t('nftMint.nftName')}
+                placeholderTextColor={COLORS.textSecondary}
+                maxLength={50}
+              />
+              <TextInput
+                style={styles.mintInput}
+                value={nftDescription}
+                onChangeText={setNftDescription}
+                placeholder={t('nftMint.descriptionOptional')}
+                placeholderTextColor={COLORS.textSecondary}
+                maxLength={200}
+              />
+
+              <TouchableOpacity style={styles.mintPrivacyRow} onPress={() => setStripExif(!stripExif)} activeOpacity={0.85}>
+                <View style={styles.mintPrivacyLeft}>
+                  <Feather name="shield" size={14} color={stripExif ? COLORS.accent : COLORS.textSecondary} />
+                  <Text style={styles.mintPrivacyText}>{t('nftMint.removePrivateData')}</Text>
                 </View>
+                <Switch value={stripExif} onValueChange={setStripExif} />
               </TouchableOpacity>
-              
-              {/* Cost Breakdown */}
-              <View style={styles.costBreakdown}>
-                <View style={styles.costHeaderRow}>
-                  <Text style={styles.costBreakdownTitle}>{t('nftMint.costSummary')}</Text>
-                  {isPromoActive() && (
-                    <View style={styles.promoBadge}>
-                      <Text style={styles.promoBadgeText}>🎉 {t('nftMint.launchPromo')} • {getPromoDaysRemaining()} {t('nftMint.daysLeft')}</Text>
-                    </View>
-                  )}
-                </View>
-                {loadingCost ? (
-                  <ActivityIndicator size="small" color={COLORS.primary} style={{ marginVertical: 10 }} />
-                ) : estimatedCost ? (
-                  <>
-                    <View style={styles.costRow}>
-                      <Text style={styles.costLabel}>{t('nftMint.nftType')}:</Text>
-                      <Text style={[styles.costValue, { color: nftType === 'compressed' ? COLORS.accent : COLORS.primary }]}>
-                        {nftType === 'compressed' ? t('nftMint.compressed99Cheaper') : t('nftMint.standardNft')}
-                      </Text>
-                    </View>
-                    <View style={styles.costRow}>
-                      <Text style={styles.costLabel}>{t('nftMint.imageStorage')}:</Text>
-                      <Text style={styles.costValue}>{storageOption === 'cloud' ? 'StealthCloud (FREE)' : 'IPFS'}</Text>
-                    </View>
-                    
-                    {/* Storage fees - only for IPFS */}
-                    {storageOption === 'ipfs' && estimatedCost.breakdown.arweaveImage.usd > 0 && (
-                      <View style={styles.costRow}>
-                        <Text style={styles.costLabel}>  {t('nftMint.imageUpload')}:</Text>
-                        <Text style={styles.costValue}>${estimatedCost.breakdown.arweaveImage.usd.toFixed(3)}</Text>
-                      </View>
-                    )}
-                    {estimatedCost.breakdown.arweaveMetadata.usd > 0 && (
-                      <View style={styles.costRow}>
-                        <Text style={styles.costLabel}>  {t('nftMint.metadataUpload')}:</Text>
-                        <Text style={styles.costValue}>${estimatedCost.breakdown.arweaveMetadata.usd.toFixed(3)}</Text>
-                      </View>
-                    )}
-                    
-                    {/* On-chain fees - different for standard vs compressed */}
-                    {nftType === 'standard' ? (
-                      <>
-                        <View style={styles.costRow}>
-                          <Text style={styles.costLabel}>  {t('nftMint.solanaRent')}:</Text>
-                          <Text style={styles.costValue}>${estimatedCost.breakdown.solanaRent.usd.toFixed(2)}</Text>
-                        </View>
-                        <View style={styles.costRow}>
-                          <Text style={styles.costLabel}>  {t('nftMint.metaplexFee')}:</Text>
-                          <Text style={styles.costValue}>${estimatedCost.breakdown.metaplexFee.usd.toFixed(2)}</Text>
-                        </View>
-                      </>
-                    ) : (
-                      <View style={styles.costRow}>
-                        <Text style={styles.costLabel}>  {t('nftMint.networkFee')}:</Text>
-                        <Text style={[styles.costValue, { color: COLORS.accent }]}>{'<$0.01'}</Text>
-                      </View>
-                    )}
-                    
-                    <View style={styles.costRow}>
-                      <Text style={styles.costLabel}>{t('nftMint.photoLynkFee')}:</Text>
-                      <Text style={styles.costValue}>${estimatedCost.breakdown.appCommission.usd.toFixed(2)}</Text>
-                    </View>
-                    <View style={[styles.costRow, styles.costTotalRow]}>
-                      <Text style={styles.costTotalLabel}>{t('nftMint.total')}:</Text>
-                      <Text style={styles.costTotalValue}>{estimatedCost.total.usdFormatted}</Text>
-                    </View>
-                    {nftType === 'compressed' && (
-                      <Text style={styles.savingsText}>
-                        💰 {t('nftMint.youSave')} ~${((estimatedCost.breakdown.solanaRent.usd || 0.91) + (estimatedCost.breakdown.metaplexFee.usd || 1.69)).toFixed(2)} {t('nftMint.vsStandardNft')}!
-                      </Text>
-                    )}
-                  </>
-                ) : (
-                  <Text style={styles.costError}>Could not estimate cost</Text>
-                )}
+
+              <View style={styles.mintActionsRow}>
+                <TouchableOpacity style={styles.mintCancelBtn} onPress={() => setShowMintConfirm(false)}>
+                  <Text style={styles.mintCancelText}>{t('common.cancel')}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.mintCtaBtn} onPress={handleMintConfirm}>
+                  <GradientBox
+                    colors={[COLORS.primary, COLORS.secondary]}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 1 }}
+                    style={styles.mintCtaBtnGradient}
+                    fallbackColor={COLORS.primary}
+                  >
+                    <Feather name="zap" size={16} color="#fff" />
+                    <Text style={styles.mintCtaText}>
+                      {loadingCost ? t('nftMint.estimating') || t('nftMint.mintNft') : t('nftMint.mintNft')}
+                    </Text>
+                  </GradientBox>
+                </TouchableOpacity>
               </View>
-              
-              <View style={styles.infoBox}>
-                <Feather name="info" size={16} color={COLORS.primary} />
-                <Text style={styles.infoText}>
-                  {storageOption === 'cloud' 
-                    ? t('nftMint.infoStealthCloud') 
-                    : t('nftMint.infoIpfs')}
-                  {stripExif && ` ${t('nftMint.privateDataRemoved')}`}
-                  {'\n\n'}
-                  {nftType === 'compressed' 
-                    ? `⚡ ${t('nftMint.compressedInfo')}`
-                    : `🔗 ${t('nftMint.standardInfo')}`}
-                </Text>
-              </View>
-              
-            <View style={styles.modalButtons}>
-              <TouchableOpacity
-                style={styles.cancelButton}
-                onPress={() => setShowMintConfirm(false)}
-              >
-                <Text style={styles.cancelButtonText}>{t('common.cancel')}</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.mintButton}
-                onPress={handleMintConfirm}
-              >
-                <Feather name="zap" size={18} color="#fff" />
-                <Text style={styles.mintButtonText}>{t('nftMint.mintNft')}</Text>
-              </TouchableOpacity>
-            </View>
-        </ScrollView>
-      </KeyboardAvoidingView>
-    </Modal>
-  );
+            </ScrollView>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+    );
+  };
   
   if (!visible) return null;
   
@@ -757,42 +709,7 @@ const NFTPhotoPicker = ({
             </Text>
           </TouchableOpacity>
         </View>
-        
-        {/* Selected photo preview */}
-        {selectedPhoto && (
-          <View style={styles.selectedPreview}>
-            <Image
-              source={{ uri: selectedPhoto.uri }}
-              style={styles.selectedImage}
-              resizeMode="contain"
-            />
-            <View style={styles.selectedInfo}>
-              <Text style={styles.selectedFilename} numberOfLines={1}>
-                {selectedPhoto.filename}
-              </Text>
-              <Text style={styles.selectedMeta}>
-                {selectedPhoto.width}x{selectedPhoto.height} • {(() => {
-                  const bestDate = getBestDate(selectedPhoto, selectedPhotoExif);
-                  return bestDate ? bestDate.toLocaleDateString() : 'No date';
-                })()}
-                {selectedPhotoExif?.dateTaken && (
-                  <Text style={styles.exifBadge}> (EXIF)</Text>
-                )}
-              </Text>
-              {selectedPhotoExif?.location && (
-                <Text style={styles.selectedLocation}>
-                  📍 {selectedPhotoExif.location.latitude.toFixed(4)}, {selectedPhotoExif.location.longitude.toFixed(4)}
-                </Text>
-              )}
-              {selectedPhotoExif?.camera && (
-                <Text style={styles.selectedCamera}>
-                  📷 {selectedPhotoExif.camera}
-                </Text>
-              )}
-            </View>
-          </View>
-        )}
-        
+
         {/* Photo grid */}
         {loading ? (
           <View style={styles.loadingContainer}>
@@ -949,21 +866,29 @@ const styles = StyleSheet.create({
     color: COLORS.textSecondary,
   },
   selectedPreview: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: 'column',
     padding: 12,
     backgroundColor: COLORS.surface,
     borderBottomWidth: 1,
     borderBottomColor: COLORS.border,
   },
+  selectedPreviewBox: {
+    width: '100%',
+    height: 170,
+    borderRadius: 16,
+    borderWidth: 2,
+    borderColor: 'rgba(255,255,255,0.18)',
+    borderStyle: 'dashed',
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    overflow: 'hidden',
+  },
   selectedImage: {
-    width: 60,
-    height: 60,
-    borderRadius: 8,
+    width: '100%',
+    height: '100%',
   },
   selectedInfo: {
     flex: 1,
-    marginLeft: 12,
+    marginTop: 10,
   },
   selectedFilename: {
     fontSize: 14,
@@ -1056,48 +981,288 @@ const styles = StyleSheet.create({
     fontSize: 16,
   },
   
-  // Mint confirmation modal
+  // Mint confirmation modal - Compact design
   modalOverlay: {
     flex: 1,
-    backgroundColor: '#000000',
-    justifyContent: 'flex-start',
-    paddingTop: Platform.OS === 'ios' ? 60 : 40,
-    paddingHorizontal: 16,
-    paddingBottom: 20,
+    backgroundColor: 'rgba(0,0,0,0.9)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 16,
   },
-  mintConfirmModal: {
-    flex: 1,
+  mintPanel: {
+    backgroundColor: COLORS.surface,
+    borderRadius: 18,
     width: '100%',
-    maxWidth: 400,
-    alignSelf: 'center',
+    maxWidth: 380,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    overflow: 'hidden',
+    maxHeight: '92%',
   },
-  mintConfirmContent: {
+  mintPanelScroll: {
+    padding: 16,
+    paddingBottom: 18,
     flexGrow: 1,
-    paddingBottom: 20,
   },
-  modalTitle: {
+  mintPanelHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+  },
+  mintPanelHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  mintPanelTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: COLORS.primary,
+  },
+  mintPanelCloseBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.02)',
+  },
+  mintPromoBanner: {
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    marginBottom: 14,
+  },
+  mintPromoText: {
+    color: '#fff',
+    fontWeight: '700',
+    fontSize: 13,
+    textAlign: 'center',
+  },
+  mintSectionLabel: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: COLORS.textSecondary,
+    marginBottom: 10,
+    letterSpacing: 0.6,
+  },
+  mintCardRow: {
+    flexDirection: 'row',
+    gap: 12,
+    marginBottom: 16,
+  },
+  mintCardRowStack: {
+    flexDirection: 'column',
+  },
+  mintOptionCard: {
+    flex: 1,
+    borderRadius: 14,
+    paddingVertical: 14,
+    paddingHorizontal: 14,
+    backgroundColor: 'rgba(0,0,0,0.25)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.10)',
+    minHeight: 98,
+    justifyContent: 'center',
+  },
+  mintOptionCardActive: {
+    borderWidth: 2,
+    borderColor: COLORS.primary,
+    backgroundColor: 'rgba(153, 69, 255, 0.18)',
+  },
+  mintOptionCardActiveAlt: {
+    borderWidth: 2,
+    borderColor: COLORS.border,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+  },
+  mintOptionCardDisabled: {
+    opacity: 0.45,
+  },
+  mintOptionTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: COLORS.text,
+    textAlign: 'center',
+  },
+  mintOptionSubtitle: {
+    marginTop: 6,
+    fontSize: 12,
+    color: COLORS.textSecondary,
+    textAlign: 'center',
+  },
+  mintOptionPrice: {
+    marginTop: 8,
+    fontSize: 16,
+    fontWeight: '900',
+    color: COLORS.accent,
+    textAlign: 'center',
+  },
+  mintBreakdownBox: {
+    borderRadius: 14,
+    backgroundColor: 'rgba(0,0,0,0.25)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.10)',
+    paddingVertical: 14,
+    paddingHorizontal: 14,
+    marginBottom: 16,
+  },
+  mintBreakdownRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+  },
+  mintBreakdownLabel: {
+    fontSize: 13,
+    color: COLORS.textSecondary,
+  },
+  mintBreakdownValue: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: COLORS.text,
+  },
+  mintSelectedPhotoRow: {
+    flexDirection: 'column',
+    borderRadius: 14,
+    backgroundColor: 'rgba(0,0,0,0.25)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.10)',
+    padding: 12,
+    marginBottom: 12,
+  },
+  mintSelectedPhotoThumb: {
+    width: '100%',
+    height: 170,
+    borderRadius: 16,
+    borderWidth: 2,
+    borderColor: 'rgba(255,255,255,0.18)',
+    borderStyle: 'dashed',
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    overflow: 'hidden',
+  },
+  mintSelectedPhotoThumbImage: {
+    width: '100%',
+    height: '100%',
+  },
+  mintSelectedPhotoMeta: {
+    flex: 1,
+    minWidth: 0,
+    marginTop: 10,
+  },
+  mintSelectedPhotoName: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: COLORS.text,
+  },
+  mintSelectedPhotoSub: {
+    marginTop: 4,
+    fontSize: 12,
+    color: COLORS.textSecondary,
+  },
+  mintInput: {
+    backgroundColor: 'rgba(0,0,0,0.25)',
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    color: COLORS.text,
+    fontSize: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.10)',
+    marginBottom: 10,
+  },
+  mintPrivacyRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderRadius: 12,
+    backgroundColor: 'rgba(0,0,0,0.25)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.10)',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    marginBottom: 14,
+  },
+  mintPrivacyLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  mintPrivacyText: {
+    color: COLORS.text,
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  mintActionsRow: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 2,
+  },
+  mintCancelBtn: {
+    flex: 1,
+    borderRadius: 12,
+    paddingVertical: 14,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.10)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  mintCancelText: {
+    color: COLORS.text,
+    fontWeight: '700',
+    fontSize: 14,
+  },
+  mintCtaBtn: {
+    flex: 1,
+    borderRadius: 12,
+    overflow: 'hidden',
+  },
+  mintCtaBtnGradient: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 14,
+    borderRadius: 12,
+  },
+  mintCtaText: {
+    color: '#fff',
+    fontWeight: '800',
+    fontSize: 14,
+  },
+  compactModal: {
+    backgroundColor: COLORS.surface,
+    borderRadius: 16,
+    padding: 16,
+    width: '100%',
+    maxWidth: 340,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  compactHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  compactTitle: {
     fontSize: 18,
     fontWeight: '700',
     color: COLORS.text,
-    textAlign: 'center',
+  },
+  compactCloseBtn: {
+    padding: 4,
+  },
+  compactPreview: {
+    width: '100%',
+    height: 120,
+    borderRadius: 10,
     marginBottom: 12,
   },
-  previewImage: {
-    width: '100%',
-    height: 180,
-    borderRadius: 8,
-    marginBottom: 10,
-  },
-  inputContainer: {
-    marginBottom: 10,
-  },
-  inputLabel: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: COLORS.text,
-    marginBottom: 6,
-  },
-  textInput: {
+  compactInput: {
     backgroundColor: COLORS.surfaceLight,
     borderRadius: 8,
     padding: 10,
@@ -1105,252 +1270,161 @@ const styles = StyleSheet.create({
     fontSize: 14,
     borderWidth: 1,
     borderColor: COLORS.border,
+    marginBottom: 8,
   },
-  textArea: {
-    height: 56,
-    textAlignVertical: 'top',
+  compactRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 8,
   },
-  storageSection: {
-    marginBottom: 10,
-  },
-  storageSectionTitle: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: COLORS.text,
-    marginBottom: 6,
-  },
-  storageOption: {
+  compactBtn: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: COLORS.surfaceLight,
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 10,
+    paddingHorizontal: 8,
     borderRadius: 8,
-    padding: 10,
-    marginBottom: 6,
+    backgroundColor: COLORS.surfaceLight,
     borderWidth: 2,
     borderColor: 'transparent',
   },
-  storageOptionSelected: {
+  compactBtnActive: {
+    backgroundColor: COLORS.accent,
+    borderColor: COLORS.accent,
+  },
+  compactBtnActiveAlt: {
+    backgroundColor: COLORS.primary,
     borderColor: COLORS.primary,
-    backgroundColor: `${COLORS.primary}15`,
   },
-  storageOptionDisabled: {
-    opacity: 0.5,
+  compactBtnDisabled: {
+    opacity: 0.4,
   },
-  storageOptionLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flex: 1,
-  },
-  storageOptionText: {
-    marginLeft: 12,
-    flex: 1,
-  },
-  storageOptionTitle: {
-    fontSize: 14,
+  compactBtnText: {
+    fontSize: 12,
     fontWeight: '600',
-    color: COLORS.text,
-  },
-  storageOptionTitleSelected: {
-    color: COLORS.primary,
-  },
-  storageOptionTitleDisabled: {
     color: COLORS.textSecondary,
   },
-  storageOptionDesc: {
-    fontSize: 11,
-    color: COLORS.textSecondary,
-    marginTop: 2,
+  compactBtnTextActive: {
+    color: '#fff',
   },
-  storageOptionDescDisabled: {
+  compactBtnTextDisabled: {
     color: COLORS.border,
   },
-  radioOuter: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    borderWidth: 2,
-    borderColor: COLORS.border,
-    alignItems: 'center',
-    justifyContent: 'center',
+  compactBtnPrice: {
+    fontSize: 10,
+    color: COLORS.textSecondary,
   },
-  radioOuterSelected: {
-    borderColor: COLORS.primary,
+  compactBtnPriceActive: {
+    color: 'rgba(255,255,255,0.8)',
   },
-  radioOuterDisabled: {
-    borderColor: COLORS.border,
-  },
-  radioInner: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-    backgroundColor: COLORS.primary,
-  },
-  privacyToggle: {
+  compactPrivacy: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     backgroundColor: COLORS.surfaceLight,
     borderRadius: 8,
     padding: 10,
-    marginBottom: 10,
+    marginBottom: 8,
   },
-  privacyToggleLeft: {
+  compactPrivacyLeft: {
     flexDirection: 'row',
     alignItems: 'center',
-    flex: 1,
+    gap: 8,
   },
-  privacyToggleText: {
-    marginLeft: 12,
-    flex: 1,
-  },
-  privacyToggleTitle: {
-    fontSize: 14,
-    fontWeight: '600',
+  compactPrivacyText: {
+    fontSize: 12,
     color: COLORS.text,
   },
-  privacyToggleDesc: {
-    fontSize: 11,
-    color: COLORS.textSecondary,
-    marginTop: 2,
-  },
-  toggleSwitch: {
-    width: 44,
-    height: 24,
-    borderRadius: 12,
+  compactToggle: {
+    width: 36,
+    height: 20,
+    borderRadius: 10,
     backgroundColor: COLORS.border,
     padding: 2,
     justifyContent: 'center',
   },
-  toggleSwitchOn: {
+  compactToggleOn: {
     backgroundColor: COLORS.accent,
   },
-  toggleKnob: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
+  compactToggleKnob: {
+    width: 16,
+    height: 16,
+    borderRadius: 8,
     backgroundColor: '#fff',
   },
-  toggleKnobOn: {
+  compactToggleKnobOn: {
     alignSelf: 'flex-end',
   },
-  recommendedBadge: {
-    fontSize: 11,
-    color: COLORS.accent,
-    fontWeight: '400',
-  },
-  costBreakdown: {
+  compactCost: {
     backgroundColor: COLORS.surfaceLight,
     borderRadius: 8,
-    padding: 12,
-    marginBottom: 10,
+    padding: 10,
+    marginBottom: 12,
   },
-  costHeaderRow: {
+  compactCostRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 10,
+    justifyContent: 'space-between',
   },
-  costBreakdownTitle: {
+  compactCostLabel: {
     fontSize: 14,
     fontWeight: '600',
     color: COLORS.text,
   },
-  promoBadge: {
-    backgroundColor: '#22c55e20',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 12,
-  },
-  promoBadgeText: {
-    fontSize: 10,
-    fontWeight: '600',
-    color: '#22c55e',
-  },
-  costRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 4,
-  },
-  costLabel: {
-    fontSize: 13,
-    color: COLORS.textSecondary,
-  },
-  costValue: {
-    fontSize: 13,
-    color: COLORS.text,
-  },
-  costTotalRow: {
-    borderTopWidth: 1,
-    borderTopColor: COLORS.border,
-    marginTop: 8,
-    paddingTop: 8,
-  },
-  costTotalLabel: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: COLORS.text,
-  },
-  costTotalValue: {
-    fontSize: 15,
+  compactCostValue: {
+    fontSize: 18,
     fontWeight: '700',
     color: COLORS.accent,
   },
-  savingsText: {
-    fontSize: 12,
+  compactPromoBadge: {
+    backgroundColor: '#22c55e20',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 8,
+  },
+  compactPromoText: {
+    fontSize: 9,
+    fontWeight: '600',
+    color: '#22c55e',
+  },
+  compactSavings: {
+    fontSize: 11,
     color: COLORS.accent,
     textAlign: 'center',
-    marginTop: 8,
+    marginTop: 6,
   },
-  costError: {
-    fontSize: 13,
-    color: COLORS.textSecondary,
-    textAlign: 'center',
-    paddingVertical: 10,
-  },
-  infoBox: {
+  compactActions: {
     flexDirection: 'row',
-    backgroundColor: `${COLORS.primary}20`,
-    borderRadius: 8,
-    padding: 12,
-    marginBottom: 20,
+    gap: 10,
   },
-  infoText: {
+  compactCancelBtn: {
     flex: 1,
-    marginLeft: 8,
-    fontSize: 13,
-    color: COLORS.textSecondary,
-    lineHeight: 18,
-  },
-  modalButtons: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-  cancelButton: {
-    flex: 1,
-    paddingVertical: 14,
+    paddingVertical: 12,
     borderRadius: 8,
     backgroundColor: COLORS.surfaceLight,
     alignItems: 'center',
   },
-  cancelButtonText: {
+  compactCancelText: {
     color: COLORS.text,
     fontWeight: '600',
+    fontSize: 14,
   },
-  mintButton: {
+  compactMintBtn: {
     flex: 1,
     flexDirection: 'row',
-    paddingVertical: 14,
+    paddingVertical: 12,
     borderRadius: 8,
     backgroundColor: COLORS.primary,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 8,
+    gap: 6,
   },
-  mintButtonText: {
+  compactMintText: {
     color: '#fff',
     fontWeight: '600',
+    fontSize: 14,
   },
   // Welcome popup styles - compact to fit screen without scrolling
   welcomeOverlay: {

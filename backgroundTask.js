@@ -6,6 +6,8 @@ import * as SecureStore from 'expo-secure-store';
 import * as MediaLibrary from 'expo-media-library';
 import * as BackgroundFetch from 'expo-background-fetch';
 import * as TaskManager from 'expo-task-manager';
+import * as ImageManipulator from 'expo-image-manipulator';
+import * as VideoThumbnails from 'expo-video-thumbnails';
 import axios from 'axios';
 import nacl from 'tweetnacl';
 import naclUtil from 'tweetnacl-util';
@@ -347,7 +349,8 @@ export const autoUploadStealthCloudUploadOneAsset = async ({
   }
 
   // Cross-platform deduplication checks
-  const { normalizeFilenameForCompare, extractBaseFilename, normalizeDateForCompare } = require('./duplicateScanner');
+  const { normalizeFilenameForCompare } = require('./utils');
+  const { extractBaseFilename, normalizeDateForCompare } = require('./duplicateScanner');
   
   // Skip if filename already exists on server
   const normalizedFilename = filename ? normalizeFilenameForCompare(filename) : null;
@@ -501,7 +504,11 @@ export const autoUploadStealthCloudUploadOneAsset = async ({
   global.crypto.getRandomValues(wrapNonce);
   const wrappedKey = nacl.secretbox(fileKey, wrapNonce, masterKey);
 
+  // Convert filePath to file:// URI for FileSystem operations
+  const fileUri = filePath.startsWith('file://') ? filePath : `file://${filePath}`;
   if (!fileUri) return { uploaded: 0, skipped: 0, failed: 1 };
+
+  console.log(`AutoUpload: Starting chunked upload for ${filename}, size=${originalSize}, path=${filePath}`);
 
   let chunkIndex = 0;
   const chunkIds = [];
@@ -539,6 +546,7 @@ export const autoUploadStealthCloudUploadOneAsset = async ({
     if (onStatus) onStatus('uploading');
     
     // Use concurrent upload via limiter
+    console.log(`AutoUpload: Uploading chunk ${chunkIndex + 1}, size=${plaintext.length} bytes, position=${position}`);
     const uploadPromise = runChunkUpload(() => uploadEncryptedChunk({ SERVER_URL, config, chunkId, encryptedBytes: boxed }));
     inFlightUploads.push(uploadPromise);
     
@@ -575,6 +583,69 @@ export const autoUploadStealthCloudUploadOneAsset = async ({
     }
   }
 
+  // Generate and upload encrypted thumbnail for Sync Select previews (best-effort, matches manual backup)
+  let thumbChunkId = null;
+  let thumbNonceB64 = null;
+  let thumbSize = null;
+  let thumbW = null;
+  let thumbH = null;
+  const thumbMime = 'image/jpeg';
+  try {
+    const THUMB_WIDTH = 220;
+    const THUMB_COMPRESS = 0.6;
+    const isVideo = (asset && asset.mediaType === 'video') || /\.(mp4|mov|avi|mkv|m4v|3gp|webm)$/i.test(filename || '');
+    const isPhoto = !isVideo;
+    let thumbSourceUri = null;
+
+    if (isVideo) {
+      const videoFileUri = filePath && filePath.startsWith('/') ? `file://${filePath}` : filePath;
+      if (videoFileUri) {
+        try {
+          const frame = await VideoThumbnails.getThumbnailAsync(videoFileUri, { time: 0 });
+          if (frame?.uri) thumbSourceUri = frame.uri;
+        } catch (e) {
+          // Try time=1000 as fallback
+          try {
+            const frame2 = await VideoThumbnails.getThumbnailAsync(videoFileUri, { time: 1000 });
+            if (frame2?.uri) thumbSourceUri = frame2.uri;
+          } catch (e2) {}
+        }
+      }
+    } else if (isPhoto) {
+      thumbSourceUri = filePath && filePath.startsWith('/') ? `file://${filePath}` : filePath;
+    }
+
+    if (thumbSourceUri) {
+      const manip = await ImageManipulator.manipulateAsync(
+        thumbSourceUri,
+        [{ resize: { width: THUMB_WIDTH } }],
+        { compress: THUMB_COMPRESS, format: ImageManipulator.SaveFormat.JPEG }
+      );
+      if (manip?.uri) {
+        thumbW = typeof manip.width === 'number' ? manip.width : null;
+        thumbH = typeof manip.height === 'number' ? manip.height : null;
+
+        const b64 = await FileSystem.readAsStringAsync(manip.uri, { encoding: FileSystem.EncodingType.Base64 });
+        const plain = naclUtil.decodeBase64(b64);
+        thumbSize = plain?.length || null;
+        if (plain && plain.length > 0) {
+          const thumbNonce = new Uint8Array(24);
+          global.crypto.getRandomValues(thumbNonce);
+          const boxed = nacl.secretbox(plain, thumbNonce, masterKey);
+          thumbChunkId = sha256.create().update(boxed).hex();
+          thumbNonceB64 = naclUtil.encodeBase64(thumbNonce);
+          await uploadEncryptedChunk({ SERVER_URL, config, chunkId: thumbChunkId, encryptedBytes: boxed });
+          console.log(`AutoUpload: uploaded thumbnail for ${filename}, size=${thumbSize}`);
+        }
+
+        try { await FileSystem.deleteAsync(manip.uri, { idempotent: true }); } catch (e) {}
+      }
+    }
+  } catch (e) {
+    // Best-effort: thumbnail failures must not fail backup
+    console.warn('AutoUpload: thumbnail generation failed (non-fatal):', filename, e?.message);
+  }
+
   const manifest = {
     v: 1, assetId: asset.id, filename: assetInfo.filename || asset.filename || null,
     mediaType: asset.mediaType || null, originalSize: originalSize,
@@ -582,7 +653,8 @@ export const autoUploadStealthCloudUploadOneAsset = async ({
     baseNonce16: naclUtil.encodeBase64(baseNonce16), wrapNonce: naclUtil.encodeBase64(wrapNonce),
     wrappedFileKey: naclUtil.encodeBase64(wrappedKey), chunkIds, chunkSizes,
     fileHash: exactFileHash, perceptualHash: perceptualHash,
-    exifCaptureTime, exifMake, exifModel
+    exifCaptureTime, exifMake, exifModel,
+    thumbChunkId, thumbNonce: thumbNonceB64, thumbSize, thumbW, thumbH, thumbMime
   };
   const manifestPlain = naclUtil.decodeUTF8(JSON.stringify(manifest));
   const manifestNonce = new Uint8Array(24);
@@ -593,18 +665,55 @@ export const autoUploadStealthCloudUploadOneAsset = async ({
   try {
     // Retry manifest upload up to 11 times with exponential backoff
     await withRetries(async () => {
-      await axios.post(`${SERVER_URL}/api/cloud/manifests`, { manifestId, encryptedManifest, chunkCount: chunkIds.length }, { headers: config.headers, timeout: 30000 });
+      await axios.post(`${SERVER_URL}/api/cloud/manifests`, { 
+        manifestId, 
+        encryptedManifest, 
+        chunkCount: chunkIds.length,
+        // Include metadata for fast dedup (matches manual backup)
+        filename,
+        mediaType: asset?.mediaType || null,
+        originalSize,
+        fileHash: exactFileHash,
+        perceptualHash,
+        creationTime: asset.creationTime,
+        thumbChunkId,
+        thumbNonce: thumbNonceB64,
+        thumbSize,
+        thumbW,
+        thumbH,
+        thumbMime
+      }, { headers: config.headers, timeout: 30000 });
     }, { retries: 10, baseDelayMs: 1000, maxDelayMs: 30000, shouldRetry: shouldRetryChunkUpload });
   } catch (e) {
     console.warn('Background: manifest upload failed after retries:', manifestId, e?.message);
     return { uploaded: 0, skipped: 0, failed: 1 };
-  } finally {
-    if (staged && staged.tmpCopied && staged.tmpUri) {
-      try { await FileSystem.deleteAsync(staged.tmpUri, { idempotent: true }); } catch (e) {}
+  }
+
+  // Store full EXIF to server for universal cross-platform preservation (matches manual backup)
+  // Fire-and-forget, non-blocking
+  const isImageForExif = asset.mediaType === 'photo' || /\.(jpg|jpeg|png|heic|heif|gif|bmp|webp|tiff?)$/i.test(filename || '');
+  if (exactFileHash && isImageForExif) {
+    try {
+      const { extractFullExif } = require('./exifExtractor');
+      const fullExif = extractFullExif(assetInfo, asset);
+      if (fullExif.captureTime || fullExif.make || fullExif.gpsLatitude != null) {
+        axios.post(
+          `${SERVER_URL}/api/exif/store`,
+          { fileHash: exactFileHash, exif: fullExif, platform: Platform.OS },
+          { headers: config.headers, timeout: 10000 }
+        ).catch(e => console.log('[AutoUpload EXIF] Store failed (non-critical):', e?.message));
+      }
+    } catch (e) {
+      // Non-critical - don't fail upload if EXIF storage fails
     }
   }
 
-  return { uploaded: 1, skipped: 0, failed: 0 };
+  // Cleanup temp file
+  if (staged && staged.tmpCopied && staged.tmpUri) {
+    try { await FileSystem.deleteAsync(staged.tmpUri, { idempotent: true }); } catch (e) {}
+  }
+
+  return { uploaded: 1, skipped: 0, failed: 0, manifestId };
 };
 
 // Concurrency helpers

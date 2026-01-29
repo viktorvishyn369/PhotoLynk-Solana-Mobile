@@ -19,6 +19,12 @@ import * as FileSystem from 'expo-file-system';
 import { sha256 } from 'js-sha256';
 import naclUtil from 'tweetnacl-util';
 import { t } from './i18n';
+import {
+  extractExifForDedup,
+  generateExifDedupKeys,
+  extractBaseFilename,
+  normalizeDateForCompare,
+} from './duplicateScanner';
 const { PixelHash, MediaDelete } = NativeModules;
 
 // ============================================================================
@@ -34,7 +40,7 @@ const MAX_SIMILAR_SCAN = 5000; // Max files for similar scan (O(n²) is expensiv
 
 // Hash thresholds
 const SIMILAR_THRESHOLD = 24;
-const CROSS_PLATFORM_DHASH_THRESHOLD = 0; // Identical: exact match only
+const CROSS_PLATFORM_DHASH_THRESHOLD = 3; // 3 bits = ~5% tolerance, matches server
 const EDGE_MATCH_THRESHOLD = 4;
 const CORNER_MATCH_THRESHOLD = 3;
 
@@ -418,7 +424,7 @@ const collectAssetsPaged = async ({
       // Yield every few albums
       if (i % 5 === 0) {
         await yieldToUi();
-        updateStatus(onStatus, `${statusPrefix}: Scanning albums... ${allAssets.length} items found`);
+        updateStatus(onStatus, t('status.scanningAlbumsProgress', { count: allAssets.length }));
       }
     }
   } catch (e) {
@@ -630,6 +636,17 @@ export const scanExactDuplicates = async ({
         const rawDHash = dHashHex ? dHashHex.substring(6) : null;
         const rawFileHash = fileHashHex ? fileHashHex.substring(fileHashHex.indexOf(':') + 1) : null;
         
+        // Extract EXIF data for server-style dedup (cross-platform matching)
+        const exifData = extractExifForDedup(info, asset);
+        const exifKeys = generateExifDedupKeys(exifData);
+        
+        // Extract filename base for filename-based matching
+        const filename = info?.filename || asset.filename || '';
+        const baseName = extractBaseFilename(filename);
+        const originalSize = info?.fileSize || asset.fileSize || 0;
+        const creationTime = info?.creationTime || asset.creationTime || 0;
+        const dateStr = creationTime ? normalizeDateForCompare(new Date(creationTime * 1000)) : null;
+        
         allHashedItems.push({
           asset,
           info,
@@ -637,6 +654,12 @@ export const scanExactDuplicates = async ({
           rawFileHash,
           rawDHash,
           isVideo: fileHashHex && fileHashHex.startsWith('video:'),
+          // Server-style dedup fields
+          exifKeys,
+          baseName,
+          originalSize,
+          dateStr,
+          filename,
         });
       }
     } catch (e) {
@@ -697,6 +720,106 @@ export const scanExactDuplicates = async ({
       }
     }
   }
+
+  await quickYield();
+
+  // ========== SERVER-STYLE DEDUP: EXIF-based grouping ==========
+  // Group by EXIF captureTime + make + model (highest confidence)
+  const exifFullGroups = {};
+  const exifTimeModelGroups = {};
+  const exifTimeMakeGroups = {};
+  
+  for (const item of allHashedItems) {
+    if (item.exifKeys) {
+      if (item.exifKeys.full) {
+        if (!exifFullGroups[item.exifKeys.full]) exifFullGroups[item.exifKeys.full] = [];
+        exifFullGroups[item.exifKeys.full].push(item);
+      }
+      if (item.exifKeys.timeModel) {
+        if (!exifTimeModelGroups[item.exifKeys.timeModel]) exifTimeModelGroups[item.exifKeys.timeModel] = [];
+        exifTimeModelGroups[item.exifKeys.timeModel].push(item);
+      }
+      if (item.exifKeys.timeMake) {
+        if (!exifTimeMakeGroups[item.exifKeys.timeMake]) exifTimeMakeGroups[item.exifKeys.timeMake] = [];
+        exifTimeMakeGroups[item.exifKeys.timeMake].push(item);
+      }
+    }
+  }
+  
+  // Union by EXIF full match (captureTime + make + model)
+  let exifMatches = 0;
+  for (const group of Object.values(exifFullGroups)) {
+    if (group.length > 1) {
+      for (let i = 1; i < group.length; i++) {
+        union(group[0].asset.id, group[i].asset.id);
+        exifMatches++;
+      }
+    }
+  }
+  
+  // Union by EXIF time+model match
+  for (const group of Object.values(exifTimeModelGroups)) {
+    if (group.length > 1) {
+      for (let i = 1; i < group.length; i++) {
+        union(group[0].asset.id, group[i].asset.id);
+        exifMatches++;
+      }
+    }
+  }
+  
+  console.log('[DupScanner] EXIF-based matches:', exifMatches);
+
+  await quickYield();
+
+  // ========== SERVER-STYLE DEDUP: Filename + size/date grouping ==========
+  // Group by baseName + similar size (within 20%)
+  const baseNameSizeGroups = {};
+  for (const item of allHashedItems) {
+    if (item.baseName && item.originalSize > 0) {
+      const key = item.baseName;
+      if (!baseNameSizeGroups[key]) baseNameSizeGroups[key] = [];
+      baseNameSizeGroups[key].push(item);
+    }
+  }
+  
+  let filenameMatches = 0;
+  for (const group of Object.values(baseNameSizeGroups)) {
+    if (group.length > 1) {
+      // Compare sizes within group - union if within 20%
+      for (let i = 0; i < group.length; i++) {
+        for (let j = i + 1; j < group.length; j++) {
+          const sizeA = group[i].originalSize;
+          const sizeB = group[j].originalSize;
+          const diff = Math.abs(sizeA - sizeB) / Math.max(sizeA, sizeB);
+          if (diff < 0.20) {
+            union(group[i].asset.id, group[j].asset.id);
+            filenameMatches++;
+          }
+        }
+      }
+    }
+  }
+  
+  // Group by baseName + same date
+  const baseNameDateGroups = {};
+  for (const item of allHashedItems) {
+    if (item.baseName && item.dateStr) {
+      const key = `${item.baseName}|${item.dateStr}`;
+      if (!baseNameDateGroups[key]) baseNameDateGroups[key] = [];
+      baseNameDateGroups[key].push(item);
+    }
+  }
+  
+  for (const group of Object.values(baseNameDateGroups)) {
+    if (group.length > 1) {
+      for (let i = 1; i < group.length; i++) {
+        union(group[0].asset.id, group[i].asset.id);
+        filenameMatches++;
+      }
+    }
+  }
+  
+  console.log('[DupScanner] Filename-based matches:', filenameMatches);
 
   await quickYield();
 
@@ -1037,7 +1160,7 @@ export const scanSimilarPhotos = async ({
 
   // ========== PHASE 3: Compare Hashes (60-90%) ==========
   if (onFindingMatches) onFindingMatches();
-  updateStatus(onStatus, 'Scanning: Comparing for similar items...', true);
+  updateStatus(onStatus, t('status.scanningComparingSimilar'), true);
   updateProgress(onProgress, 0.60, true);
 
   const similarPairs = [];
@@ -1062,7 +1185,7 @@ export const scanSimilarPhotos = async ({
         // Update progress (60-90%)
         const compareProgress = 0.60 + (comparisonsDone / totalComparisons) * 0.30;
         updateProgress(onProgress, compareProgress);
-        updateStatus(onStatus, `Scanning: Comparing ${Math.round(comparisonsDone / 1000)}k of ${Math.round(totalComparisons / 1000)}k pairs...`);
+        updateStatus(onStatus, t('status.scanningComparingPairs', { current: Math.round(comparisonsDone / 1000), total: Math.round(totalComparisons / 1000) }));
       }
 
       const b = items[j];
@@ -1129,7 +1252,7 @@ export const scanSimilarPhotos = async ({
   console.log('[DupScanner] Found', similarPairs.length, 'similar pairs');
 
   // ========== PHASE 4: Cluster Groups (90-100%) ==========
-  updateStatus(onStatus, 'Scanning: Grouping similar items...', true);
+  updateStatus(onStatus, t('status.scanningGroupingSimilar'), true);
   updateProgress(onProgress, 0.90, true);
   await yieldToUi();
 
@@ -1194,7 +1317,7 @@ export const scanSimilarPhotos = async ({
   // Small delay before final result for smooth UX
   await new Promise(r => setTimeout(r, 200));
   
-  updateStatus(onStatus, finalGroups.length > 0 ? `Scanning: Found ${finalGroups.length} similar groups` : 'Scanning: No similar photos found', true);
+  updateStatus(onStatus, finalGroups.length > 0 ? t('status.scanningFoundSimilarGroups', { count: finalGroups.length }) : t('status.scanningNoSimilarPhotos'), true);
   updateProgress(onProgress, 1, true);
 
   console.log('[DupScanner] Similar scan complete:', finalGroups.length, 'groups');

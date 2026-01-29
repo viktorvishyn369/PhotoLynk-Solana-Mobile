@@ -116,7 +116,7 @@ export const formatBytes = (bytes, decimal = false) => {
   if (!n || Number.isNaN(n) || n <= 0) return '0 MB';
   const divisor = decimal ? 1000 : 1024;
   const mb = n / (divisor * divisor);
-  if (mb < divisor) return `${mb.toFixed(decimal ? 0 : 0)} MB`;
+  if (mb < divisor) return `${mb.toFixed(2)} MB`;
   const gb = mb / divisor;
   if (gb < divisor) return `${gb.toFixed(2)} GB`;
   const tb = gb / divisor;

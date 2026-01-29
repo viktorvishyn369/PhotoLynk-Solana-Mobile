@@ -57,8 +57,8 @@ const hammingDistance64 = (a, b) => {
 };
 
 // Cross-platform deduplication threshold for 64-bit dHash
-// 6 bits = ~9% difference tolerance, accounts for iOS/Android decoder differences
-const CROSS_PLATFORM_DHASH_THRESHOLD = 6;
+// 3 bits = ~5% difference tolerance, stricter matching
+const CROSS_PLATFORM_DHASH_THRESHOLD = 3;
 
 // Extract base filename for cross-platform variant deduplication
 // Handles iOS, Android/Google Photos, Windows, and Linux naming patterns:

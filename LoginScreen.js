@@ -196,11 +196,11 @@ export const LoginScreen = ({
   plansLoading,
   purchaseLoading,
 }) => {
-  // Login screen shows only the last connected server type (or StealthCloud as default)
-  // On first run register: show only StealthCloud
-  // On login: show only the currently selected server type (which is loaded from SecureStore)
-  // User can change server type in settings after login
-  const showOnlySelectedServer = authMode === 'login' || isFirstRun;
+  // State for collapsed other servers section
+  const [showOtherServers, setShowOtherServers] = useState(serverType !== 'stealthcloud');
+
+  // Auto-expand if non-stealthcloud server is selected
+  const isOtherServerSelected = serverType === 'local' || serverType === 'remote';
 
   const handleOpenTerms = () => {
     Linking.openURL('https://viktorvishyn369.github.io/PhotoLynk/terms.html');
@@ -234,45 +234,44 @@ export const LoginScreen = ({
           </View>
         </View>
 
-        {/* Server Selection - Show only the last connected type on login, all on register */}
+        {/* Server Selection - Hide in forgot mode */}
+        {authMode !== 'forgot' && (
+          <>
         <Text style={styles.sectionTitle}>{t('login.chooseServer')}</Text>
         <Card>
-          {/* On login: show only the selected server type. On register (not first run): show all */}
-          {showOnlySelectedServer ? (
-            // Show only the currently selected server type
-            serverType === 'stealthcloud' ? (
-              <ServerOption
-                icon="cloud"
-                label={t('settings.stealthcloud')}
-                badge={t('login.stealthcloudBadge')}
-                isSelected={true}
-                onPress={() => {}}
-              />
-            ) : serverType === 'local' ? (
-              <ServerOption
-                icon="wifi"
-                label={t('login.localNetwork')}
-                isSelected={true}
-                onPress={() => {}}
-              />
-            ) : (
-              <ServerOption
-                icon="globe"
-                label={t('settings.remoteServer')}
-                isSelected={true}
-                onPress={() => {}}
-              />
-            )
-          ) : (
-            // Register mode (not first run): show all server options
+          {/* StealthCloud - always shown as primary option */}
+          <ServerOption
+            icon="cloud"
+            label={t('settings.stealthcloud')}
+            badge={t('login.stealthcloudBadge')}
+            isSelected={serverType === 'stealthcloud'}
+            onPress={() => {
+              setServerType('stealthcloud');
+              setShowOtherServers(false);
+            }}
+          />
+          
+          {/* Other Servers - Collapsible */}
+          <View style={styles.divider} />
+          <TouchableOpacity
+            style={styles.otherServersToggle}
+            onPress={() => setShowOtherServers(!showOtherServers)}
+            activeOpacity={0.7}
+          >
+            <View style={styles.otherServersToggleLeft}>
+              <Feather name="server" size={scale(16)} color="#666666" />
+              <Text style={styles.otherServersToggleText}>{t('login.otherServers')}</Text>
+            </View>
+            <Feather 
+              name={showOtherServers || isOtherServerSelected ? "chevron-up" : "chevron-down"} 
+              size={scale(18)} 
+              color="#666666" 
+            />
+          </TouchableOpacity>
+          
+          {/* Expanded other servers */}
+          {(showOtherServers || isOtherServerSelected) && (
             <>
-              <ServerOption
-                icon="cloud"
-                label={t('settings.stealthcloud')}
-                badge={t('login.stealthcloudBadge')}
-                isSelected={serverType === 'stealthcloud'}
-                onPress={() => setServerType('stealthcloud')}
-              />
               <View style={styles.divider} />
               <ServerOption
                 icon="wifi"
@@ -290,9 +289,11 @@ export const LoginScreen = ({
             </>
           )}
         </Card>
+          </>
+        )}
 
-        {/* Server-specific config */}
-        {serverType === 'stealthcloud' && (
+        {/* Server-specific config - Hide in forgot mode */}
+        {authMode !== 'forgot' && serverType === 'stealthcloud' && (
           <View style={styles.serverHint}>
             <Feather name="shield" size={scale(16)} color="#03E1FF" />
             <Text style={styles.serverHintText}>
@@ -301,7 +302,7 @@ export const LoginScreen = ({
           </View>
         )}
 
-        {serverType === 'local' && (
+        {authMode !== 'forgot' && serverType === 'local' && (
           <Card style={{ marginTop: scaleSpacing(16) }}>
             <View style={styles.inputRow}>
               <InputField
@@ -326,7 +327,7 @@ export const LoginScreen = ({
           </Card>
         )}
 
-        {serverType === 'remote' && (
+        {authMode !== 'forgot' && serverType === 'remote' && (
           <Card style={{ marginTop: scaleSpacing(16) }}>
             <InputField
               icon="globe"
@@ -345,8 +346,8 @@ export const LoginScreen = ({
           </Card>
         )}
 
-        {/* Plan Selection (StealthCloud Register only) */}
-        {serverType === 'stealthcloud' && authMode === 'register' && (
+        {/* Plan Selection (StealthCloud Register only) - Hide in forgot mode */}
+        {authMode !== 'forgot' && serverType === 'stealthcloud' && authMode === 'register' && (
           <>
             <Text style={styles.sectionTitle}>{t('login.choosePlan')}</Text>
             <Card>
@@ -674,6 +675,24 @@ const styles = StyleSheet.create({
     padding: scaleSpacing(12),
     borderRadius: scaleSpacing(12),
     gap: scaleSpacing(10),
+  },
+  // Other Servers Toggle
+  otherServersToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: scaleSpacing(12),
+    paddingHorizontal: scaleSpacing(12),
+  },
+  otherServersToggleLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: scaleSpacing(10),
+  },
+  otherServersToggleText: {
+    fontSize: scale(14),
+    color: '#666666',
+    fontWeight: '500',
   },
   serverHintText: {
     flex: 1,

@@ -66,16 +66,57 @@ export const SUPPORTED_LANGUAGES = [
 // Storage key for persisted language preference (true = use English, false/null = use system)
 const USE_ENGLISH_KEY = 'app_use_english';
 
-// Get device locale code (e.g., 'en', 'fr', 'de')
-const getDeviceLocale = () => {
-  const locale = Localization.locale || 'en';
-  // Extract language code (e.g., 'en-US' -> 'en')
-  return locale.split('-')[0].toLowerCase();
-};
-
 // Check if language is supported
 const isSupported = (code) => {
   return SUPPORTED_LANGUAGES.some(lang => lang.code === code);
+};
+
+// Get device locale code (e.g., 'en', 'fr', 'de')
+const getDeviceLocale = () => {
+  // Use getLocales() function to get FRESH locale data (not cached static properties)
+  // This ensures we detect language changes after app restart
+  let locales = [];
+  try {
+    locales = Localization.getLocales() || [];
+  } catch (e) {
+    // Fallback to static properties if getLocales() fails
+    locales = Localization.locales || [];
+  }
+  
+  // Also try static locale as fallback
+  const staticLocale = Localization.locale || '';
+  
+  // Log raw values for debugging
+  console.log(`[i18n] Raw locale: "${staticLocale}", getLocales(): ${JSON.stringify(locales?.slice(0, 3))}`);
+  
+  // Try getLocales() array first (most reliable, returns fresh data)
+  if (locales && locales.length > 0) {
+    for (const loc of locales) {
+      const locStr = typeof loc === 'string' ? loc : loc?.languageCode || loc?.languageTag || '';
+      const code = locStr.split(/[-_]/)[0].toLowerCase();
+      if (code && isSupported(code)) {
+        console.log(`[i18n] Found supported locale from getLocales(): ${code}`);
+        return code;
+      }
+    }
+    // Return first locale even if not supported
+    const firstLoc = locales[0];
+    const firstCode = typeof firstLoc === 'string' ? firstLoc : firstLoc?.languageCode || firstLoc?.languageTag || '';
+    if (firstCode) {
+      return firstCode.split(/[-_]/)[0].toLowerCase();
+    }
+  }
+  
+  // Fallback to static locale property
+  if (staticLocale) {
+    const code = staticLocale.split(/[-_]/)[0].toLowerCase();
+    if (code && isSupported(code)) {
+      return code;
+    }
+    return code || 'en';
+  }
+  
+  return 'en';
 };
 
 // Get system language (returns 'en' if system language is not supported)
@@ -91,6 +132,12 @@ let useEnglishMode = false;
 // Auto-detects system language, defaults to English if unknown
 export const initializeLanguage = async () => {
   try {
+    // Clear any old language preference keys from previous versions
+    try {
+      await SecureStore.deleteItemAsync('app_language');
+      await SecureStore.deleteItemAsync('selected_language');
+    } catch (e) { /* ignore */ }
+    
     // Check if user has forced English mode
     const savedUseEnglish = await SecureStore.getItemAsync(USE_ENGLISH_KEY);
     useEnglishMode = savedUseEnglish === 'true';

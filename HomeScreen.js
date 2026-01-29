@@ -21,20 +21,57 @@ import { Feather } from '@expo/vector-icons';
 import { t } from './i18n';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
-const shortSide = Math.min(SCREEN_WIDTH, SCREEN_HEIGHT);
-const isTablet = shortSide >= 600;
-const isLargeTablet = shortSide >= 768;
+const MIN_DIMENSION = Math.min(SCREEN_WIDTH, SCREEN_HEIGHT);
+
+// Device categories based on viewport widths:
+// iPhone SE (1st-3rd): 320px | iPhone 6/7/8/X/XS/11Pro/12mini/13mini: 375px
+// iPhone 6+/7+/8+: 414px | iPhone XR/11/12/13/14: 390px | iPhone 12-15 Pro: 390-393px
+// iPhone 12-15 Pro Max/Plus: 428-430px | Small Android: 320-360px
+// Tablets: 600px+ | Large tablets: 768px+
+const isVerySmallPhone = MIN_DIMENSION < 340; // iPhone SE 1st gen, very small Android
+const isSmallPhone = MIN_DIMENSION >= 340 && MIN_DIMENSION < 375; // Small Android
+const isMediumPhone = MIN_DIMENSION >= 375 && MIN_DIMENSION < 400; // iPhone X/12/13, most phones
+const isLargePhone = MIN_DIMENSION >= 400 && MIN_DIMENSION < 600; // iPhone Plus/Max
+const isTablet = MIN_DIMENSION >= 600;
+const isLargeTablet = MIN_DIMENSION >= 768;
+// Height-based scaling for fitting content within screen bounds
+const isShortScreen = SCREEN_HEIGHT < 700; // iPhone SE, small Android
+const isTallScreen = SCREEN_HEIGHT > 900; // iPhone Pro Max, tall Android
 
 const scale = (size) => {
-  if (isLargeTablet) return size * 1.0;
-  if (isTablet) return size * 1.1;
+  let result = size;
+  if (isLargeTablet) result = size * 1.3;
+  else if (isTablet) result = size * 1.15;
+  else if (isVerySmallPhone) result = size * 0.78;
+  else if (isSmallPhone) result = size * 0.85;
+  else if (isMediumPhone) result = size * 0.92;
+  // Apply height-based compression for short screens
+  if (isShortScreen) result *= 0.9;
+  return result;
+};
+
+// Scale for status section - shrinks on small screens to avoid overlap with buttons
+const scaleStatus = (size) => {
+  if (isShortScreen) return size * 0.55;
+  if (isVerySmallPhone) return size * 0.65;
+  if (isSmallPhone) return size * 0.7;
+  if (isMediumPhone) return size * 0.82;
+  if (isLargeTablet) return size * 1.3;
+  if (isTablet) return size * 1.15;
   return size;
 };
 
 const scaleSpacing = (size) => {
-  if (isLargeTablet) return size * 1.0;
-  if (isTablet) return size * 1.05;
-  return size;
+  let result = size;
+  if (isLargeTablet) result = size * 1.2;
+  else if (isTablet) result = size * 1.1;
+  else if (isVerySmallPhone) result = size * 0.6;
+  else if (isSmallPhone) result = size * 0.7;
+  else if (isMediumPhone) result = size * 0.8;
+  else result = size * 0.9;
+  // Apply height-based compression for short screens
+  if (isShortScreen) result *= 0.75;
+  return result;
 };
 
 // Theme colors - Solana inspired
@@ -94,6 +131,7 @@ export const HomeScreen = ({
 
   // Status color based on activity
   const getStatusColor = () => {
+    if (loading) return COLORS.primary; // Blue when loading/checking files
     if (isIdle) return COLORS.secondary;
     if (isMintingNFT) return '#9945FF'; // Solana purple for NFT
     if (isCleaning) return COLORS.accent;
@@ -137,7 +175,7 @@ export const HomeScreen = ({
             <View style={[styles.heroIconInner, { backgroundColor: `${statusColor}20` }]}>
               <Feather 
                 name={isIdle ? 'check-circle' : isMintingNFT ? 'hexagon' : isCleaning ? 'search' : isSyncing ? 'download-cloud' : 'upload-cloud'} 
-                size={scale(32)} 
+                size={scaleStatus(32)} 
                 color={statusColor} 
               />
             </View>
@@ -378,7 +416,7 @@ const styles = StyleSheet.create({
   // Hero Status Section
   heroSection: {
     alignItems: 'center',
-    paddingVertical: 8,
+    paddingVertical: isShortScreen ? 4 : 8,
     paddingHorizontal: scaleSpacing(16),
     position: 'relative',
   },
@@ -387,29 +425,29 @@ const styles = StyleSheet.create({
     top: 0,
     left: 0,
     right: 0,
-    height: scale(200),
+    height: scaleStatus(200),
   },
   heroIconContainer: {
-    width: scale(80),
-    height: scale(80),
-    borderRadius: scale(40),
+    width: scaleStatus(80),
+    height: scaleStatus(80),
+    borderRadius: scaleStatus(40),
     borderWidth: 2,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: scaleSpacing(8),
+    marginBottom: isShortScreen ? 4 : scaleSpacing(8),
   },
   heroIconInner: {
-    width: scale(64),
-    height: scale(64),
-    borderRadius: scale(32),
+    width: scaleStatus(64),
+    height: scaleStatus(64),
+    borderRadius: scaleStatus(32),
     alignItems: 'center',
     justifyContent: 'center',
   },
   heroStatusText: {
-    fontSize: scale(24),
+    fontSize: scaleStatus(24),
     fontWeight: '800',
     letterSpacing: -1,
-    marginBottom: scaleSpacing(4),
+    marginBottom: isShortScreen ? 2 : scaleSpacing(4),
   },
   progressContainer: {
     flexDirection: 'row',
@@ -454,7 +492,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: scaleSpacing(16),
     gap: scaleSpacing(10),
     justifyContent: 'flex-end',
-    paddingBottom: Platform.OS === 'android' ? 60 : scaleSpacing(20),
+    paddingBottom: Platform.OS === 'android' ? scaleSpacing(50) : scaleSpacing(16),
   },
   actionRow: {
     flexDirection: 'row',
@@ -563,7 +601,7 @@ const styles = StyleSheet.create({
     bottom: 0,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(0, 0, 0, 0.75)',
+    backgroundColor: '#000000',
   },
   completionCard: {
     backgroundColor: COLORS.card,
