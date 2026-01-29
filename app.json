@@ -102,7 +102,7 @@
         "android.permission.CAMERA"
       ],
       "package": "com.photolynk.solana",
-      "versionCode": 40,
+      "versionCode": 41,
       "intentFilters": [
         {
           "action": "VIEW",
