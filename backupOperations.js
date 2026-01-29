@@ -279,12 +279,17 @@ const yieldForNavigation = () => new Promise(resolve => {
 });
 
 // Quick yield for inside tight loops - still use requestAnimationFrame
-// In fast mode, skip yields entirely for maximum throughput
+// In fast mode, yield only every 10 calls for safety (prevents ANR)
 let fastModeEnabled = false;
-const setFastMode = (enabled) => { fastModeEnabled = enabled; };
+let fastModeYieldCounter = 0;
+const setFastMode = (enabled) => { fastModeEnabled = enabled; fastModeYieldCounter = 0; };
 
 const quickYield = () => {
-  if (fastModeEnabled) return Promise.resolve(); // Skip yield in fast mode
+  if (fastModeEnabled) {
+    fastModeYieldCounter++;
+    if (fastModeYieldCounter < 10) return Promise.resolve(); // Skip most yields in fast mode
+    fastModeYieldCounter = 0; // Reset counter, do actual yield
+  }
   return new Promise(r => {
     if (typeof requestAnimationFrame !== 'undefined') {
       requestAnimationFrame(() => r());

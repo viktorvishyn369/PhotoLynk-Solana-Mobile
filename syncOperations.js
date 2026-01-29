@@ -267,13 +267,25 @@ const yieldToUi = () => new Promise(resolve => {
 });
 
 // Quick yield for inside tight loops
-const quickYield = () => new Promise(r => {
-  if (typeof requestAnimationFrame !== 'undefined') {
-    requestAnimationFrame(() => r());
-  } else {
-    setTimeout(r, 0);
+// In fast mode, yield only every 10 calls for safety (prevents ANR)
+let fastModeEnabled = false;
+let fastModeYieldCounter = 0;
+const setFastMode = (enabled) => { fastModeEnabled = enabled; fastModeYieldCounter = 0; };
+
+const quickYield = () => {
+  if (fastModeEnabled) {
+    fastModeYieldCounter++;
+    if (fastModeYieldCounter < 10) return Promise.resolve(); // Skip most yields in fast mode
+    fastModeYieldCounter = 0; // Reset counter, do actual yield
   }
-});
+  return new Promise(r => {
+    if (typeof requestAnimationFrame !== 'undefined') {
+      requestAnimationFrame(() => r());
+    } else {
+      setTimeout(r, 0);
+    }
+  });
+};
 
 // ============================================================================
 // SERVER COMMUNICATION
@@ -711,6 +723,7 @@ export const stealthCloudRestoreCore = async ({
   abortRef,
 }) => {
   resetProgress();
+  setFastMode(!!fastMode); // Enable fast mode optimizations (skip most yields)
   
   // ========== PHASE 1: Setup (0-1%) ==========
   onStatus(t('status.syncPreparing'));
@@ -1048,6 +1061,7 @@ export const localRemoteRestoreCore = async ({
   appStateRef, // For pausing when backgrounded
 }) => {
   resetProgress();
+  setFastMode(!!fastMode); // Enable fast mode optimizations (skip most yields)
   
   // ========== PHASE 1: Fetch Server Files (0-5%) ==========
   onStatus(t('status.fetchingServerState'));
