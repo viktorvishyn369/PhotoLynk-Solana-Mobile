@@ -754,20 +754,37 @@ const encryptAndUpload = async ({
     let tempVideoFrameUri = null;
 
     if (isVideo) {
-      const fileUri = filePath && filePath.startsWith('/') ? `file://${filePath}` : (filePath || tmpUri);
-      if (fileUri) {
+      // Try multiple URI formats - VideoThumbnails can be picky about URI format
+      const uriCandidates = [
+        filePath && filePath.startsWith('/') ? `file://${filePath}` : null,
+        filePath,
+        tmpUri,
+        assetInfo?.localUri,
+        assetInfo?.uri,
+        asset?.uri,
+      ].filter(Boolean);
+      
+      console.log(`[Backup] Video thumbnail: trying ${uriCandidates.length} URI candidates for ${filename}`);
+      
+      for (const videoUri of uriCandidates) {
+        if (thumbSourceUri) break;
         for (const time of [0, 500, 1000, 2000]) {
           try {
-            const frame = await VideoThumbnails.getThumbnailAsync(fileUri, { time });
+            const frame = await VideoThumbnails.getThumbnailAsync(videoUri, { time });
             if (frame?.uri) {
               thumbSourceUri = frame.uri;
               tempVideoFrameUri = frame.uri;
+              console.log(`[Backup] Video thumbnail: got frame at time=${time}ms from ${videoUri?.substring(0, 50)}...`);
               break;
             }
           } catch (e) {
-            // Try another timestamp
+            // Try next time/URI
           }
         }
+      }
+      
+      if (!thumbSourceUri) {
+        console.log(`[Backup] Video thumbnail: all attempts failed for ${filename}`);
       }
     } else if (isPhoto) {
       thumbSourceUri = (filePath && filePath.startsWith('/')) ? `file://${filePath}` : (filePath || tmpUri);
@@ -804,6 +821,14 @@ const encryptAndUpload = async ({
     }
   } catch (e) {
     // Best-effort: thumbnail failures must not fail backup
+    console.log(`[Backup] Thumbnail generation failed for ${filename}:`, e?.message || e);
+  }
+  
+  // Log thumbnail result for debugging
+  if (thumbChunkId) {
+    console.log(`[Backup] Thumbnail uploaded for ${filename}: ${thumbW}x${thumbH}, ${thumbSize} bytes`);
+  } else {
+    console.log(`[Backup] No thumbnail generated for ${filename} (isVideo=${/\.(mp4|mov|avi|mkv|m4v|3gp|webm)$/i.test(filename || '')})`);
   }
 
   // Build and encrypt manifest
@@ -825,6 +850,12 @@ const encryptAndUpload = async ({
     chunkSizes,
     fileHash,
     perceptualHash,
+    thumbChunkId,
+    thumbNonce: thumbNonceB64,
+    thumbSize,
+    thumbW,
+    thumbH,
+    thumbMime,
   };
 
   const manifestPlain = naclUtil.decodeUTF8(JSON.stringify(manifest));
