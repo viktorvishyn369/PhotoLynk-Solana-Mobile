@@ -291,7 +291,7 @@
 		"autoUploadOffDesc": "仅手动备份",
 		"autoUploadNote": "后台上传取决于iOS/Android政策。为获得最佳效果：偶尔打开应用、连接WiFi并为设备充电。",
 		"language": "语言",
-		"useEnglish": "使用英语",
+		"useEnglish": "English",
 		"currentlyEnglish": "目前使用英语",
 		"currentlySystem": "使用系统语言",
 		"englishDefaultNote": "如果系统语言不支持，则默认为英语。",
@@ -670,7 +670,7 @@
 		"trialExpired": "试用期已过",
 		"subscriptionExpiredGrace": "您的订阅已过期。您有 7 天时间同步数据。",
 		"subscriptionExpiredRenew": "您的订阅已过期。续订可继续备份。",
-		"subscriptionViaPlatform": "通过 {{platform}} 管理。要使用 SOL 付款，请让当前计划过期。"
+		"subscriptionViaPlatform": "通过 {{platform}} 购买。"
 	},
 	"login": {
 		"chooseServer": "选择服务器",

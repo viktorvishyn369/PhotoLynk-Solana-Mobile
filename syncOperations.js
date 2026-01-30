@@ -20,7 +20,18 @@ import nacl from 'tweetnacl';
 import naclUtil from 'tweetnacl-util';
 import { sha256 } from 'js-sha256';
 
-const { ExifExtractor } = NativeModules;
+// Safely import native modules with fallback
+let ExifExtractor = null;
+try {
+  ExifExtractor = NativeModules.ExifExtractor;
+  if (ExifExtractor) {
+    console.log('[Sync] ExifExtractor native module loaded');
+  } else {
+    console.warn('[Sync] ExifExtractor native module not available');
+  }
+} catch (e) {
+  console.error('[Sync] Failed to load ExifExtractor:', e?.message);
+}
 
 import { t } from './i18n';
 import {
@@ -65,12 +76,12 @@ const getAssetCooldownMs = (fastMode) => fastMode ? 0 : (Platform.OS === 'ios' ?
 const getBatchLimit = (fastMode) => fastMode ? 100 : 25;
 const getBatchCooldownMs = (fastMode) => fastMode ? 0 : 5000;
 
-// Concurrency limits for downloads
+// Concurrency limits for downloads (Android reduced to 1 to prevent crashes)
 const getMaxParallelDownloads = (fastMode) => {
   if (fastMode) {
-    return Platform.OS === 'android' ? 8 : 6;
+    return Platform.OS === 'android' ? 1 : 6;
   }
-  return Platform.OS === 'android' ? 4 : 3;
+  return Platform.OS === 'android' ? 1 : 3;
 };
 
 // ============================================================================
@@ -275,7 +286,8 @@ const setFastMode = (enabled) => { fastModeEnabled = enabled; fastModeYieldCount
 const quickYield = () => {
   if (fastModeEnabled) {
     fastModeYieldCounter++;
-    if (fastModeYieldCounter < 10) return Promise.resolve(); // Skip most yields in fast mode
+    const threshold = Platform.OS === 'android' ? 3 : 10;
+    if (fastModeYieldCounter < threshold) return Promise.resolve(); // Skip most yields in fast mode
     fastModeYieldCounter = 0; // Reset counter, do actual yield
   }
   return new Promise(r => {
@@ -1210,7 +1222,11 @@ export const localRemoteRestoreCore = async ({
 
   console.log(`[Sync] Comparison done: toDownload=${toDownload.length}, skipped=${skipped}`, skipReasons);
 
+  console.log(`[Sync] About to update progress to 0.15`);
   updateProgress(onProgress, 0.15, true);
+  console.log(`[Sync] Progress updated, about to yield`);
+  await yieldToUi(); // Yield after comparison phase
+  console.log(`[Sync] Yielded, checking if toDownload is empty`);
 
   if (toDownload.length === 0) {
     // All files already synced - animate progress 15% to 100% smoothly
@@ -1225,6 +1241,7 @@ export const localRemoteRestoreCore = async ({
   }
 
   // ========== PHASE 4: Download Each File (15-100%) ==========
+  console.log(`[Sync] Entering Phase 4: Download ${toDownload.length} files`);
   let restored = 0;
   let failed = 0;
   
@@ -1232,12 +1249,21 @@ export const localRemoteRestoreCore = async ({
   const computedPlatformHashes = [];
 
   const maxParallel = getMaxParallelDownloads(fastMode);
+  console.log(`[Sync] Creating concurrency limiters: maxParallel=${maxParallel}`);
   const runDownload = createConcurrencyLimiter(maxParallel);
+  const runSave = createConcurrencyLimiter(1); // Serialize MediaLibrary saves to prevent Android crashes
   let processed = 0;
 
+  console.log(`[Sync] Starting download phase: ${toDownload.length} files, maxParallel=${maxParallel}`);
+  await yieldToUi(); // Yield before creating download tasks
+
   const downloadTasks = toDownload.map((file, idx) => runDownload(async () => {
+    console.log(`[Sync] Download task ${idx} started: ${file.filename}`);
     // Check abort
-    if (abortRef?.current) return;
+    if (abortRef?.current) {
+      console.log(`[Sync] Download task ${idx} aborted`);
+      return;
+    }
     
     // Wait if app is backgrounded (pause instead of failing)
     if (appStateRef) {
@@ -1257,6 +1283,7 @@ export const localRemoteRestoreCore = async ({
       const result = await FileSystem.downloadAsync(downloadUrl, localUri, {
         headers: config.headers
       });
+      await quickYield(); // Yield after download
 
       if (result.status === 200) {
         // Check perceptual hash BEFORE saving to detect duplicates (handles iOS renaming)
@@ -1265,9 +1292,11 @@ export const localRemoteRestoreCore = async ({
         
         let isDuplicate = false;
         let computedHash = null;
+        await quickYield(); // Yield before hash computation
         try {
           if (isVideo) {
             computedHash = await computeExactFileHash(filePath);
+            await quickYield(); // Yield after heavy hash computation
             const hasMatch = computedHash && localSets.fileHashes.has(computedHash);
             if (idx < 10) console.log(`[Sync] Video ${file.filename}: hash=${computedHash?.substring(0,16)}..., localHashes=${localSets.fileHashes.size}, match=${hasMatch}`);
             if (hasMatch) {
@@ -1275,6 +1304,7 @@ export const localRemoteRestoreCore = async ({
             }
           } else {
             computedHash = await computePerceptualHash(filePath);
+            await quickYield(); // Yield after heavy hash computation
             const hasMatch = computedHash && findPerceptualHashMatch(computedHash, localSets.perceptualHashes, SYNC_DHASH_THRESHOLD);
             if (idx < 10) console.log(`[Sync] Image ${file.filename}: phash=${computedHash}, localPhashes=${localSets.perceptualHashes.size}, match=${hasMatch}`);
             if (hasMatch) {
@@ -1288,6 +1318,7 @@ export const localRemoteRestoreCore = async ({
         
         if (isDuplicate) {
           await FileSystem.deleteAsync(localUri, { idempotent: true });
+          await quickYield(); // Yield after file deletion
           skipped++;
           skipReasons.hashMatch = (skipReasons.hashMatch || 0) + 1;
         } else {
@@ -1300,12 +1331,14 @@ export const localRemoteRestoreCore = async ({
                 timeout: 10000,
                 validateStatus: (status) => status < 500,
               });
+              await quickYield(); // Yield after network request
               if (exifRes.status === 200 && exifRes.data?.exif) {
                 // Apply EXIF to file using native module
                 if (ExifExtractor && typeof ExifExtractor.writeExif === 'function') {
                   try {
                     const filePath = localUri.replace('file://', '');
                     await ExifExtractor.writeExif(filePath, exifRes.data.exif);
+                    await quickYield(); // Yield after native module call
                     console.log(`[EXIF] Applied EXIF to ${file.filename}`);
                   } catch (writeErr) {
                     console.log('[EXIF] Write failed (non-critical):', writeErr?.message);
@@ -1319,8 +1352,11 @@ export const localRemoteRestoreCore = async ({
             }
           }
           
-          await MediaLibrary.saveToLibraryAsync(localUri);
-          await FileSystem.deleteAsync(localUri, { idempotent: true });
+          await runSave(async () => {
+            await MediaLibrary.saveToLibraryAsync(localUri);
+            await FileSystem.deleteAsync(localUri, { idempotent: true });
+          });
+          await quickYield(); // Yield after save
           restored++;
           
           // Add computed hash to localSets to prevent duplicate downloads in same session
@@ -1345,10 +1381,12 @@ export const localRemoteRestoreCore = async ({
         failed++;
       }
     } catch (e) {
-      console.warn(`Failed to download ${file.filename}:`, e?.message);
+      console.warn(`[Sync] Failed to download ${file.filename}:`, e?.message);
+      console.error(`[Sync] Download error stack:`, e);
       failed++;
     } finally {
       processed++;
+      console.log(`[Sync] Download task ${idx} completed: ${file.filename} (processed=${processed}/${toDownload.length})`);
       // Progress: 15-100%
       const progress = 0.15 + (processed / toDownload.length) * 0.85;
       updateProgress(onProgress, progress);
@@ -1356,7 +1394,9 @@ export const localRemoteRestoreCore = async ({
     }
   }));
 
+  console.log(`[Sync] Waiting for ${downloadTasks.length} download tasks...`);
   await Promise.all(downloadTasks);
+  console.log(`[Sync] All download tasks completed`);
 
   // Submit computed platform hashes to server for future fast dedup
   if (computedPlatformHashes.length > 0) {

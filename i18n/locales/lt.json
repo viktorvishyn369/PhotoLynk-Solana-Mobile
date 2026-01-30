@@ -291,7 +291,7 @@
 		"autoUploadOffDesc": "Tik rankinė atsarginė kopija",
 		"autoUploadNote": "Foninis įkėlimas priklauso nuo iOS/Android politikų. Geriausiems rezultatams: retkarčiais atidarykite programėlę, prisijunkite prie WiFi ir įkraukite įrenginį.",
 		"language": "Kalba",
-		"useEnglish": "Naudokite anglų kalbą",
+		"useEnglish": "English",
 		"currentlyEnglish": "Šiuo metu naudojate anglų kalbą",
 		"currentlySystem": "Sistemos kalbos naudojimas",
 		"englishDefaultNote": "Jei jūsų sistemos kalba nepalaikoma, pagal numatytuosius nustatymus pasirenkama anglų kalba.",
@@ -608,7 +608,7 @@
 		"trialExpired": "Bandomasis laikotarpis baigėsi",
 		"subscriptionExpiredGrace": "Jūsų prenumerata baigėsi. Turite 7 dienas duomenims sinchronizuoti.",
 		"subscriptionExpiredRenew": "Jūsų prenumerata baigėsi. Atnaujinkite prenumeratą, jei norite tęsti atsarginių kopijų kūrimą.",
-		"subscriptionViaPlatform": "Valdoma per {{platform}}. Norėdami mokėti su SOL, leiskite dabartiniam planui baigti galioti."
+		"subscriptionViaPlatform": "Įsigyta per {{platform}}."
 	},
 	"login": {
 		"chooseServer": "Pasirinkite serverį",

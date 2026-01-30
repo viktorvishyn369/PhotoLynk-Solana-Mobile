@@ -16,11 +16,15 @@ import {
   ScrollView,
   Platform,
   StatusBar,
+  useWindowDimensions,
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { t } from './i18n';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
+const SCREEN_HEIGHT_FULL = Dimensions.get('screen').height;
+// Android navigation bar height detection - use minimum 48px if detection fails
+const ANDROID_NAV_BAR_HEIGHT = Platform.OS === 'android' ? Math.max(48, SCREEN_HEIGHT_FULL - SCREEN_HEIGHT) : 0;
 const MIN_DIMENSION = Math.min(SCREEN_WIDTH, SCREEN_HEIGHT);
 
 // Device categories based on viewport widths:
@@ -111,6 +115,12 @@ export const HomeScreen = ({
   onMintNFT,
   onViewNFTs,
 }) => {
+  // Detect orientation for tablets - enable scroll in landscape
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  const isLandscape = windowWidth > windowHeight;
+  const minDim = Math.min(windowWidth, windowHeight);
+  const isTabletDevice = minDim >= 600; // 7"+ tablets
+  const shouldEnableScroll = isTabletDevice && isLandscape;
 
   const serverLabel = serverType === 'stealthcloud' ? 'StealthCloud' : serverType === 'remote' ? 'Remote Server' : 'Local Server';
   const serverIcon = serverType === 'stealthcloud' ? 'cloud' : serverType === 'remote' ? 'globe' : 'wifi';
@@ -167,7 +177,13 @@ export const HomeScreen = ({
         </View>
       </View>
 
-      <View style={styles.mainContent}>
+      <ScrollView 
+        style={styles.mainContent}
+        contentContainerStyle={shouldEnableScroll ? styles.mainContentScrollable : styles.mainContentFixed}
+        scrollEnabled={shouldEnableScroll}
+        showsVerticalScrollIndicator={false}
+        bounces={shouldEnableScroll}
+      >
         {/* HERO STATUS SECTION */}
         <View style={styles.heroSection}>
           <View style={[styles.heroGradient, { backgroundColor: `${statusColor}08` }]} />
@@ -343,7 +359,7 @@ export const HomeScreen = ({
           {/* Section Label */}
           <Text style={styles.sectionLabel}>{t('home.solanaNft')}</Text>
         </View>
-      </View>
+      </ScrollView>
 
       {/* Completion Tick - Tap anywhere to dismiss */}
       {showCompletionTick && (
@@ -413,6 +429,13 @@ const styles = StyleSheet.create({
   },
   mainContent: {
     flex: 1,
+  },
+  mainContentFixed: {
+    flexGrow: 1,
+  },
+  mainContentScrollable: {
+    flexGrow: 1,
+    paddingBottom: 20,
   },
   
   // Hero Status Section
@@ -494,7 +517,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: scaleSpacing(16),
     gap: scaleSpacing(10),
     justifyContent: 'flex-end',
-    paddingBottom: Platform.OS === 'android' ? scaleSpacing(50) : scaleSpacing(16),
+    paddingBottom: Platform.OS === 'android' ? ANDROID_NAV_BAR_HEIGHT + scaleSpacing(16) : scaleSpacing(16),
   },
   actionRow: {
     flexDirection: 'row',

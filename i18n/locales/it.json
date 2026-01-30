@@ -292,7 +292,7 @@
 		"autoUploadOffDesc": "Solo backup manuale",
 		"autoUploadNote": "I caricamenti in background dipendono dalle politiche iOS/Android. Per risultati migliori: apri l'app occasionalmente, connettiti al WiFi e carica il dispositivo.",
 		"language": "Lingua",
-		"useEnglish": "Utilizzare l'inglese",
+		"useEnglish": "English",
 		"currentlyEnglish": "Attualmente si usa l'inglese",
 		"currentlySystem": "Utilizzo del linguaggio di sistema",
 		"englishDefaultNote": "L'inglese è l'impostazione predefinita se la lingua del sistema non è supportata.",
@@ -661,7 +661,7 @@
 		"trialExpired": "Prova scaduta",
 		"subscriptionExpiredGrace": "L'abbonamento è scaduto. Hai 7 giorni di tempo per sincronizzare i tuoi dati.",
 		"subscriptionExpiredRenew": "L'abbonamento è scaduto. Rinnovare per continuare i backup.",
-		"subscriptionViaPlatform": "Gestito tramite {{platform}}. Per pagare con SOL, lasciare scadere il piano attuale."
+		"subscriptionViaPlatform": "Acquistato tramite {{platform}}."
 	},
 	"login": {
 		"chooseServer": "Scegli server",

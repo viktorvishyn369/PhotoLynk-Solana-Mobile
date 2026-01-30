@@ -291,7 +291,7 @@
 		"autoUploadOffDesc": "Samo ručna sigurnosna kopija",
 		"autoUploadNote": "Pozadinska učitavanja ovise o pravilima iOS/Android. Za najbolje rezultate: povremeno otvorite aplikaciju, povežite se na WiFi i napunite uređaj.",
 		"language": "Jezik",
-		"useEnglish": "Koristite engleski",
+		"useEnglish": "English",
 		"currentlyEnglish": "Trenutno koristim engleski.",
 		"currentlySystem": "Korištenje sustavnog jezika",
 		"englishDefaultNote": "Engleski je zadani jezik ako vaš sustavni jezik nije podržan.",
@@ -595,7 +595,7 @@
 		"trialExpired": "Isprobno razdoblje je isteklо",
 		"subscriptionExpiredGrace": "Vaša pretplata je istekla. Imate 7 dana da sinkronizirate svoje podatke.",
 		"subscriptionExpiredRenew": "Vaša pretplata je istekla. Obnovite pretplatu kako biste nastavili izradu sigurnosnih kopija.",
-		"subscriptionViaPlatform": "Upravlja se putem {{platform}}. Da biste platili sa SOL-om, dopustite da trenutni plan istekne."
+		"subscriptionViaPlatform": "Kupljeno putem {{platform}}."
 	},
 	"login": {
 		"chooseServer": "Odaberite poslužitelj",

@@ -32,6 +32,7 @@ import {
 import Clipboard from '@react-native-clipboard/clipboard';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import FontAwesome5 from '@expo/vector-icons/FontAwesome5';
+import * as ScreenOrientation from 'expo-screen-orientation';
 import { styles, THEME, scale, scaleSpacing, isTablet } from './styles';
 import {
   sleep,
@@ -222,6 +223,27 @@ const FAST_ASSET_COOLDOWN_MS = 0; // No cooldown between assets
 const FAST_CHUNK_COOLDOWN_MS = 0; // No delay between chunks
 
 export default function App() {
+  useEffect(() => {
+    let mounted = true;
+    const lockPortrait = async () => {
+      try {
+        await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP);
+      } catch (e) {}
+    };
+
+    lockPortrait();
+    const sub = ScreenOrientation.addOrientationChangeListener(() => {
+      if (mounted) lockPortrait();
+    });
+
+    return () => {
+      mounted = false;
+      try {
+        ScreenOrientation.removeOrientationChangeListener(sub);
+      } catch (e) {}
+    };
+  }, []);
+
   const [view, setView] = useState('loading'); // loading, auth, home, settings
   const [authMode, setAuthMode] = useState('login'); // login, register, forgot
   const [isFirstRun, setIsFirstRun] = useState(false); // First ever app run - show register, hide server options
@@ -447,7 +469,8 @@ export default function App() {
                   setView('home');
                   showDarkAlert(t('login.paired'), t('login.pairedWithDesktop', { ip: serverIp }));
                 } catch (e) {
-                  showDarkAlert(t('alerts.error'), e.message || t('alerts.connectionFailed'));
+                  // Re-throw so SettingsScreen can handle with custom message
+              throw e;
                 } finally {
                   setLoading(false);
                 }
@@ -1069,7 +1092,7 @@ export default function App() {
 
         let existingManifests = [];
         try {
-          existingManifests = await fetchAllManifestsPaged(SERVER_URL, config);
+          existingManifests = await fetchAllManifestsPaged(SERVER_URL, config, null, true); // includeMeta=true for fast dedup
         } catch (e) {
           existingManifests = [];
         }
@@ -1098,88 +1121,66 @@ export default function App() {
         }
 
         // Build deduplication sets for cross-device duplicate detection (auto-upload has more time)
-        const alreadyFilenames = new Set();
-        const alreadyBaseFilenames = new Set();
-        const alreadyBaseNameSizes = new Map(); // baseFilename -> Set of sizes
-        const alreadyBaseNameDates = new Map(); // baseFilename -> Set of date strings (YYYY-MM-DD)
-        const alreadyBaseNameTimestamps = new Map(); // baseFilename -> Set of full timestamps (YYYY-MM-DDTHH:MM:SS) for HEIC
-        const alreadyPerceptualHashes = new Set();
-        const alreadyFileHashes = new Set();
+        // Try to load cached dedup sets first to avoid re-decrypting all manifests
+        let alreadyFilenames = new Set();
+        let alreadyBaseFilenames = new Set();
+        let alreadyBaseNameSizes = new Map(); // baseFilename -> Set of sizes
+        let alreadyBaseNameDates = new Map(); // baseFilename -> Set of date strings (YYYY-MM-DD)
+        let alreadyBaseNameTimestamps = new Map(); // baseFilename -> Set of full timestamps (YYYY-MM-DDTHH:MM:SS) for HEIC
+        let alreadyPerceptualHashes = new Set();
+        let alreadyFileHashes = new Set();
         // EXIF-based deduplication sets for cross-platform HEIC matching
-        const alreadyExifFull = new Set(); // captureTime|make|model (highest confidence)
-        const alreadyExifTimeModel = new Set(); // captureTime|model
-        const alreadyExifTimeMake = new Set(); // captureTime|make
-        // Only decrypt manifests if there are new files to upload (skip when all backed up)
+        let alreadyExifFull = new Set(); // captureTime|make|model (highest confidence)
+        let alreadyExifTimeModel = new Set(); // captureTime|model
+        let alreadyExifTimeMake = new Set(); // captureTime|make
+        
+        // Build dedup sets from metadata in list response (no decryption needed - server returns plaintext meta)
         if (existingManifests.length > 0 && !allBackedUpAtStart) {
           if (shouldShowPreparingAtStart) setStatus(t('status.autoBackupPreparing'));
-          const masterKey = await getStealthCloudMasterKey();
           for (const m of existingManifests) {
-            try {
-              const manRes = await axios.get(`${SERVER_URL}/api/cloud/manifests/${m.manifestId}`, { headers: config.headers, timeout: 15000 });
-              const payload = manRes.data;
-              const parsed = typeof payload === 'string' ? JSON.parse(payload) : payload;
-              const enc = JSON.parse(parsed.encryptedManifest);
-              const manifestNonce = naclUtil.decodeBase64(enc.manifestNonce);
-              const manifestBox = naclUtil.decodeBase64(enc.manifestBox);
-              const manifestPlain = nacl.secretbox.open(manifestBox, manifestNonce, masterKey);
-              if (manifestPlain) {
-                const manifest = JSON.parse(naclUtil.encodeUTF8(manifestPlain));
-                if (manifest.filename) {
-                  alreadyFilenames.add(normalizeFilenameForCompare(manifest.filename));
-                  // Add base filename for variant matching
-                  const baseName = extractBaseFilename(manifest.filename);
-                  if (baseName) {
-                    alreadyBaseFilenames.add(baseName);
-                    // Build size map for fallback matching
-                    if (manifest.originalSize) {
-                      if (!alreadyBaseNameSizes.has(baseName)) alreadyBaseNameSizes.set(baseName, new Set());
-                      alreadyBaseNameSizes.get(baseName).add(manifest.originalSize);
-                    }
-                    // Build date map for fallback matching
-                    if (manifest.creationTime) {
-                      const dateStr = normalizeDateForCompare(manifest.creationTime);
-                      if (dateStr) {
-                        if (!alreadyBaseNameDates.has(baseName)) alreadyBaseNameDates.set(baseName, new Set());
-                        alreadyBaseNameDates.get(baseName).add(dateStr);
-                      }
-                      // Build full timestamp map for HEIC deduplication (second-level precision)
-                      const fullTimestamp = normalizeFullTimestamp(manifest.creationTime);
-                      if (fullTimestamp) {
-                        if (!alreadyBaseNameTimestamps.has(baseName)) alreadyBaseNameTimestamps.set(baseName, new Set());
-                        alreadyBaseNameTimestamps.get(baseName).add(fullTimestamp);
-                      }
-                    }
+            // Use metadata from list response (includeMeta=true) - no HTTP request needed
+            if (m.filename) {
+              alreadyFilenames.add(normalizeFilenameForCompare(m.filename));
+              const baseName = extractBaseFilename(m.filename);
+              if (baseName) {
+                alreadyBaseFilenames.add(baseName);
+                if (m.originalSize) {
+                  if (!alreadyBaseNameSizes.has(baseName)) alreadyBaseNameSizes.set(baseName, new Set());
+                  alreadyBaseNameSizes.get(baseName).add(m.originalSize);
+                }
+                if (m.creationTime) {
+                  const dateStr = normalizeDateForCompare(m.creationTime);
+                  if (dateStr) {
+                    if (!alreadyBaseNameDates.has(baseName)) alreadyBaseNameDates.set(baseName, new Set());
+                    alreadyBaseNameDates.get(baseName).add(dateStr);
+                  }
+                  const fullTimestamp = normalizeFullTimestamp(m.creationTime);
+                  if (fullTimestamp) {
+                    if (!alreadyBaseNameTimestamps.has(baseName)) alreadyBaseNameTimestamps.set(baseName, new Set());
+                    alreadyBaseNameTimestamps.get(baseName).add(fullTimestamp);
                   }
                 }
-                // If manifest has perceptualHash, it's an image - use perceptual hash
-                if (manifest.perceptualHash) {
-                  alreadyPerceptualHashes.add(manifest.perceptualHash);
-                }
-                // Always add fileHash if present (for both images and videos)
-                // Images need fileHash for byte-identical dedup (AirDrop, copies)
-                if (manifest.fileHash) {
-                  alreadyFileHashes.add(manifest.fileHash);
-                }
-                // Build EXIF-based deduplication keys from manifest
-                // These are the real EXIF values extracted from the original file during upload
-                if (manifest.exifCaptureTime) {
-                  const ct = manifest.exifCaptureTime;
-                  const mk = manifest.exifMake;
-                  const md = manifest.exifModel;
-                  // Generate dedup keys at different confidence levels
-                  if (ct && mk && md) alreadyExifFull.add(`${ct}|${mk}|${md}`);
-                  if (ct && md) alreadyExifTimeModel.add(`${ct}|${md}`);
-                  if (ct && mk) alreadyExifTimeMake.add(`${ct}|${mk}`);
-                }
               }
-            } catch (e) {
-              // Skip manifests we can't decrypt
+            }
+            if (m.perceptualHash) alreadyPerceptualHashes.add(m.perceptualHash);
+            if (m.fileHash) alreadyFileHashes.add(m.fileHash);
+            if (m.exifCaptureTime) {
+              const ct = m.exifCaptureTime;
+              const mk = m.exifMake;
+              const md = m.exifModel;
+              if (ct && mk && md) alreadyExifFull.add(`${ct}|${mk}|${md}`);
+              if (ct && md) alreadyExifTimeModel.add(`${ct}|${md}`);
+              if (ct && mk) alreadyExifTimeMake.add(`${ct}|${mk}`);
             }
           }
           console.log(`AutoUpload: found ${alreadyFilenames.size} filenames, ${alreadyBaseFilenames.size} base names, ${alreadyBaseNameSizes.size} name+size, ${alreadyBaseNameDates.size} name+date, ${alreadyBaseNameTimestamps.size} name+timestamp, ${alreadyPerceptualHashes.size} perceptual hashes, ${alreadyFileHashes.size} file hashes, ${alreadyExifFull.size} EXIF keys for deduplication`);
           // Debug: log some sample filenames to verify they're being collected
           const sampleFilenames = Array.from(alreadyFilenames).slice(0, 5);
           console.log(`AutoUpload: sample filenames in set: ${JSON.stringify(sampleFilenames)}`);
+          
+          // Skip dedup cache - SecureStore has 2048 byte limit, cache is too large
+          // Dedup sets are rebuilt from server manifests each session (fast enough)
+          console.log('AutoUpload: dedup sets built from server manifests');
         }
 
         let after = null;

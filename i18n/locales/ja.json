@@ -292,7 +292,7 @@
 		"autoUploadOffDesc": "手動バックアップのみ",
 		"autoUploadNote": "バックグラウンドアップロードはiOS/Androidのポリシーに依存します。最良の結果を得るには：アプリを時々開き、WiFiに接続し、デバイスを充電してください。",
 		"language": "言語",
-		"useEnglish": "英語を使う",
+		"useEnglish": "English",
 		"currentlyEnglish": "現在英語を使用中",
 		"currentlySystem": "システム言語の使用",
 		"englishDefaultNote": "システム言語がサポートされていない場合、デフォルトは英語です。",
@@ -661,7 +661,7 @@
 		"trialExpired": "試用期限切れ",
 		"subscriptionExpiredGrace": "サブスクリプションの有効期限が切れました。7日以内にデータを同期してください。",
 		"subscriptionExpiredRenew": "サブスクリプションの有効期限が切れました。バックアップを継続するには更新してください。",
-		"subscriptionViaPlatform": "{{platform}}で管理。SOLで支払うには、現在のプランを期限切れにする。"
+		"subscriptionViaPlatform": "{{platform}} で購入。"
 	},
 	"login": {
 		"chooseServer": "サーバーを選択",

@@ -25,8 +25,14 @@ import { Feather } from '@expo/vector-icons';
 import { t } from './i18n';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
+const SCREEN_HEIGHT_FULL = Dimensions.get('screen').height;
+// Android navigation bar height detection - use minimum 48px if detection fails
+const ANDROID_NAV_BAR_HEIGHT = Platform.OS === 'android' ? Math.max(48, SCREEN_HEIGHT_FULL - SCREEN_HEIGHT) : 0;
 const isTablet = Math.min(SCREEN_WIDTH, SCREEN_HEIGHT) >= 600;
 const isLargeTablet = Math.min(SCREEN_WIDTH, SCREEN_HEIGHT) >= 768;
+// 7+ inch tablets (diagonal ~7 inches = ~600dp minimum dimension typically)
+const is7InchOrLarger = Math.min(SCREEN_WIDTH, SCREEN_HEIGHT) >= 600 && Math.max(SCREEN_WIDTH, SCREEN_HEIGHT) >= 960;
+const PLAN_CARDS_PER_ROW = is7InchOrLarger ? 4 : 2;
 
 const scale = (size) => {
   if (isLargeTablet) return size * 1.35;
@@ -86,6 +92,8 @@ const InputField = ({ icon, placeholder, value, onChangeText, secureTextEntry, k
       autoComplete={autoComplete}
       textContentType={textContentType}
       importantForAutofill={importantForAutofill}
+      editable={true}
+      selectTextOnFocus={true}
     />
   </View>
 );
@@ -551,7 +559,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingHorizontal: scaleSpacing(20),
     paddingTop: scaleSpacing(40),
-    paddingBottom: scaleSpacing(40),
+    paddingBottom: Platform.OS === 'android' ? ANDROID_NAV_BAR_HEIGHT + scaleSpacing(40) : scaleSpacing(40),
   },
   // Header
   header: {
@@ -754,14 +762,17 @@ const styles = StyleSheet.create({
   planGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    padding: scaleSpacing(8),
-    gap: scaleSpacing(10),
+    justifyContent: 'space-between',
+    paddingHorizontal: scaleSpacing(6),
+    paddingVertical: scaleSpacing(6),
   },
   planCard: {
-    width: (SCREEN_WIDTH - scaleSpacing(40) - scaleSpacing(8) - scaleSpacing(30)) / 2,
+    // 2 cards per row on phones, 4 on 7+ inch tablets
+    width: is7InchOrLarger ? '23%' : '48%',
+    marginBottom: scaleSpacing(6),
     backgroundColor: '#2A2A2A',
-    borderRadius: scaleSpacing(12),
-    padding: scaleSpacing(16),
+    borderRadius: scaleSpacing(10),
+    padding: scaleSpacing(10),
     alignItems: 'center',
     borderWidth: 2,
     borderColor: 'transparent',
@@ -774,7 +785,7 @@ const styles = StyleSheet.create({
     opacity: 0.5,
   },
   planCardGb: {
-    fontSize: scale(18),
+    fontSize: scale(15),
     fontWeight: 'bold',
     color: '#FFFFFF',
   },
@@ -782,30 +793,30 @@ const styles = StyleSheet.create({
     color: '#03E1FF',
   },
   planCardPrice: {
-    fontSize: scale(14),
+    fontSize: scale(12),
     color: '#888888',
-    marginTop: scaleSpacing(4),
+    marginTop: scaleSpacing(2),
   },
   planCardPriceSelected: {
     color: '#FFFFFF',
   },
   planCardMeta: {
-    fontSize: scale(11),
+    fontSize: scale(10),
     color: '#666666',
-    marginTop: scaleSpacing(2),
+    marginTop: scaleSpacing(1),
   },
   soldOutBadge: {
     position: 'absolute',
-    top: scaleSpacing(6),
-    right: scaleSpacing(6),
+    top: scaleSpacing(4),
+    right: scaleSpacing(4),
     backgroundColor: '#D4A017',
-    paddingHorizontal: scaleSpacing(6),
-    paddingVertical: scaleSpacing(2),
-    borderRadius: scaleSpacing(4),
+    paddingHorizontal: scaleSpacing(4),
+    paddingVertical: scaleSpacing(1),
+    borderRadius: scaleSpacing(3),
   },
   soldOutText: {
     color: '#000000',
-    fontSize: scale(9),
+    fontSize: scale(8),
     fontWeight: '700',
   },
   planHint: {

@@ -292,7 +292,7 @@
 		"autoUploadOffDesc": "Manual backup only",
 		"autoUploadNote": "Background uploads depend on iOS/Android policies. For best results: keep the app open occasionally, connect to WiFi, and charge your device.",
 		"language": "Language",
-		"useEnglish": "Use English",
+		"useEnglish": "English",
 		"currentlyEnglish": "Currently using English",
 		"currentlySystem": "Using system language",
 		"englishDefaultNote": "English is the default if your system language is not supported.",
@@ -319,7 +319,20 @@
 		"biometricLock": "Biometric Lock",
 		"faceId": "Face ID",
 		"touchId": "Touch ID",
-		"fingerprint": "Fingerprint"
+		"fingerprint": "Fingerprint",
+		"encryption": "Encryption",
+		"fullEncryption": "Full Encryption",
+		"fullEncryptionOn": "Zero-knowledge encryption enabled",
+		"fullEncryptionOff": "Fast mode - files stored unencrypted",
+		"fullEncryptionDesc": "When enabled, files are encrypted before upload. Server cannot read your data. When disabled, files upload 2-5x faster but without encryption."
+	},
+	"rawMode": {
+		"uploading": "Uploading {{current}} of {{total}}: {{filename}}",
+		"uploadComplete": "Upload complete: {{uploaded}} uploaded, {{skipped}} skipped, {{failed}} failed",
+		"generatingThumb": "Generating thumbnail...",
+		"extractingExif": "Extracting metadata...",
+		"downloadingFile": "Downloading {{current}} of {{total}}: {{filename}}",
+		"syncComplete": "Sync complete: {{restored}} restored, {{skipped}} skipped, {{failed}} failed"
 	},
 	"subscription": {
 		"title": "Subscription",
@@ -661,7 +674,7 @@
 		"trialExpired": "Trial Expired",
 		"subscriptionExpiredGrace": "Your subscription expired. You have 7 days to sync your data.",
 		"subscriptionExpiredRenew": "Your subscription has expired. Renew to continue backups.",
-		"subscriptionViaPlatform": "Managed via {{platform}}. To pay with SOL, let current plan expire."
+		"subscriptionViaPlatform": "Purchased via {{platform}}."
 	},
 	"login": {
 		"chooseServer": "Choose Server",

@@ -291,7 +291,7 @@
 		"autoUploadOffDesc": "Endast manuell säkerhetskopiering",
 		"autoUploadNote": "Bakgrundsuppladdningar beror på iOS/Android-policyer. För bästa resultat: öppna appen ibland, anslut till WiFi och ladda din enhet.",
 		"language": "Språk",
-		"useEnglish": "Använd engelska",
+		"useEnglish": "English",
 		"currentlyEnglish": "Använder för närvarande engelska",
 		"currentlySystem": "Använda systemspråk",
 		"englishDefaultNote": "Engelska är standard om ditt systemspråk inte stöds.",
@@ -658,7 +658,7 @@
 		"trialExpired": "Försöksperioden har löpt ut",
 		"subscriptionExpiredGrace": "Din prenumeration har löpt ut. Du har 7 dagar på dig att synkronisera dina data.",
 		"subscriptionExpiredRenew": "Din prenumeration har löpt ut. Förnya för att fortsätta säkerhetskopieringen.",
-		"subscriptionViaPlatform": "Hanteras via {{platform}}. För att betala med SOL, låt nuvarande plan löpa ut."
+		"subscriptionViaPlatform": "Köpt via {{platform}}."
 	},
 	"login": {
 		"chooseServer": "Välj server",

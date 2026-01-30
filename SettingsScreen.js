@@ -4,7 +4,7 @@
  * Professional Settings UI - Clean, minimal, premium feel
  */
 
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   View,
   Text,
@@ -16,11 +16,15 @@ import {
   Platform,
   Dimensions,
   StatusBar,
+  useWindowDimensions,
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { t, SUPPORTED_LANGUAGES, isUsingEnglish, setUseEnglish, getSystemLanguage, getCurrentLanguage } from './i18n';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
+const SCREEN_HEIGHT_FULL = Dimensions.get('screen').height;
+// Android navigation bar height detection - use minimum 48px if detection fails
+const ANDROID_NAV_BAR_HEIGHT = Platform.OS === 'android' ? Math.max(48, SCREEN_HEIGHT_FULL - SCREEN_HEIGHT) : 0;
 const MIN_DIMENSION = Math.min(SCREEN_WIDTH, SCREEN_HEIGHT);
 
 // Device categories based on viewport widths:
@@ -176,6 +180,13 @@ export const SettingsScreen = ({
   onLanguageChange,
 }) => {
   const [useEnglish, setUseEnglishState] = useState(isUsingEnglish());
+  // Detect orientation for tablets - enable scroll in landscape
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  const isLandscape = windowWidth > windowHeight;
+  const minDim = Math.min(windowWidth, windowHeight);
+  const isTabletDevice = minDim >= 600; // 7"+ tablets
+  const shouldEnableScroll = isTabletDevice && isLandscape;
+  const remoteConnectTimerRef = useRef(null);
   const systemLang = getSystemLanguage();
   const systemLangInfo = SUPPORTED_LANGUAGES.find(l => l.code === systemLang);
   const currentLangInfo = SUPPORTED_LANGUAGES.find(l => l.code === currentLanguage);
@@ -226,7 +237,7 @@ export const SettingsScreen = ({
         showsVerticalScrollIndicator={false}
         bounces={false}
         alwaysBounceVertical={false}
-        scrollEnabled={false}
+        scrollEnabled={shouldEnableScroll}
         contentInsetAdjustmentBehavior="automatic"
       >
         <View style={styles.sectionsContainer}>
@@ -270,24 +281,22 @@ export const SettingsScreen = ({
                 <Text style={styles.inputLabel}>{t('settings.serverIpAddress')}</Text>
                 <View style={styles.inputRow}>
                   <TextInput
-                    style={styles.textInput}
+                    style={[styles.textInput, { backgroundColor: '#1a1a1a', color: '#888' }]}
                     placeholder="192.168.1.100"
                     placeholderTextColor="#666"
                     value={localHost}
-                    onChangeText={(t) => setLocalHost(normalizeHostInput(t))}
-                    autoCapitalize="none"
-                    keyboardType="url"
+                    editable={false}
+                    selectTextOnFocus={false}
                   />
                   <TouchableOpacity style={styles.qrButton} onPress={onQrScan}>
                     <Feather name="maximize" size={scale(18)} color="#FFFFFF" />
                   </TouchableOpacity>
                 </View>
+                <Text style={{ color: '#666', fontSize: scale(11), marginTop: scaleSpacing(4) }}>
+                  {t('settings.scanQrToConnect') || 'Scan QR code from desktop app to connect'}
+                </Text>
               </View>
-              <ActionButton
-                title={t('settings.saveAndConnect')}
-                onPress={handleSaveSettings}
-                glassModeEnabled={glassModeEnabled}
-              />
+              {/* Save & Connect button hidden - connection happens via QR scan */}
             </Card>
           </>
         )}
@@ -303,16 +312,42 @@ export const SettingsScreen = ({
                   placeholder="your-server.com or IP address"
                   placeholderTextColor="#666"
                   value={remoteHost}
-                  onChangeText={(t) => setRemoteHost(normalizeHostInput(t))}
+                  onChangeText={(text) => {
+                    setRemoteHost(text);
+                    // Cancel any pending connect attempt while typing
+                    if (remoteConnectTimerRef.current) {
+                      clearTimeout(remoteConnectTimerRef.current);
+                      remoteConnectTimerRef.current = null;
+                    }
+                  }}
+                  onBlur={async () => {
+                    // Try to connect when user leaves the input field
+                    const normalized = normalizeHostInput(remoteHost);
+                    if (!normalized || normalized.length < 4) return;
+                    // Validate IP (xxx.xxx.xxx.xxx) or domain (xxx.xxx)
+                    const isValidIp = /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(normalized);
+                    const isValidDomain = /^[a-zA-Z0-9][a-zA-Z0-9-]*\.[a-zA-Z]{2,}/.test(normalized);
+                    if (!isValidIp && !isValidDomain) return;
+                    // Save and try to connect
+                    await SecureStore.setItemAsync('server_type', 'remote');
+                    await SecureStore.setItemAsync('remote_host', normalized);
+                    if (relogin) {
+                      try {
+                        await relogin('remote');
+                      } catch (e) {
+                        console.log('[Remote] Connection failed:', e.message);
+                        showDarkAlert(
+                          t('alerts.error') || 'Error',
+                          t('settings.remoteServerUnreachable') || 'Remote server is not reachable. Check the address and try again.'
+                        );
+                      }
+                    }
+                  }}
                   autoCapitalize="none"
                   keyboardType="url"
                 />
               </View>
-              <ActionButton
-                title={t('settings.saveAndConnect')}
-                onPress={handleSaveSettings}
-                glassModeEnabled={glassModeEnabled}
-              />
+              {/* Save & Connect button hidden - auto-connects on input */}
             </Card>
           </>
         )}
@@ -456,7 +491,7 @@ const styles = StyleSheet.create({
     flexGrow: 1,
     paddingHorizontal: scaleSpacing(16),
     paddingTop: scaleSpacing(4),
-    paddingBottom: Platform.OS === 'android' ? scaleSpacing(24) : scaleSpacing(20),
+    paddingBottom: Platform.OS === 'android' ? ANDROID_NAV_BAR_HEIGHT + scaleSpacing(16) : scaleSpacing(20),
     justifyContent: 'space-between',
   },
   sectionsContainer: {

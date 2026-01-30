@@ -291,7 +291,7 @@
 		"autoUploadOffDesc": "Hanya pencadangan manual",
 		"autoUploadNote": "Unggahan latar belakang bergantung pada kebijakan iOS/Android. Untuk hasil terbaik: buka aplikasi sesekali, hubungkan ke WiFi, dan isi daya perangkat Anda.",
 		"language": "Bahasa",
-		"useEnglish": "Gunakan bahasa Inggris",
+		"useEnglish": "English",
 		"currentlyEnglish": "Saat ini menggunakan bahasa Inggris",
 		"currentlySystem": "Menggunakan bahasa sistem",
 		"englishDefaultNote": "Bahasa Inggris adalah default jika bahasa sistem Anda tidak didukung.",
@@ -595,7 +595,7 @@
 		"trialExpired": "Uji Coba Berakhir",
 		"subscriptionExpiredGrace": "Langganan Anda telah kedaluwarsa. Anda memiliki waktu 7 hari untuk menyinkronkan data Anda.",
 		"subscriptionExpiredRenew": "Langganan Anda telah kedaluwarsa. Perpanjang untuk melanjutkan pencadangan.",
-		"subscriptionViaPlatform": "Dikelola melalui {{platform}}. Untuk membayar dengan SOL, biarkan paket saat ini berakhir."
+		"subscriptionViaPlatform": "Dibeli melalui {{platform}}."
 	},
 	"login": {
 		"chooseServer": "Pilih Server",

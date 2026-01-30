@@ -292,7 +292,7 @@
 		"autoUploadOffDesc": "Apenas backup manual",
 		"autoUploadNote": "Os uploads em segundo plano dependem das políticas iOS/Android. Para melhores resultados: abra a app ocasionalmente, conecte-se ao WiFi e carregue o dispositivo.",
 		"language": "Língua",
-		"useEnglish": "Utilizar o inglês",
+		"useEnglish": "English",
 		"currentlyEnglish": "Atualmente a utilizar o inglês",
 		"currentlySystem": "Utilizar a linguagem do sistema",
 		"englishDefaultNote": "O inglês é a predefinição se o idioma do sistema não for suportado.",
@@ -661,7 +661,7 @@
 		"trialExpired": "Teste expirado",
 		"subscriptionExpiredGrace": "A sua subscrição expirou. Tem 7 dias para sincronizar os seus dados.",
 		"subscriptionExpiredRenew": "A sua subscrição expirou. Renove para continuar com os backups.",
-		"subscriptionViaPlatform": "Gerido através de {{platform}}. Para pagar com SOL, deixar expirar o plano atual."
+		"subscriptionViaPlatform": "Comprado via {{platform}}."
 	},
 	"login": {
 		"chooseServer": "Escolher servidor",

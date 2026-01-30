@@ -291,7 +291,7 @@
 		"autoUploadOffDesc": "Csak kézi biztonsági mentés",
 		"autoUploadNote": "A háttérfeltöltések az iOS/Android irányelvektől függenek. A legjobb eredmény érdekében: nyissa meg az alkalmazást időnként, csatlakozzon WiFi-hez és töltse az eszközt.",
 		"language": "Nyelv",
-		"useEnglish": "Használjon angolul",
+		"useEnglish": "English",
 		"currentlyEnglish": "Jelenleg angolul használ",
 		"currentlySystem": "A rendszer nyelvének használata",
 		"englishDefaultNote": "Az angol az alapértelmezett, ha a rendszer nyelve nem támogatott.",
@@ -595,7 +595,7 @@
 		"trialExpired": "Trial Lejárt",
 		"subscriptionExpiredGrace": "Lejárt az előfizetése. Az adatok szinkronizálására 7 nap áll rendelkezésére.",
 		"subscriptionExpiredRenew": "Az Ön előfizetése lejárt. A biztonsági mentések folytatásához újítsa meg.",
-		"subscriptionViaPlatform": "Az {{platform}}-en keresztül irányított. A SOL fizetéséhez hagyja, hogy a jelenlegi terv lejárjon."
+		"subscriptionViaPlatform": "Vásárolva a {{platform}} segítségével."
 	},
 	"login": {
 		"chooseServer": "Szerver kiválasztása",

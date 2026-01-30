@@ -292,7 +292,7 @@
 		"autoUploadOffDesc": "Alleen handmatige back-up",
 		"autoUploadNote": "Uploads op de achtergrond zijn afhankelijk van iOS/Android-beleid. Voor beste resultaten: open de app af en toe, maak verbinding met WiFi en laad je apparaat op.",
 		"language": "Taal",
-		"useEnglish": "Gebruik Engels",
+		"useEnglish": "English",
 		"currentlyEnglish": "Gebruikt momenteel Engels",
 		"currentlySystem": "Systeemtaal gebruiken",
 		"englishDefaultNote": "Engels is de standaardtaal als de systeemtaal niet wordt ondersteund.",
@@ -659,7 +659,7 @@
 		"trialExpired": "Proef Verlopen",
 		"subscriptionExpiredGrace": "Je abonnement is verlopen. Je hebt 7 dagen om je gegevens te synchroniseren.",
 		"subscriptionExpiredRenew": "Uw abonnement is verlopen. Vernieuw om door te gaan met back-ups.",
-		"subscriptionViaPlatform": "Beheerd via {{platform}}. Om met SOL te betalen, moet je het huidige plan laten verlopen."
+		"subscriptionViaPlatform": "Gekocht via {{platform}}."
 	},
 	"login": {
 		"chooseServer": "Kies server",

@@ -65,11 +65,21 @@ const YIELD_INTERVAL_MS = 0; // Immediate yield
 const PROGRESS_THROTTLE_MS = 200; // Slower updates to reduce UI load
 const PAGE_SIZE = 250; // Assets per page when scanning
 
-// Throttle settings
-const getThrottleAssetCooldownMs = (fastMode) => fastMode ? 0 : (Platform.OS === 'ios' ? 2000 : 1500);
+// Throttle settings - always have minimum yields to prevent ANR/crash on weak phones
+// Progressive yields: larger files (videos) get bigger cooldowns
+const getThrottleAssetCooldownMs = (fastMode, fileSize = 0) => {
+  const isLargeFile = fileSize > 10 * 1024 * 1024; // >10MB = large file (video)
+  const base = fastMode ? 50 : (Platform.OS === 'ios' ? 2000 : 1500);
+  return isLargeFile ? base * 2 : base;
+};
 const getThrottleBatchLimit = (fastMode) => fastMode ? 999999 : 10;
 const getThrottleBatchCooldownMs = (fastMode) => fastMode ? 0 : 30000;
-const getThrottleChunkCooldownMs = (fastMode) => fastMode ? 0 : 300;
+const getThrottleChunkCooldownMs = (fastMode, chunkIndex = 0) => {
+  // Progressive: every 5 chunks, add 5ms (capped at 2x base)
+  const base = fastMode ? 10 : 300;
+  const progressive = Math.min(Math.floor(chunkIndex / 5) * 5, base);
+  return base + progressive;
+};
 
 // ============================================================================
 // ASSET COLLECTION (All Albums + iCloud/Google Cloud Download)
@@ -844,7 +854,29 @@ const encryptAndUpload = async ({
   }
 
   // Build and encrypt manifest
-  const exifData = extractExifForDedup(assetInfo, asset);
+  // Extract EXIF data - iOS uses assetInfo.exif, Android needs native module
+  let exifData = { captureTime: null, make: null, model: null };
+  try {
+    if (Platform.OS === 'ios') {
+      exifData = extractExifForDedup(assetInfo, asset);
+    } else {
+      // Android: use native ExifExtractor module
+      const { NativeModules } = require('react-native');
+      const ExifExtractor = NativeModules.ExifExtractor;
+      if (ExifExtractor && typeof ExifExtractor.extractExif === 'function') {
+        const result = await ExifExtractor.extractExif(filePath);
+        if (result) {
+          exifData = {
+            captureTime: result.captureTime || null,
+            make: result.make ? result.make.trim().toLowerCase() : null,
+            model: result.model ? result.model.trim().toLowerCase() : null,
+          };
+        }
+      }
+    }
+  } catch (e) {
+    console.warn('[Backup] EXIF extraction failed (non-critical):', filename, e?.message);
+  }
   const manifest = {
     v: 1,
     assetId: asset.id,
@@ -911,24 +943,77 @@ const encryptAndUpload = async ({
 
   // Store full EXIF to server for universal cross-platform preservation
   // This runs in parallel with cleanup - non-blocking, fire-and-forget
-  if (fileHash && !manifestResponse?.data?.skipped) {
+  // Always store EXIF for new uploads (not skipped by server)
+  const wasSkipped = manifestResponse?.data?.skipped;
+  if (fileHash && !wasSkipped) {
     const isImage = asset.mediaType === 'photo' || /\.(jpg|jpeg|png|heic|heif|gif|bmp|webp|tiff?)$/i.test(filename || '');
     if (isImage) {
       try {
-        const fullExif = extractFullExif(assetInfo, asset);
+        let fullExif = null;
+        if (Platform.OS === 'ios') {
+          fullExif = extractFullExif(assetInfo, asset);
+          console.log('[EXIF] iOS extraction for', filename, '- captureTime:', fullExif?.captureTime, 'make:', fullExif?.make);
+        } else {
+          // Android: use native ExifExtractor for full EXIF (now returns all fields)
+          const { NativeModules } = require('react-native');
+          const ExifExtractor = NativeModules.ExifExtractor;
+          if (ExifExtractor && typeof ExifExtractor.extractExif === 'function') {
+            const nativeExif = await ExifExtractor.extractExif(filePath);
+            console.log('[EXIF] Android native extraction for', filename, '- captureTime:', nativeExif?.captureTime, 'make:', nativeExif?.make);
+            if (nativeExif) {
+              fullExif = {
+                captureTime: nativeExif.captureTime || null,
+                make: nativeExif.make || null,
+                model: nativeExif.model || null,
+                offsetTimeOriginal: nativeExif.offsetTimeOriginal || null,
+                subSecTimeOriginal: nativeExif.subSecTimeOriginal || null,
+                exposureTime: nativeExif.exposureTime || null,
+                fNumber: nativeExif.fNumber || null,
+                iso: nativeExif.iso || null,
+                focalLength: nativeExif.focalLength || null,
+                focalLengthIn35mm: nativeExif.focalLengthIn35mm || null,
+                flash: nativeExif.flash || null,
+                whiteBalance: nativeExif.whiteBalance || null,
+                meteringMode: nativeExif.meteringMode || null,
+                exposureProgram: nativeExif.exposureProgram || null,
+                exposureBias: nativeExif.exposureBias || null,
+                width: nativeExif.width || null,
+                height: nativeExif.height || null,
+                orientation: nativeExif.orientation || null,
+                colorSpace: nativeExif.colorSpace || null,
+                gpsLatitude: nativeExif.gpsLatitude || asset.location?.latitude || null,
+                gpsLongitude: nativeExif.gpsLongitude || asset.location?.longitude || null,
+                gpsAltitude: nativeExif.gpsAltitude || null,
+                gpsDateStamp: nativeExif.gpsDateStamp || null,
+                gpsTimestamp: nativeExif.gpsTimestamp || null,
+                software: nativeExif.software || null,
+                lensMake: nativeExif.lensMake || null,
+                lensModel: nativeExif.lensModel || null,
+              };
+            }
+          } else {
+            console.log('[EXIF] Android ExifExtractor not available');
+          }
+        }
         // Only store if we have meaningful EXIF data
-        if (fullExif.captureTime || fullExif.make || fullExif.gpsLatitude != null) {
+        if (fullExif && (fullExif.captureTime || fullExif.make || fullExif.gpsLatitude != null)) {
+          console.log('[EXIF] Storing full EXIF for', filename, 'hash:', fileHash?.substring(0, 16), 'to:', SERVER_URL);
           axios.post(
             `${SERVER_URL}/api/exif/store`,
             { fileHash, exif: fullExif, platform: Platform.OS },
             { headers: config.headers, timeout: 10000 }
-          ).catch(e => console.log('[EXIF] Store failed (non-critical):', e?.message));
+          ).then(() => console.log('[EXIF] Store success:', filename))
+           .catch(e => console.log('[EXIF] Store failed (non-critical):', e?.message));
+        } else {
+          console.log('[EXIF] Skipping store - no meaningful EXIF data for', filename, 'fullExif:', JSON.stringify(fullExif));
         }
       } catch (e) {
         // Non-critical - don't fail upload if EXIF storage fails
         console.log('[EXIF] Extract failed (non-critical):', e?.message);
       }
     }
+  } else if (wasSkipped) {
+    console.log('[EXIF] Skipping - file was duplicate:', filename);
   }
 
   // Cleanup temp file

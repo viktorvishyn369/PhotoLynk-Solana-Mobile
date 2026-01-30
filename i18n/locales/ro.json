@@ -291,7 +291,7 @@
 		"autoUploadOffDesc": "Doar backup manual",
 		"autoUploadNote": "Încărcările în fundal depind de politicile iOS/Android. Pentru rezultate optime: deschideți aplicația ocazional, conectați-vă la WiFi și încărcați dispozitivul.",
 		"language": "Limba",
-		"useEnglish": "Utilizați limba engleză",
+		"useEnglish": "English",
 		"currentlyEnglish": "În prezent folosesc limba engleză",
 		"currentlySystem": "Utilizarea limbajului de sistem",
 		"englishDefaultNote": "Engleza este limba implicită dacă limba sistemului dvs. nu este acceptată.",
@@ -595,7 +595,7 @@
 		"trialExpired": "Trial expirat",
 		"subscriptionExpiredGrace": "Abonamentul dvs. a expirat. Aveți la dispoziție 7 zile pentru a vă sincroniza datele.",
 		"subscriptionExpiredRenew": "Abonamentul dvs. a expirat. Reînnoiți pentru a continua backup-urile.",
-		"subscriptionViaPlatform": "Gestionat prin {{platform}}. Pentru a plăti cu SOL, lăsați planul actual să expire."
+		"subscriptionViaPlatform": "Cumpărat prin {{platform}}."
 	},
 	"login": {
 		"chooseServer": "Alegeți serverul",

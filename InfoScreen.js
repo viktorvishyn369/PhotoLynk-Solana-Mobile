@@ -5,7 +5,7 @@
  * Matches SettingsScreen theme
  */
 
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -18,11 +18,15 @@ import {
   Linking,
   Clipboard,
   StatusBar,
+  useWindowDimensions,
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { t } from './i18n';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
+const SCREEN_HEIGHT_FULL = Dimensions.get('screen').height;
+// Android navigation bar height detection - use minimum 48px if detection fails
+const ANDROID_NAV_BAR_HEIGHT = Platform.OS === 'android' ? Math.max(48, SCREEN_HEIGHT_FULL - SCREEN_HEIGHT) : 0;
 const MIN_DIMENSION = Math.min(SCREEN_WIDTH, SCREEN_HEIGHT);
 
 // Device categories based on viewport widths:
@@ -36,6 +40,8 @@ const isMediumPhone = MIN_DIMENSION >= 375 && MIN_DIMENSION < 400; // iPhone X/1
 const isLargePhone = MIN_DIMENSION >= 400 && MIN_DIMENSION < 600; // iPhone Plus/Max
 const isTablet = MIN_DIMENSION >= 600;
 const isLargeTablet = MIN_DIMENSION >= 768;
+// 7+ inch tablets for 4 cards per row
+const is7InchOrLarger = MIN_DIMENSION >= 600 && Math.max(SCREEN_WIDTH, SCREEN_HEIGHT) >= 960;
 
 // Responsive scale factor based on screen width (base: 390px - iPhone 12/13)
 const BASE_WIDTH = 390;
@@ -188,6 +194,12 @@ export const InfoScreen = ({
   openPaywall,
   STEALTH_PLAN_TIERS,
 }) => {
+  // Detect orientation for tablets - enable scroll in landscape
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  const isLandscape = windowWidth > windowHeight;
+  const minDim = Math.min(windowWidth, windowHeight);
+  const isTabletDevice = minDim >= 600; // 7"+ tablets
+  const shouldEnableScroll = isTabletDevice && isLandscape;
 
   const handleCopyDeviceId = () => {
     if (deviceUuid) {
@@ -269,7 +281,7 @@ export const InfoScreen = ({
         showsVerticalScrollIndicator={false}
         bounces={false}
         alwaysBounceVertical={false}
-        scrollEnabled={false}
+        scrollEnabled={shouldEnableScroll}
         contentInsetAdjustmentBehavior="automatic"
       >
         <View style={styles.sectionsContainer}>
@@ -479,7 +491,7 @@ const styles = StyleSheet.create({
     flexGrow: 1,
     paddingHorizontal: scaleSpacing(16),
     paddingTop: scaleSpacing(4),
-    paddingBottom: Platform.OS === 'android' ? scaleSpacing(24) : scaleSpacing(20),
+    paddingBottom: Platform.OS === 'android' ? ANDROID_NAV_BAR_HEIGHT + scaleSpacing(16) : scaleSpacing(20),
     justifyContent: 'space-between',
   },
   sectionsContainer: {
@@ -692,7 +704,7 @@ const styles = StyleSheet.create({
     flex: 1,
     lineHeight: scale(18),
   },
-  // Plan Grid - 2x2 responsive grid with proper gaps
+  // Plan Grid - 2x2 responsive grid with proper gaps (4 per row on 7+ inch tablets)
   planGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -701,12 +713,12 @@ const styles = StyleSheet.create({
     paddingVertical: scaleSpacing(10),
   },
   planCard: {
-    width: '48%',
-    marginBottom: scaleSpacing(10),
+    width: is7InchOrLarger ? '23%' : '48%',
+    marginBottom: scaleSpacing(6),
     backgroundColor: '#1E1E1E',
-    borderRadius: scale(14),
-    paddingVertical: scaleSpacing(14),
-    paddingHorizontal: scaleSpacing(10),
+    borderRadius: scale(10),
+    paddingVertical: scaleSpacing(8),
+    paddingHorizontal: scaleSpacing(6),
     alignItems: 'center',
     borderWidth: 1.5,
     borderColor: '#333333',
@@ -726,7 +738,7 @@ const styles = StyleSheet.create({
   },
   planCardGlass: {},
   planCardGb: {
-    fontSize: scale(20),
+    fontSize: scale(15),
     fontWeight: '700',
     color: '#FFFFFF',
     letterSpacing: 0.5,
@@ -735,18 +747,18 @@ const styles = StyleSheet.create({
     color: '#03E1FF',
   },
   planCardPrice: {
-    fontSize: scale(15),
+    fontSize: scale(12),
     fontWeight: '500',
     color: '#AAAAAA',
-    marginTop: scaleSpacing(6),
+    marginTop: scaleSpacing(3),
   },
   planCardPriceCurrent: {
     color: '#FFFFFF',
   },
   planCardMeta: {
-    fontSize: scale(11),
+    fontSize: scale(9),
     color: '#666666',
-    marginTop: scaleSpacing(4),
+    marginTop: scaleSpacing(2),
     fontWeight: '400',
   },
   // Footer

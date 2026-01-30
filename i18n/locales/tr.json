@@ -292,7 +292,7 @@
 		"autoUploadOffDesc": "Yalnızca manuel yedekleme",
 		"autoUploadNote": "Arka plan yüklemeleri iOS/Android politikalarına bağlıdır. En iyi sonuçlar için: uygulamayı ara sıra açın, WiFi'ye bağlanın ve cihazınızı şarj edin.",
 		"language": "Dil",
-		"useEnglish": "İngilizce kullanın",
+		"useEnglish": "English",
 		"currentlyEnglish": "Şu anda İngilizce kullanıyor",
 		"currentlySystem": "Sistem dilini kullanma",
 		"englishDefaultNote": "Sistem diliniz desteklenmiyorsa İngilizce varsayılandır.",
@@ -659,7 +659,7 @@
 		"trialExpired": "Deneme Süresi Doldu",
 		"subscriptionExpiredGrace": "Aboneliğinizin süresi doldu. Verilerinizi senkronize etmek için 7 gününüz var.",
 		"subscriptionExpiredRenew": "Aboneliğinizin süresi doldu. Yedeklemelere devam etmek için yenileyin.",
-		"subscriptionViaPlatform": "{{platform}} üzerinden yönetilir. SOL ile ödeme yapmak için mevcut planın süresinin dolmasına izin verin."
+		"subscriptionViaPlatform": "{{platform}} üzerinden satın alındı."
 	},
 	"login": {
 		"chooseServer": "Sunucu Seçin",

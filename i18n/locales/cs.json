@@ -291,7 +291,7 @@
 		"autoUploadOffDesc": "Pouze ruční zálohování",
 		"autoUploadNote": "Nahrávání na pozadí závisí na zásadách iOS/Android. Pro nejlepší výsledky: občas otevřete aplikaci, připojte se k WiFi a nabijte zařízení.",
 		"language": "Jazyk",
-		"useEnglish": "Používejte angličtinu",
+		"useEnglish": "English",
 		"currentlyEnglish": "V současné době používá angličtinu",
 		"currentlySystem": "Použití systémového jazyka",
 		"englishDefaultNote": "Pokud váš systémový jazyk není podporován, je výchozím jazykem angličtina.",
@@ -595,7 +595,7 @@
 		"trialExpired": "Zkušební verze vypršela",
 		"subscriptionExpiredGrace": "Vaše předplatné vypršelo. Na synchronizaci dat máte 7 dní.",
 		"subscriptionExpiredRenew": "Vaše předplatné vypršelo. Chcete-li pokračovat v zálohování, obnovte si ho.",
-		"subscriptionViaPlatform": "Spravováno prostřednictvím {{platform}}. Chcete-li platit pomocí SOL, nechte vypršet platnost stávajícího tarifu."
+		"subscriptionViaPlatform": "Zakoupeno přes {{platform}}."
 	},
 	"login": {
 		"chooseServer": "Výběr serveru",

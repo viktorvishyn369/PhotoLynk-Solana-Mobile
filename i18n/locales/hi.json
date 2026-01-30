@@ -291,7 +291,7 @@
 		"autoUploadOffDesc": "केवल मैन्युअल बैकअप",
 		"autoUploadNote": "बैकग्राउंड अपलोड iOS/Android नीतियों पर निर्भर करता है। सर्वोत्तम परिणामों के लिए: ऐप को कभी-कभी खोलें, WiFi से कनेक्ट करें और डिवाइस चार्ज करें।",
 		"language": "भाषा",
-		"useEnglish": "अंग्रेज़ी का उपयोग करें",
+		"useEnglish": "English",
 		"currentlyEnglish": "वर्तमान में अंग्रेज़ी का उपयोग कर रहा है",
 		"currentlySystem": "सिस्टम भाषा का उपयोग",
 		"englishDefaultNote": "यदि आपकी सिस्टम भाषा समर्थित नहीं है तो अंग्रेज़ी डिफ़ॉल्ट होती है।",
@@ -658,7 +658,7 @@
 		"trialExpired": "परीक्षण समाप्त हो गया",
 		"subscriptionExpiredGrace": "आपकी सदस्यता समाप्त हो गई है। आपके पास अपना डेटा सिंक करने के लिए 7 दिन हैं।",
 		"subscriptionExpiredRenew": "आपकी सदस्यता समाप्त हो गई है। बैकअप जारी रखने के लिए नवीनीकरण करें।",
-		"subscriptionViaPlatform": "{{platform}} के माध्यम से प्रबंधित। SOL से भुगतान करने के लिए, वर्तमान योजना को समाप्त होने दें।"
+		"subscriptionViaPlatform": "{{platform}} के माध्यम से खरीदा गया।"
 	},
 	"login": {
 		"chooseServer": "सर्वर चुनें",

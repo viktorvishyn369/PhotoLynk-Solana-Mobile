@@ -292,7 +292,7 @@
 		"autoUploadOffDesc": "수동 백업만",
 		"autoUploadNote": "백그라운드 업로드는 iOS/Android 정책에 따라 다릅니다. 최상의 결과를 위해: 앱을 가끔 열고, WiFi에 연결하고, 기기를 충전하세요.",
 		"language": "언어",
-		"useEnglish": "영어 사용",
+		"useEnglish": "English",
 		"currentlyEnglish": "현재 영어 사용 중",
 		"currentlySystem": "시스템 언어 사용",
 		"englishDefaultNote": "시스템 언어가 지원되지 않는 경우 기본값은 영어입니다.",
@@ -661,7 +661,7 @@
 		"trialExpired": "평가판 만료",
 		"subscriptionExpiredGrace": "구독이 만료되었습니다. 7일 이내에 데이터를 동기화해야 합니다.",
 		"subscriptionExpiredRenew": "구독이 만료되었습니다. 백업을 계속하려면 갱신하세요.",
-		"subscriptionViaPlatform": "{{platform}}를 통해 관리됩니다. SOL로 결제하려면 현재 요금제를 만료하세요."
+		"subscriptionViaPlatform": "{{platform}}을 통해 구매함."
 	},
 	"login": {
 		"chooseServer": "서버 선택",

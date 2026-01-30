@@ -58,6 +58,109 @@ class ExifExtractorModule(reactContext: ReactApplicationContext) : ReactContextB
                 result.putString("make", make)
                 result.putString("model", model)
                 
+                // Timezone offset (EXIF 2.31+)
+                exif.getAttribute(ExifInterface.TAG_OFFSET_TIME_ORIGINAL)?.let {
+                    result.putString("offsetTimeOriginal", it.trim())
+                }
+                
+                // Subsecond precision
+                exif.getAttribute(ExifInterface.TAG_SUBSEC_TIME_ORIGINAL)?.let {
+                    result.putString("subSecTimeOriginal", it)
+                }
+                
+                // Camera settings
+                exif.getAttribute(ExifInterface.TAG_EXPOSURE_TIME)?.let {
+                    result.putDouble("exposureTime", it.toDoubleOrNull() ?: 0.0)
+                }
+                exif.getAttribute(ExifInterface.TAG_F_NUMBER)?.let {
+                    result.putDouble("fNumber", it.toDoubleOrNull() ?: 0.0)
+                }
+                exif.getAttribute(ExifInterface.TAG_PHOTOGRAPHIC_SENSITIVITY)?.let {
+                    result.putInt("iso", it.toIntOrNull() ?: 0)
+                }
+                exif.getAttribute(ExifInterface.TAG_FOCAL_LENGTH)?.let { fl ->
+                    val parts = fl.split("/")
+                    if (parts.size == 2) {
+                        val num = parts[0].toDoubleOrNull() ?: 0.0
+                        val den = parts[1].toDoubleOrNull() ?: 1.0
+                        if (den != 0.0) {
+                            result.putDouble("focalLength", num / den)
+                        }
+                    } else {
+                        val parsed = fl.toDoubleOrNull()
+                        if (parsed != null) {
+                            result.putDouble("focalLength", parsed)
+                        }
+                    }
+                }
+                exif.getAttribute(ExifInterface.TAG_FOCAL_LENGTH_IN_35MM_FILM)?.let {
+                    result.putInt("focalLengthIn35mm", it.toIntOrNull() ?: 0)
+                }
+                exif.getAttribute(ExifInterface.TAG_FLASH)?.let {
+                    result.putInt("flash", it.toIntOrNull() ?: 0)
+                }
+                exif.getAttribute(ExifInterface.TAG_WHITE_BALANCE)?.let {
+                    result.putInt("whiteBalance", it.toIntOrNull() ?: 0)
+                }
+                exif.getAttribute(ExifInterface.TAG_METERING_MODE)?.let {
+                    result.putInt("meteringMode", it.toIntOrNull() ?: 0)
+                }
+                exif.getAttribute(ExifInterface.TAG_EXPOSURE_PROGRAM)?.let {
+                    result.putInt("exposureProgram", it.toIntOrNull() ?: 0)
+                }
+                exif.getAttribute(ExifInterface.TAG_EXPOSURE_BIAS_VALUE)?.let { eb ->
+                    val parts = eb.split("/")
+                    if (parts.size == 2) {
+                        val num = parts[0].toDoubleOrNull() ?: 0.0
+                        val den = parts[1].toDoubleOrNull() ?: 1.0
+                        if (den != 0.0) {
+                            result.putDouble("exposureBias", num / den)
+                        }
+                    }
+                }
+                
+                // Image properties
+                exif.getAttribute(ExifInterface.TAG_IMAGE_WIDTH)?.let {
+                    result.putInt("width", it.toIntOrNull() ?: 0)
+                }
+                exif.getAttribute(ExifInterface.TAG_IMAGE_LENGTH)?.let {
+                    result.putInt("height", it.toIntOrNull() ?: 0)
+                }
+                exif.getAttribute(ExifInterface.TAG_ORIENTATION)?.let {
+                    result.putInt("orientation", it.toIntOrNull() ?: 1)
+                }
+                exif.getAttribute(ExifInterface.TAG_COLOR_SPACE)?.let {
+                    result.putInt("colorSpace", it.toIntOrNull() ?: 0)
+                }
+                
+                // GPS data
+                val latLong = exif.latLong
+                if (latLong != null) {
+                    result.putDouble("gpsLatitude", latLong[0])
+                    result.putDouble("gpsLongitude", latLong[1])
+                }
+                val altitude = exif.getAltitude(Double.NaN)
+                if (!altitude.isNaN()) {
+                    result.putDouble("gpsAltitude", altitude)
+                }
+                exif.getAttribute(ExifInterface.TAG_GPS_DATESTAMP)?.let {
+                    result.putString("gpsDateStamp", it)
+                }
+                exif.getAttribute(ExifInterface.TAG_GPS_TIMESTAMP)?.let {
+                    result.putString("gpsTimestamp", it)
+                }
+                
+                // Software/lens
+                exif.getAttribute(ExifInterface.TAG_SOFTWARE)?.let {
+                    result.putString("software", it.trim())
+                }
+                exif.getAttribute(ExifInterface.TAG_LENS_MAKE)?.let {
+                    result.putString("lensMake", it.trim())
+                }
+                exif.getAttribute(ExifInterface.TAG_LENS_MODEL)?.let {
+                    result.putString("lensModel", it.trim())
+                }
+                
                 promise.resolve(result)
             } catch (e: Exception) {
                 promise.reject("E_EXIF", "EXIF extraction failed: ${e.message}")
@@ -65,10 +168,7 @@ class ExifExtractorModule(reactContext: ReactApplicationContext) : ReactContextB
         }.start()
     }
     
-    // Normalize EXIF date format "YYYY:MM:DD HH:MM:SS" to ISO format "YYYY-MM-DDTHH:MM:SS"
     private fun normalizeExifDateTime(exifDate: String): String? {
-        // EXIF format: "2024:01:15 14:30:45"
-        // Target format: "2024-01-15T14:30:45"
         val trimmed = exifDate.trim()
         if (trimmed.length < 19) return null
         
@@ -76,18 +176,15 @@ class ExifExtractorModule(reactContext: ReactApplicationContext) : ReactContextB
         if (parts.size < 2) return null
         
         val datePart = parts[0].replace(":", "-")
-        val timePart = parts[1].take(8) // Only take HH:MM:SS
+        val timePart = parts[1].take(8)
         
         return "${datePart}T${timePart}"
     }
     
-    // Convert ISO date format "YYYY-MM-DDTHH:MM:SS" back to EXIF format "YYYY:MM:DD HH:MM:SS"
     private fun isoToExifDateTime(isoDate: String): String? {
         val trimmed = isoDate.trim()
         if (trimmed.length < 19) return null
         
-        // ISO format: "2024-01-15T14:30:45"
-        // EXIF format: "2024:01:15 14:30:45"
         val result = trimmed.take(19).replace("-", ":").replace("T", " ")
         return result
     }
@@ -106,7 +203,6 @@ class ExifExtractorModule(reactContext: ReactApplicationContext) : ReactContextB
                 
                 val exif = ExifInterface(file)
                 
-                // Apply EXIF data from input
                 if (exifData.hasKey("captureTime")) {
                     val captureTime = exifData.getString("captureTime")
                     if (captureTime != null) {
@@ -119,7 +215,6 @@ class ExifExtractorModule(reactContext: ReactApplicationContext) : ReactContextB
                     }
                 }
                 
-                // Timezone offset (EXIF 2.31+) - critical for cross-platform time sorting
                 if (exifData.hasKey("offsetTimeOriginal")) {
                     val offsetTime = exifData.getString("offsetTimeOriginal")
                     if (offsetTime != null) {
@@ -129,7 +224,6 @@ class ExifExtractorModule(reactContext: ReactApplicationContext) : ReactContextB
                     }
                 }
                 
-                // Subsecond precision
                 if (exifData.hasKey("subSecTimeOriginal")) {
                     val subSecTime = exifData.getString("subSecTimeOriginal")
                     if (subSecTime != null) {
@@ -153,7 +247,6 @@ class ExifExtractorModule(reactContext: ReactApplicationContext) : ReactContextB
                     }
                 }
                 
-                // Camera settings
                 if (exifData.hasKey("exposureTime")) {
                     val exposureTime = exifData.getDouble("exposureTime")
                     exif.setAttribute(ExifInterface.TAG_EXPOSURE_TIME, exposureTime.toString())
@@ -171,7 +264,6 @@ class ExifExtractorModule(reactContext: ReactApplicationContext) : ReactContextB
                 
                 if (exifData.hasKey("focalLength")) {
                     val focalLength = exifData.getDouble("focalLength")
-                    // EXIF stores focal length as rational (numerator/denominator)
                     val rational = "${(focalLength * 100).toInt()}/100"
                     exif.setAttribute(ExifInterface.TAG_FOCAL_LENGTH, rational)
                 }
@@ -181,7 +273,6 @@ class ExifExtractorModule(reactContext: ReactApplicationContext) : ReactContextB
                     exif.setAttribute(ExifInterface.TAG_FOCAL_LENGTH_IN_35MM_FILM, focalLengthIn35mm.toString())
                 }
                 
-                // GPS data
                 if (exifData.hasKey("gpsLatitude") && exifData.hasKey("gpsLongitude")) {
                     val lat = exifData.getDouble("gpsLatitude")
                     val lon = exifData.getDouble("gpsLongitude")
@@ -193,7 +284,6 @@ class ExifExtractorModule(reactContext: ReactApplicationContext) : ReactContextB
                     exif.setAltitude(alt)
                 }
                 
-                // Software
                 if (exifData.hasKey("software")) {
                     val software = exifData.getString("software")
                     if (software != null) {
@@ -201,13 +291,11 @@ class ExifExtractorModule(reactContext: ReactApplicationContext) : ReactContextB
                     }
                 }
                 
-                // Orientation
                 if (exifData.hasKey("orientation")) {
                     val orientation = exifData.getInt("orientation")
                     exif.setAttribute(ExifInterface.TAG_ORIENTATION, orientation.toString())
                 }
                 
-                // Save the changes
                 exif.saveAttributes()
                 
                 val result = Arguments.createMap()

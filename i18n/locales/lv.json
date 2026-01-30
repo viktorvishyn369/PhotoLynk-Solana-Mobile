@@ -291,7 +291,7 @@
 		"autoUploadOffDesc": "Tikai manuāla dublēšana",
 		"autoUploadNote": "Fona augšupielādes ir atkarīgas no iOS/Android politikām. Labākajiem rezultātiem: atveriet lietotni laiku pa laikam, pievienojieties WiFi un uzlādējiet ierīci.",
 		"language": "Valoda",
-		"useEnglish": "Lietojiet angļu valodu",
+		"useEnglish": "English",
 		"currentlyEnglish": "Pašlaik izmanto angļu valodu",
 		"currentlySystem": "Sistēmas valodas lietošana",
 		"englishDefaultNote": "Ja jūsu sistēmas valoda netiek atbalstīta, pēc noklusējuma tiek izmantota angļu valoda.",
@@ -608,7 +608,7 @@
 		"trialExpired": "Izmēģinājuma termiņš beidzies",
 		"subscriptionExpiredGrace": "Jūsu abonēšanas termiņš beidzās. Jums ir 7 dienas, lai sinhronizētu datus.",
 		"subscriptionExpiredRenew": "Jūsu abonēšanas termiņš ir beidzies. Atjaunojiet abonementu, lai turpinātu dublēšanu.",
-		"subscriptionViaPlatform": "Pārvalda, izmantojot {{platform}}. Lai maksātu ar SOL, ļaujiet pašreizējam plānam beigties."
+		"subscriptionViaPlatform": "Nopirkts caur {{platform}}."
 	},
 	"login": {
 		"chooseServer": "Izvēlieties serveri",

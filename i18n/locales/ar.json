@@ -292,7 +292,7 @@
 		"autoUploadOffDesc": "نسخ احتياطي يدوي فقط",
 		"autoUploadNote": "يعتمد الرفع في الخلفية على سياسات iOS/Android. للحصول على أفضل النتائج: افتح التطبيق من حين لآخر، اتصل بـ WiFi، واشحن جهازك.",
 		"language": "اللغة",
-		"useEnglish": "استخدم اللغة الإنجليزية",
+		"useEnglish": "English",
 		"currentlyEnglish": "تستخدم حالياً اللغة الإنجليزية",
 		"currentlySystem": "استخدام لغة النظام",
 		"englishDefaultNote": "اللغة الإنجليزية هي اللغة الافتراضية إذا كانت لغة النظام لديك غير مدعومة.",
@@ -659,7 +659,7 @@
 		"trialExpired": "انتهت صلاحية التجربة",
 		"subscriptionExpiredGrace": "انتهت صلاحية اشتراكك. لديك 7 أيام لمزامنة بياناتك.",
 		"subscriptionExpiredRenew": "انتهت صلاحية اشتراكك. قم بالتجديد لمتابعة النسخ الاحتياطية.",
-		"subscriptionViaPlatform": "تتم إدارتها عبر {{platform}}. للدفع باستخدام SOL، دع الخطة الحالية تنتهي صلاحيتها."
+		"subscriptionViaPlatform": "تم الشراء عبر {{platform}}."
 	},
 	"login": {
 		"chooseServer": "اختر الخادم",

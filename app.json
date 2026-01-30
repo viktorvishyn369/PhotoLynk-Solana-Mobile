@@ -70,9 +70,16 @@
           "tr",
           "uk",
           "zh"
+        ],
+        "UISupportedInterfaceOrientations": [
+          "UIInterfaceOrientationPortrait"
+        ],
+        "UISupportedInterfaceOrientations~ipad": [
+          "UIInterfaceOrientationPortrait"
         ]
       },
-      "appleTeamId": "C9X2WT7AA5"
+      "appleTeamId": "C9X2WT7AA5",
+      "requireFullScreen": true
     },
     "android": {
       "adaptiveIcon": {
@@ -141,7 +148,8 @@
       ],
       "./plugins/withCleartextTraffic.js",
       "./plugins/withIosLocalNetworkPrompt.js",
-      "expo-localization"
+      "expo-localization",
+      "./plugins/withPortraitOnly.js"
     ],
     "extra": {
       "eas": {

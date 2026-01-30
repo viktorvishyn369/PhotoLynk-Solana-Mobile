@@ -292,7 +292,7 @@
 		"autoUploadOffDesc": "Tylko ręczna kopia zapasowa",
 		"autoUploadNote": "Przesyłanie w tle zależy od polityk iOS/Android. Dla lepszych wyników: otwieraj aplikację od czasu do czasu, łącz się z WiFi i ładuj urządzenie.",
 		"language": "Język",
-		"useEnglish": "Użyj języka angielskiego",
+		"useEnglish": "English",
 		"currentlyEnglish": "Obecnie używa języka angielskiego",
 		"currentlySystem": "Korzystanie z języka systemowego",
 		"englishDefaultNote": "Jeśli język systemu nie jest obsługiwany, domyślnie ustawiony jest język angielski.",
@@ -659,7 +659,7 @@
 		"trialExpired": "Okres próbny wygasł",
 		"subscriptionExpiredGrace": "Subskrypcja wygasła. Masz 7 dni na synchronizację danych.",
 		"subscriptionExpiredRenew": "Twoja subskrypcja wygasła. Odnów, aby kontynuować tworzenie kopii zapasowych.",
-		"subscriptionViaPlatform": "Zarządzane przez {{platform}}. Aby zapłacić za pomocą SOL, pozwól obecnemu planowi wygasnąć."
+		"subscriptionViaPlatform": "Zakupione przez {{platform}}."
 	},
 	"login": {
 		"chooseServer": "Wybierz serwer",

@@ -291,7 +291,7 @@
 		"autoUploadOffDesc": "Ainult käsitsi varundamine",
 		"autoUploadNote": "Taustal üleslaadimine sõltub iOS/Androidi poliitikast. Parimate tulemuste saamiseks: avage rakendus aeg-ajalt, ühenduge WiFi-ga ja laadige seadet.",
 		"language": "Keel",
-		"useEnglish": "Kasutage inglise keelt",
+		"useEnglish": "English",
 		"currentlyEnglish": "Praegu kasutatakse inglise keelt",
 		"currentlySystem": "Süsteemikeele kasutamine",
 		"englishDefaultNote": "Kui teie süsteemi keel ei ole toetatud, on vaikimisi kasutusel inglise keel.",
@@ -608,7 +608,7 @@
 		"trialExpired": "Katse lõppenud",
 		"subscriptionExpiredGrace": "Teie tellimus on lõppenud. Teil on 7 päeva aega oma andmete sünkroonimiseks.",
 		"subscriptionExpiredRenew": "Teie tellimus on lõppenud. Uuendage, et jätkata varundamist.",
-		"subscriptionViaPlatform": "Haldatakse {{platform}} kaudu. SOLiga maksmiseks laske praegusel plaanil aeguda."
+		"subscriptionViaPlatform": "Ostetud {{platform}} kaudu."
 	},
 	"login": {
 		"chooseServer": "Valige server",

@@ -292,7 +292,7 @@
 		"autoUploadOffDesc": "Solo respaldo manual",
 		"autoUploadNote": "Las subidas en segundo plano dependen de las políticas de iOS/Android. Para mejores resultados: abre la app ocasionalmente, conéctate a WiFi y carga tu dispositivo.",
 		"language": "Idioma",
-		"useEnglish": "Utilizar el inglés",
+		"useEnglish": "English",
 		"currentlyEnglish": "Actualmente en inglés",
 		"currentlySystem": "Utilizar el lenguaje del sistema",
 		"englishDefaultNote": "El inglés es el idioma por defecto si el idioma de su sistema no está soportado.",
@@ -661,7 +661,7 @@
 		"trialExpired": "Prueba caducada",
 		"subscriptionExpiredGrace": "Tu suscripción ha caducado. Tienes 7 días para sincronizar tus datos.",
 		"subscriptionExpiredRenew": "Su suscripción ha caducado. Renueve para continuar con las copias de seguridad.",
-		"subscriptionViaPlatform": "Gestionado a través de {{platform}}. Para pagar con SOL, deja que expire el plan actual."
+		"subscriptionViaPlatform": "Comprado a través de {{platform}}."
 	},
 	"login": {
 		"chooseServer": "Elegir servidor",

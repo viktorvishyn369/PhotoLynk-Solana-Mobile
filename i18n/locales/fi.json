@@ -291,7 +291,7 @@
 		"autoUploadOffDesc": "Vain manuaalinen varmuuskopiointi",
 		"autoUploadNote": "Taustalataukset riippuvat iOS/Android-käytännöistä. Parhaan tuloksen saamiseksi: avaa sovellus silloin tällöin, yhdistä WiFi-verkkoon ja lataa laitetta.",
 		"language": "Kieli",
-		"useEnglish": "Käytä englantia",
+		"useEnglish": "English",
 		"currentlyEnglish": "Tällä hetkellä englantia käyttävä",
 		"currentlySystem": "Järjestelmän kielen käyttö",
 		"englishDefaultNote": "Oletusasetus on englanti, jos järjestelmän kieltä ei tueta.",
@@ -608,7 +608,7 @@
 		"trialExpired": "Kokeilu päättynyt",
 		"subscriptionExpiredGrace": "Tilauksesi päättyi. Sinulla on 7 päivää aikaa synkronoida tietosi.",
 		"subscriptionExpiredRenew": "Tilauksesi on päättynyt. Jatka varmuuskopiointia uusimalla.",
-		"subscriptionViaPlatform": "Hallinnoidaan {{platform}}:n kautta. Jos haluat maksaa SOLilla, anna nykyisen suunnitelman päättyä."
+		"subscriptionViaPlatform": "Ostettu {{platform}} kautta."
 	},
 	"login": {
 		"chooseServer": "Valitse palvelin",

@@ -291,7 +291,7 @@
 		"autoUploadOffDesc": "Manual backup only",
 		"autoUploadNote": "Background uploads depend on iOS/Android policies. For best results: keep the app open occasionally, connect to WiFi, and charge your device.",
 		"language": "Language",
-		"useEnglish": "Use English",
+		"useEnglish": "English",
 		"currentlyEnglish": "Currently using English",
 		"currentlySystem": "Using system language",
 		"englishDefaultNote": "English is the default if your system language is not supported.",
@@ -647,7 +647,7 @@
 		"trialExpired": "Trial Expired",
 		"subscriptionExpiredGrace": "Your subscription expired. You have 7 days to sync your data.",
 		"subscriptionExpiredRenew": "Your subscription has expired. Renew to continue backups.",
-		"subscriptionViaPlatform": "Managed via {{platform}}. To pay with SOL, let current plan expire."
+		"subscriptionViaPlatform": "Purchased via {{platform}}."
 	},
 	"login": {
 		"chooseServer": "Choose Server",

@@ -520,7 +520,11 @@ export const autoUploadStealthCloudUploadOneAsset = async ({
 
   // CPU management: add delay between chunks to reduce CPU pressure and phone heating
   // Fast mode: no delay for maximum speed
-  const CPU_COOLDOWN_MS = fastMode ? 0 : (Platform.OS === 'ios' ? 500 : 400);
+  // Progressive yields: even fast mode needs small yields to prevent ANR/crash on weak phones
+  // Large files (videos) get bigger cooldowns to prevent overheating
+  const isLargeFile = originalSize > 10 * 1024 * 1024; // >10MB = large file (video)
+  const baseCooldown = fastMode ? 10 : (Platform.OS === 'ios' ? 500 : 400);
+  const CPU_COOLDOWN_MS = isLargeFile ? baseCooldown * 2 : baseCooldown;
   const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
   // Concurrency for fast mode: parallel chunk uploads
@@ -536,7 +540,9 @@ export const autoUploadStealthCloudUploadOneAsset = async ({
     if (!nextB64) break;
     
     // CPU cooldown before encryption (skip if fast mode)
-    if (chunkIndex > 0 && CPU_COOLDOWN_MS > 0) await sleep(CPU_COOLDOWN_MS);
+    // Always yield to prevent ANR - progressive: larger files get more frequent yields
+    const shouldYield = chunkIndex > 0 && (CPU_COOLDOWN_MS > 0 || chunkIndex % 5 === 0);
+    if (shouldYield) await sleep(Math.max(CPU_COOLDOWN_MS, 10));
     
     const plaintext = naclUtil.decodeBase64(nextB64);
     if (!plaintext || plaintext.length === 0) break;
@@ -570,12 +576,27 @@ export const autoUploadStealthCloudUploadOneAsset = async ({
   let exifCaptureTime = null, exifMake = null, exifModel = null;
   if (isImage) {
     try {
-      const { extractExifForDedupNative } = require('./duplicateScanner');
-      const exifData = await extractExifForDedupNative(filePath, assetInfo, asset);
-      if (exifData) {
-        exifCaptureTime = exifData.captureTime || null;
-        exifMake = exifData.make || null;
-        exifModel = exifData.model || null;
+      // On iOS, assetInfo.exif is populated; on Android, we need native module
+      if (Platform.OS === 'ios') {
+        const { extractExifForDedup } = require('./duplicateScanner');
+        const exifData = extractExifForDedup(assetInfo, asset);
+        if (exifData) {
+          exifCaptureTime = exifData.captureTime || null;
+          exifMake = exifData.make || null;
+          exifModel = exifData.model || null;
+        }
+      } else {
+        // Android: use native ExifExtractor module
+        const { NativeModules } = require('react-native');
+        const ExifExtractor = NativeModules.ExifExtractor;
+        if (ExifExtractor && typeof ExifExtractor.extractExif === 'function') {
+          const result = await ExifExtractor.extractExif(filePath);
+          if (result) {
+            exifCaptureTime = result.captureTime || null;
+            exifMake = result.make ? result.make.trim().toLowerCase() : null;
+            exifModel = result.model ? result.model.trim().toLowerCase() : null;
+          }
+        }
       }
     } catch (e) {
       // EXIF extraction is best-effort - don't fail upload
@@ -701,13 +722,54 @@ export const autoUploadStealthCloudUploadOneAsset = async ({
   }
 
   // Store full EXIF to server for universal cross-platform preservation (matches manual backup)
-  // Fire-and-forget, non-blocking
+  // Fire-and-forget, non-blocking - store full EXIF to server
   const isImageForExif = asset.mediaType === 'photo' || /\.(jpg|jpeg|png|heic|heif|gif|bmp|webp|tiff?)$/i.test(filename || '');
   if (exactFileHash && isImageForExif) {
     try {
-      const { extractFullExif } = require('./exifExtractor');
-      const fullExif = extractFullExif(assetInfo, asset);
-      if (fullExif.captureTime || fullExif.make || fullExif.gpsLatitude != null) {
+      let fullExif = null;
+      if (Platform.OS === 'ios') {
+        const { extractFullExif } = require('./exifExtractor');
+        fullExif = extractFullExif(assetInfo, asset);
+      } else {
+        // Android: use native ExifExtractor for full EXIF
+        const { NativeModules } = require('react-native');
+        const ExifExtractor = NativeModules.ExifExtractor;
+        if (ExifExtractor && typeof ExifExtractor.extractExif === 'function') {
+          const nativeExif = await ExifExtractor.extractExif(filePath);
+          if (nativeExif) {
+            fullExif = {
+              captureTime: nativeExif.captureTime || null,
+              make: nativeExif.make || null,
+              model: nativeExif.model || null,
+              offsetTimeOriginal: nativeExif.offsetTimeOriginal || null,
+              subSecTimeOriginal: nativeExif.subSecTimeOriginal || null,
+              exposureTime: nativeExif.exposureTime || null,
+              fNumber: nativeExif.fNumber || null,
+              iso: nativeExif.iso || null,
+              focalLength: nativeExif.focalLength || null,
+              focalLengthIn35mm: nativeExif.focalLengthIn35mm || null,
+              flash: nativeExif.flash || null,
+              whiteBalance: nativeExif.whiteBalance || null,
+              meteringMode: nativeExif.meteringMode || null,
+              exposureProgram: nativeExif.exposureProgram || null,
+              exposureBias: nativeExif.exposureBias || null,
+              width: nativeExif.width || null,
+              height: nativeExif.height || null,
+              orientation: nativeExif.orientation || null,
+              colorSpace: nativeExif.colorSpace || null,
+              gpsLatitude: nativeExif.gpsLatitude || asset.location?.latitude || null,
+              gpsLongitude: nativeExif.gpsLongitude || asset.location?.longitude || null,
+              gpsAltitude: nativeExif.gpsAltitude || null,
+              gpsDateStamp: nativeExif.gpsDateStamp || null,
+              gpsTimestamp: nativeExif.gpsTimestamp || null,
+              software: nativeExif.software || null,
+              lensMake: nativeExif.lensMake || null,
+              lensModel: nativeExif.lensModel || null,
+            };
+          }
+        }
+      }
+      if (fullExif && (fullExif.captureTime || fullExif.make || fullExif.gpsLatitude != null)) {
         axios.post(
           `${SERVER_URL}/api/exif/store`,
           { fileHash: exactFileHash, exif: fullExif, platform: Platform.OS },
