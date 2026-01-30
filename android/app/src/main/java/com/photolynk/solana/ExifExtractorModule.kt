@@ -247,39 +247,39 @@ class ExifExtractorModule(reactContext: ReactApplicationContext) : ReactContextB
                     }
                 }
                 
-                if (exifData.hasKey("exposureTime")) {
+                if (exifData.hasKey("exposureTime") && !exifData.isNull("exposureTime")) {
                     val exposureTime = exifData.getDouble("exposureTime")
                     exif.setAttribute(ExifInterface.TAG_EXPOSURE_TIME, exposureTime.toString())
                 }
                 
-                if (exifData.hasKey("fNumber")) {
+                if (exifData.hasKey("fNumber") && !exifData.isNull("fNumber")) {
                     val fNumber = exifData.getDouble("fNumber")
                     exif.setAttribute(ExifInterface.TAG_F_NUMBER, fNumber.toString())
                 }
                 
-                if (exifData.hasKey("iso")) {
+                if (exifData.hasKey("iso") && !exifData.isNull("iso")) {
                     val iso = exifData.getInt("iso")
                     exif.setAttribute(ExifInterface.TAG_PHOTOGRAPHIC_SENSITIVITY, iso.toString())
                 }
                 
-                if (exifData.hasKey("focalLength")) {
+                if (exifData.hasKey("focalLength") && !exifData.isNull("focalLength")) {
                     val focalLength = exifData.getDouble("focalLength")
                     val rational = "${(focalLength * 100).toInt()}/100"
                     exif.setAttribute(ExifInterface.TAG_FOCAL_LENGTH, rational)
                 }
                 
-                if (exifData.hasKey("focalLengthIn35mm")) {
+                if (exifData.hasKey("focalLengthIn35mm") && !exifData.isNull("focalLengthIn35mm")) {
                     val focalLengthIn35mm = exifData.getInt("focalLengthIn35mm")
                     exif.setAttribute(ExifInterface.TAG_FOCAL_LENGTH_IN_35MM_FILM, focalLengthIn35mm.toString())
                 }
                 
-                if (exifData.hasKey("gpsLatitude") && exifData.hasKey("gpsLongitude")) {
+                if (exifData.hasKey("gpsLatitude") && !exifData.isNull("gpsLatitude") && exifData.hasKey("gpsLongitude") && !exifData.isNull("gpsLongitude")) {
                     val lat = exifData.getDouble("gpsLatitude")
                     val lon = exifData.getDouble("gpsLongitude")
                     exif.setLatLong(lat, lon)
                 }
                 
-                if (exifData.hasKey("gpsAltitude")) {
+                if (exifData.hasKey("gpsAltitude") && !exifData.isNull("gpsAltitude")) {
                     val alt = exifData.getDouble("gpsAltitude")
                     exif.setAltitude(alt)
                 }
@@ -291,7 +291,7 @@ class ExifExtractorModule(reactContext: ReactApplicationContext) : ReactContextB
                     }
                 }
                 
-                if (exifData.hasKey("orientation")) {
+                if (exifData.hasKey("orientation") && !exifData.isNull("orientation")) {
                     val orientation = exifData.getInt("orientation")
                     exif.setAttribute(ExifInterface.TAG_ORIENTATION, orientation.toString())
                 }
