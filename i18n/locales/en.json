@@ -859,6 +859,15 @@
 		"ok": "OK",
 		"cancel": "Cancel",
 		"delete": "Delete",
-		"renew": "Renew"
+		"renew": "Renew",
+		"missingCredentials": "Missing Credentials",
+		"enterEmailPassword": "Please enter your email and password in the Login tab before scanning the QR code.",
+		"noNetwork": "No Network Connection",
+		"noLocalNetworkMessage": "Cannot connect to your desktop app. Please ensure you are on the same network as your PhotoLynk Server.",
+		"noServer": "Server Not Configured",
+		"configureServerFirst": "Please configure your server connection first.",
+		"noConnection": "No Connection Available",
+		"noConnectionMessage": "Could not connect to StealthCloud after multiple attempts. Please check your internet connection and try again.",
+		"noInternetMessage": "Internet connection is required to create NFTs. Please check your connection and try again."
 	}
 }

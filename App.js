@@ -2107,7 +2107,14 @@ export default function App() {
     } catch (e) {} finally { setBackupPickerLoading(false); }
   };
 
-  const openBackupPicker = async () => { if (loadingRef.current) return; resetBackupPickerState(); setBackupPickerPreview(null); setBackupPickerOpen(true); await loadBackupPickerPage({ reset: true }); };
+  const openBackupPicker = async () => {
+    if (loadingRef.current) return;
+    // Check network connectivity before starting
+    if (!(await checkNetworkForOperation('backup'))) {
+      return;
+    }
+    resetBackupPickerState(); setBackupPickerPreview(null); setBackupPickerOpen(true); await loadBackupPickerPage({ reset: true });
+  };
   const closeBackupPicker = () => { setBackupPickerOpen(false); setBackupPickerPreview(null); resetBackupPickerState(); };
 
   const ensureBackupPickerAssetMeta = useCallback(async (asset) => {
@@ -2214,8 +2221,12 @@ export default function App() {
   // NFT FUNCTIONS
   // ============================================================================
   
-  const openNftPicker = () => {
+  const openNftPicker = async () => {
     if (loadingRef.current) return;
+    // Check internet connectivity for NFT operations
+    if (!(await checkNetworkForOperation('nft'))) {
+      return;
+    }
     setNftPickerOpen(true);
   };
   
@@ -2443,6 +2454,10 @@ export default function App() {
 
   const openSyncPicker = async () => {
     if (loadingRef.current) return;
+    // Check network connectivity before starting
+    if (!(await checkNetworkForOperation('sync'))) {
+      return;
+    }
     resetSyncPickerState(); setSyncPickerOpen(true); setSyncPickerLoading(true);
     try {
       // Ensure media library permission before listing local assets
@@ -3266,6 +3281,80 @@ export default function App() {
 
   const getServerUrl = () => computeServerUrl(serverType, localHost, remoteHost);
 
+  // Network connectivity check for backup/sync operations
+  const checkNetworkForOperation = async (operationType = 'backup') => {
+    try {
+      const networkState = await Network.getNetworkStateAsync();
+      
+      // For NFT operations - need internet
+      if (operationType === 'nft') {
+        if (!networkState.isConnected || !networkState.isInternetReachable) {
+          showDarkAlert(t('alerts.noInternet') || 'No Internet', t('alerts.noInternetMessage') || 'Internet connection is required to create NFTs. Please check your connection and try again.');
+          return false;
+        }
+        return true;
+      }
+      
+      // For local/remote server - check local network
+      if (serverType === 'local' || serverType === 'remote') {
+        if (!networkState.isConnected) {
+          showDarkAlert(t('alerts.noNetwork') || 'No Network Connection', t('alerts.noLocalNetworkMessage') || 'Cannot connect to your desktop app. Please ensure you are on the same network as your PhotoLynk Server.');
+          return false;
+        }
+        // Try to ping the server
+        try {
+          const SERVER_URL = getServerUrl();
+          if (!SERVER_URL) {
+            showDarkAlert(t('alerts.noServer') || 'Server Not Configured', t('alerts.configureServerFirst') || 'Please configure your server connection first.');
+            return false;
+          }
+          await axios.get(`${SERVER_URL}/api/health`, { timeout: 5000 });
+          return true;
+        } catch (e) {
+          showDarkAlert(t('alerts.noNetwork') || 'No Network Connection', t('alerts.noLocalNetworkMessage') || 'Cannot connect to your desktop app. Please ensure you are on the same network as your PhotoLynk Server.');
+          return false;
+        }
+      }
+      
+      // For StealthCloud - need internet, retry for 3 minutes
+      if (serverType === 'stealthcloud') {
+        const maxRetryMs = 3 * 60 * 1000; // 3 minutes
+        const retryIntervalMs = 5000; // 5 seconds
+        const startTime = Date.now();
+        
+        while (Date.now() - startTime < maxRetryMs) {
+          const state = await Network.getNetworkStateAsync();
+          if (state.isConnected && state.isInternetReachable) {
+            // Try to reach the server
+            try {
+              const SERVER_URL = getServerUrl();
+              await axios.get(`${SERVER_URL}/api/health`, { timeout: 10000 });
+              return true;
+            } catch (e) {
+              // Server not reachable, continue retrying
+            }
+          }
+          
+          const elapsed = Math.floor((Date.now() - startTime) / 1000);
+          const remaining = Math.ceil((maxRetryMs - (Date.now() - startTime)) / 1000);
+          setStatus(t('status.connecting') || `Connecting... (${remaining}s remaining)`);
+          
+          await new Promise(r => setTimeout(r, retryIntervalMs));
+        }
+        
+        // After 3 minutes, show popup
+        setStatus('');
+        showDarkAlert(t('alerts.noConnection') || 'No Connection Available', t('alerts.noConnectionMessage') || 'Could not connect to StealthCloud after multiple attempts. Please check your internet connection and try again.');
+        return false;
+      }
+      
+      return true;
+    } catch (e) {
+      console.log('Network check error:', e);
+      return true; // Allow operation to proceed if check fails
+    }
+  };
+
   const checkLogin = async () => {
     try {
     // Detect first launch after reinstall and clear old credentials
@@ -4047,6 +4136,11 @@ export default function App() {
    * 4. Upload missing files to server
    */
   const backupPhotos = async () => {
+    // Check network connectivity before starting
+    if (!(await checkNetworkForOperation('backup'))) {
+      return;
+    }
+
     if (serverType === 'stealthcloud') {
       return stealthCloudBackup();
     }
@@ -4145,6 +4239,11 @@ export default function App() {
    * 4. Download and save missing files to gallery
    */
   const restorePhotos = async (opts = null) => {
+    // Check network connectivity before starting
+    if (!(await checkNetworkForOperation('sync'))) {
+      return;
+    }
+
     if (serverType === 'stealthcloud') {
       return stealthCloudRestore(opts);
     }
@@ -4366,30 +4465,52 @@ export default function App() {
               </TouchableOpacity>
             </View>
           )}
-          {/* Overlay UI on top of camera */}
-          <View style={{position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, pointerEvents: 'box-none'}}>
-            {/* Top bar with title */}
-            <View style={{paddingTop: Platform.OS === 'ios' ? scaleSpacing(60) : scaleSpacing(40), paddingHorizontal: scaleSpacing(20), backgroundColor: 'rgba(0,0,0,0.5)'}}>
-              <Text style={{color: '#fff', fontSize: scale(18), fontWeight: '600', textAlign: 'center'}}>
-                {t('qrScanner.title')}
-              </Text>
-              <Text style={{color: '#aaa', fontSize: scale(13), textAlign: 'center', marginTop: scaleSpacing(4)}}>
-                {t('qrScanner.instruction')}
-              </Text>
+          {/* Overlay UI on top of camera - only show when permission granted */}
+          {cameraPermission?.granted ? (
+            <View style={{position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, pointerEvents: 'box-none'}}>
+              {/* Top bar with title */}
+              <View style={{paddingTop: Platform.OS === 'ios' ? scaleSpacing(60) : scaleSpacing(40), paddingHorizontal: scaleSpacing(20), backgroundColor: 'rgba(0,0,0,0.5)'}}>
+                <Text style={{color: '#fff', fontSize: scale(18), fontWeight: '600', textAlign: 'center'}}>
+                  {t('qrScanner.title')}
+                </Text>
+                <Text style={{color: '#aaa', fontSize: scale(13), textAlign: 'center', marginTop: scaleSpacing(4)}}>
+                  {t('qrScanner.instruction')}
+                </Text>
+              </View>
+              {/* Center scanning frame */}
+              <View style={{flex: 1, justifyContent: 'center', alignItems: 'center'}}>
+                <View style={{width: isTablet ? 280 : 240, height: isTablet ? 280 : 240, borderWidth: 2, borderColor: '#03E1FF', borderRadius: scaleSpacing(16)}} />
+              </View>
+              {/* Bottom bar with cancel button */}
+              <View style={{paddingBottom: Platform.OS === 'ios' ? scaleSpacing(50) : scaleSpacing(30), paddingHorizontal: scaleSpacing(20), backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center'}}>
+                <TouchableOpacity
+                  style={{paddingVertical: scaleSpacing(14), paddingHorizontal: scaleSpacing(50), backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: scaleSpacing(12), borderWidth: 1, borderColor: 'rgba(255,255,255,0.3)'}}
+                  onPress={() => setQrScannerOpen(false)}>
+                  <Text style={{color: '#fff', fontSize: scale(16), fontWeight: '600'}}>{t('common.cancel')}</Text>
+                </TouchableOpacity>
+              </View>
             </View>
-            {/* Center scanning frame */}
-            <View style={{flex: 1, justifyContent: 'center', alignItems: 'center'}}>
-              <View style={{width: isTablet ? 280 : 240, height: isTablet ? 280 : 240, borderWidth: 2, borderColor: '#03E1FF', borderRadius: scaleSpacing(16)}} />
+          ) : (
+            <View style={{position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, pointerEvents: 'box-none'}}>
+              {/* Top bar with title - full screen permission view */}
+              <View style={{paddingTop: Platform.OS === 'ios' ? scaleSpacing(60) : scaleSpacing(40), paddingHorizontal: scaleSpacing(20)}}>
+                <Text style={{color: '#fff', fontSize: scale(18), fontWeight: '600', textAlign: 'center'}}>
+                  {t('qrScanner.title')}
+                </Text>
+                <Text style={{color: '#aaa', fontSize: scale(13), textAlign: 'center', marginTop: scaleSpacing(4)}}>
+                  {t('qrScanner.instruction')}
+                </Text>
+              </View>
+              {/* Bottom bar with cancel button */}
+              <View style={{position: 'absolute', bottom: 0, left: 0, right: 0, paddingBottom: Platform.OS === 'ios' ? scaleSpacing(50) : scaleSpacing(30), paddingHorizontal: scaleSpacing(20), alignItems: 'center'}}>
+                <TouchableOpacity
+                  style={{paddingVertical: scaleSpacing(14), paddingHorizontal: scaleSpacing(50), backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: scaleSpacing(12), borderWidth: 1, borderColor: 'rgba(255,255,255,0.3)'}}
+                  onPress={() => setQrScannerOpen(false)}>
+                  <Text style={{color: '#fff', fontSize: scale(16), fontWeight: '600'}}>{t('common.cancel')}</Text>
+                </TouchableOpacity>
+              </View>
             </View>
-            {/* Bottom bar with cancel button */}
-            <View style={{paddingBottom: Platform.OS === 'ios' ? scaleSpacing(50) : scaleSpacing(30), paddingHorizontal: scaleSpacing(20), backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center'}}>
-              <TouchableOpacity
-                style={{paddingVertical: scaleSpacing(14), paddingHorizontal: scaleSpacing(50), backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: scaleSpacing(12), borderWidth: 1, borderColor: 'rgba(255,255,255,0.3)'}}
-                onPress={() => setQrScannerOpen(false)}>
-                <Text style={{color: '#fff', fontSize: scale(16), fontWeight: '600'}}>{t('common.cancel')}</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
+          )}
         </View>
       )}
 
@@ -4434,7 +4555,16 @@ export default function App() {
                     <Text style={{ color: '#FFFFFF', fontSize: scale(15), fontWeight: '600', marginBottom: scaleSpacing(6) }}>Scan QR code from desktop app</Text>
                     <TouchableOpacity 
                       style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFFFFF', borderRadius: scale(8), padding: scaleSpacing(12) }} 
-                      onPress={() => { setQuickSetupCollapsed(true); setQuickSetupHighlightInput(false); setQrScannerOpen(true); }}>
+                      onPress={() => {
+                        if (!email || !password) {
+                          setQuickSetupOpen(false);
+                          setTimeout(() => {
+                            showDarkAlert(t('alerts.missingCredentials'), t('alerts.enterEmailPassword'));
+                          }, 300);
+                          return;
+                        }
+                        setQuickSetupCollapsed(true); setQuickSetupHighlightInput(false); setQrScannerOpen(true);
+                      }}>
                       <Feather name="maximize" size={scale(18)} color="#000000" />
                       <Text style={{ color: '#000000', fontSize: scale(14), fontWeight: '600', marginLeft: scaleSpacing(8) }}>Open Scanner</Text>
                     </TouchableOpacity>
@@ -4638,52 +4768,52 @@ export default function App() {
                 </TouchableOpacity>
               </View>
             )}
-            {/* Overlay UI on top of camera */}
-            <View style={{position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, pointerEvents: 'box-none'}}>
-              {/* Top bar with title */}
-              <View style={{paddingTop: Platform.OS === 'ios' ? scaleSpacing(60) : scaleSpacing(40), paddingHorizontal: scaleSpacing(20), backgroundColor: 'rgba(0,0,0,0.5)'}}>
-                <Text style={{color: '#fff', fontSize: scale(18), fontWeight: '600', textAlign: 'center'}}>
-                  {t('qrScanner.title')}
-                </Text>
-                <Text style={{color: '#aaa', fontSize: scale(13), textAlign: 'center', marginTop: scaleSpacing(4)}}>
-                  {t('qrScanner.instruction')}
-                </Text>
-              </View>
-              {/* Center scanning frame */}
-              <View style={{flex: 1, justifyContent: 'center', alignItems: 'center'}}>
-                <View style={{width: isTablet ? 280 : 240, height: isTablet ? 280 : 240, borderWidth: 2, borderColor: '#03E1FF', borderRadius: scaleSpacing(16)}} />
-              </View>
-              {/* Bottom bar with cancel button */}
-              <View style={{paddingBottom: Platform.OS === 'ios' ? scaleSpacing(50) : scaleSpacing(30), paddingHorizontal: scaleSpacing(20), backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center'}}>
-                <TouchableOpacity
-                  style={{paddingVertical: scaleSpacing(14), paddingHorizontal: scaleSpacing(50), backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: scaleSpacing(12), borderWidth: 1, borderColor: 'rgba(255,255,255,0.3)'}}
-                  onPress={() => setQrScannerOpen(false)}>
-                  <Text style={{color: '#fff', fontSize: scale(16), fontWeight: '600'}}>{t('common.cancel')}</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          </View>
-        )}
-
-        {customAlert && (
-          <View style={[styles.overlay, { backgroundColor: 'rgba(0,0,0,0.97)' }]}>
-            <View style={[styles.overlayCard, { backgroundColor: '#000000', maxWidth: isTablet ? 450 : 320 }]}>
-              <Text style={[styles.overlayTitle, { fontSize: scale(18), marginBottom: scaleSpacing(8) }]}>{customAlert.title}</Text>
-              <Text style={{ color: '#FFFFFF', fontSize: scale(14), textAlign: 'center', marginBottom: scaleSpacing(20), lineHeight: scale(20) }}>{customAlert.message}</Text>
-              <View style={{ flexDirection: 'row', justifyContent: 'center', gap: scaleSpacing(12), flexWrap: 'wrap' }}>
-                {(customAlert.buttons || []).map((btn, idx) => (
+            {/* Overlay UI on top of camera - only show when permission granted */}
+            {cameraPermission?.granted ? (
+              <View style={{position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, pointerEvents: 'box-none'}}>
+                {/* Top bar with title */}
+                <View style={{paddingTop: Platform.OS === 'ios' ? scaleSpacing(60) : scaleSpacing(40), paddingHorizontal: scaleSpacing(20), backgroundColor: 'rgba(0,0,0,0.5)'}}>
+                  <Text style={{color: '#fff', fontSize: scale(18), fontWeight: '600', textAlign: 'center'}}>
+                    {t('qrScanner.title')}
+                  </Text>
+                  <Text style={{color: '#aaa', fontSize: scale(13), textAlign: 'center', marginTop: scaleSpacing(4)}}>
+                    {t('qrScanner.instruction')}
+                  </Text>
+                </View>
+                {/* Center scanning frame */}
+                <View style={{flex: 1, justifyContent: 'center', alignItems: 'center'}}>
+                  <View style={{width: isTablet ? 280 : 240, height: isTablet ? 280 : 240, borderWidth: 2, borderColor: '#03E1FF', borderRadius: scaleSpacing(16)}} />
+                </View>
+                {/* Bottom bar with cancel button */}
+                <View style={{paddingBottom: Platform.OS === 'ios' ? scaleSpacing(50) : scaleSpacing(30), paddingHorizontal: scaleSpacing(20), backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center'}}>
                   <TouchableOpacity
-                    key={idx}
-                    style={[styles.overlayBtnPrimary, { paddingVertical: scaleSpacing(10), paddingHorizontal: scaleSpacing(16), minWidth: isTablet ? 100 : 70 }]}
-                    onPress={() => {
-                      closeDarkAlert();
-                      if (btn.onPress) btn.onPress();
-                    }}>
-                    <Text style={styles.overlayBtnPrimaryText} numberOfLines={1}>{btn.text}</Text>
+                    style={{paddingVertical: scaleSpacing(14), paddingHorizontal: scaleSpacing(50), backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: scaleSpacing(12), borderWidth: 1, borderColor: 'rgba(255,255,255,0.3)'}}
+                    onPress={() => setQrScannerOpen(false)}>
+                    <Text style={{color: '#fff', fontSize: scale(16), fontWeight: '600'}}>{t('common.cancel')}</Text>
                   </TouchableOpacity>
-                ))}
+                </View>
               </View>
-            </View>
+            ) : (
+              <View style={{position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, pointerEvents: 'box-none'}}>
+                {/* Top bar with title - full screen permission view */}
+                <View style={{paddingTop: Platform.OS === 'ios' ? scaleSpacing(60) : scaleSpacing(40), paddingHorizontal: scaleSpacing(20)}}>
+                  <Text style={{color: '#fff', fontSize: scale(18), fontWeight: '600', textAlign: 'center'}}>
+                    {t('qrScanner.title')}
+                  </Text>
+                  <Text style={{color: '#aaa', fontSize: scale(13), textAlign: 'center', marginTop: scaleSpacing(4)}}>
+                    {t('qrScanner.instruction')}
+                  </Text>
+                </View>
+                {/* Bottom bar with cancel button */}
+                <View style={{position: 'absolute', bottom: 0, left: 0, right: 0, paddingBottom: Platform.OS === 'ios' ? scaleSpacing(50) : scaleSpacing(30), paddingHorizontal: scaleSpacing(20), alignItems: 'center'}}>
+                  <TouchableOpacity
+                    style={{paddingVertical: scaleSpacing(14), paddingHorizontal: scaleSpacing(50), backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: scaleSpacing(12), borderWidth: 1, borderColor: 'rgba(255,255,255,0.3)'}}
+                    onPress={() => setQrScannerOpen(false)}>
+                    <Text style={{color: '#fff', fontSize: scale(16), fontWeight: '600'}}>{t('common.cancel')}</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            )}
           </View>
         )}
       </>

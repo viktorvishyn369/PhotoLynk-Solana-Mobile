@@ -162,7 +162,7 @@ const PlanCard = ({ gb, price, isCurrent, onPress, disabled, glassModeEnabled, c
       glassModeEnabled && styles.planCardGlass,
     ]}
     onPress={onPress}
-    disabled={disabled || isCurrent}
+    disabled={disabled}
     activeOpacity={0.7}
   >
     <Text style={[styles.planCardGb, isCurrent && styles.planCardGbCurrent]}>
