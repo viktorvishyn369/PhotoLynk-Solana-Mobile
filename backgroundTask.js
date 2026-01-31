@@ -287,11 +287,19 @@ export const autoUploadStealthCloudUploadOneAsset = async ({
   alreadyExifFull, alreadyExifTimeModel, alreadyExifTimeMake,
   onStatus, fastMode = false 
 }) => {
+  const logStep = (step, extra = '') => console.log(`[AutoUpload:${asset?.id?.substring(0,8)}] ${step}${extra ? ': ' + extra : ''}`);
+  
   if (!asset || !asset.id) return { uploaded: 0, skipped: 0, failed: 0 };
 
+  logStep('START', `mediaType=${asset.mediaType}, fastMode=${fastMode}`);
+  
   if (onStatus) onStatus('encrypting');
+  
+  logStep('STEP1', 'Getting master key');
   const masterKey = await getStealthCloudMasterKey();
+  logStep('STEP1', 'Master key obtained');
 
+  logStep('STEP2', 'Getting asset info');
   let assetInfo = null;
   try {
     // Retry getAssetInfoAsync up to 6 times (iCloud/network issues)
@@ -300,15 +308,20 @@ export const autoUploadStealthCloudUploadOneAsset = async ({
         ? await MediaLibrary.getAssetInfoAsync(asset.id, { shouldDownloadFromNetwork: true })
         : await MediaLibrary.getAssetInfoAsync(asset.id);
     }, { retries: 5, baseDelayMs: 1000, maxDelayMs: 15000, shouldRetry: () => true });
+    logStep('STEP2', `Asset info obtained: filename=${assetInfo?.filename}`);
   } catch (e) {
+    logStep('STEP2', `FAILED: ${e?.message}`);
     console.warn('Background: getAssetInfoAsync failed after retries:', asset.id, e?.message);
     return { uploaded: 0, skipped: 0, failed: 1 };
   }
 
+  logStep('STEP3', 'Resolving file path');
   let staged = null;
   try {
     staged = await resolveReadableFilePath({ assetId: asset.id, assetInfo });
+    logStep('STEP3', `File path resolved: ${staged?.filePath?.substring(0, 50)}...`);
   } catch (e) {
+    logStep('STEP3', `FAILED: ${e?.message}`);
     return { uploaded: 0, skipped: 0, failed: 1 };
   }
 
@@ -340,8 +353,11 @@ export const autoUploadStealthCloudUploadOneAsset = async ({
   const fileIdentity = computeFileIdentity(filename, originalSize);
   const manifestId = fileIdentity ? sha256(`file:${fileIdentity}`) : sha256(`asset:${asset.id}`);
   
+  logStep('DEDUP', 'Checking deduplication');
+  
   // Skip if already uploaded (by stable manifestId)
   if (existingManifestIds && existingManifestIds.has(manifestId)) {
+    logStep('SKIP', 'manifestId already exists');
     if (staged && staged.tmpCopied && staged.tmpUri) {
       try { await FileSystem.deleteAsync(staged.tmpUri, { idempotent: true }); } catch (e) {}
     }
@@ -355,7 +371,7 @@ export const autoUploadStealthCloudUploadOneAsset = async ({
   // Skip if filename already exists on server
   const normalizedFilename = filename ? normalizeFilenameForCompare(filename) : null;
   if (normalizedFilename && alreadyFilenames && alreadyFilenames.has(normalizedFilename)) {
-    console.log(`AutoUpload: Skipping ${filename} - filename already on server`);
+    logStep('SKIP', `filename already on server: ${filename}`);
     if (staged && staged.tmpCopied && staged.tmpUri) {
       try { await FileSystem.deleteAsync(staged.tmpUri, { idempotent: true }); } catch (e) {}
     }
@@ -452,11 +468,15 @@ export const autoUploadStealthCloudUploadOneAsset = async ({
   let exactFileHash = null;
   let perceptualHash = null;
 
+  logStep('STEP4', `Computing hashes (isImage=${isImage})`);
   if (isImage) {
     // Images: compute perceptual hash for transcoding-resistant deduplication
     try {
+      logStep('STEP4a', 'Computing perceptual hash');
       perceptualHash = await computePerceptualHash(filePath, asset, assetInfo);
+      logStep('STEP4a', `Perceptual hash: ${perceptualHash ? 'computed' : 'null'}`);
     } catch (e) {
+      logStep('STEP4a', `FAILED: ${e?.message}`);
       console.warn('Background: computePerceptualHash failed:', asset.id, e?.message);
     }
     // Skip if perceptual hash already exists on server
@@ -469,8 +489,12 @@ export const autoUploadStealthCloudUploadOneAsset = async ({
     }
     // Also compute exact hash for manifest storage and byte-identical dedup (AirDrop)
     try {
+      logStep('STEP4b', 'Computing exact file hash');
       exactFileHash = await computeExactFileHash(filePath);
-    } catch (e) {}
+      logStep('STEP4b', `Exact hash: ${exactFileHash ? 'computed' : 'null'}`);
+    } catch (e) {
+      logStep('STEP4b', `FAILED: ${e?.message}`);
+    }
     // Skip if exact file hash already exists on server (byte-identical, e.g. AirDrop)
     if (exactFileHash && alreadyFileHashes && alreadyFileHashes.has(exactFileHash)) {
       console.log(`AutoUpload: Skipping ${filename} - exact file hash match on server`);
@@ -482,8 +506,11 @@ export const autoUploadStealthCloudUploadOneAsset = async ({
   } else {
     // Videos: compute exact file hash
     try {
+      logStep('STEP4c', 'Computing exact file hash for video');
       exactFileHash = await computeExactFileHash(filePath);
+      logStep('STEP4c', `Exact hash: ${exactFileHash ? 'computed' : 'null'}`);
     } catch (e) {
+      logStep('STEP4c', `FAILED: ${e?.message}`);
       console.warn('Background: computeExactFileHash failed:', asset.id, e?.message);
     }
     // Skip if exact file hash already exists on server
@@ -508,7 +535,7 @@ export const autoUploadStealthCloudUploadOneAsset = async ({
   const fileUri = filePath.startsWith('file://') ? filePath : `file://${filePath}`;
   if (!fileUri) return { uploaded: 0, skipped: 0, failed: 1 };
 
-  console.log(`AutoUpload: Starting chunked upload for ${filename}, size=${originalSize}, path=${filePath}`);
+  logStep('STEP5', `Starting chunked upload, size=${originalSize}, chunks=${Math.ceil(originalSize / 512000)}`);
 
   let chunkIndex = 0;
   const chunkIds = [];
@@ -596,14 +623,21 @@ export const autoUploadStealthCloudUploadOneAsset = async ({
   }
 
   // Wait for all in-flight uploads to complete
+  logStep('STEP5', `Waiting for ${inFlightUploads.length} in-flight uploads`);
   try {
     await Promise.all(inFlightUploads);
+    logStep('STEP5', `All chunks uploaded: ${chunkIds.length} chunks`);
   } catch (e) {
+    logStep('STEP5', `CHUNK UPLOAD FAILED: ${e?.message}`);
     return { uploaded: 0, skipped: 0, failed: 1 };
   }
 
-  if (!chunkIds.length) return { uploaded: 0, skipped: 0, failed: 1 };
+  if (!chunkIds.length) {
+    logStep('STEP5', 'FAILED: No chunks uploaded');
+    return { uploaded: 0, skipped: 0, failed: 1 };
+  }
 
+  logStep('STEP6', 'Extracting EXIF data');
   // Extract EXIF data for all images to store in manifest for cross-platform deduplication
   let exifCaptureTime = null, exifMake = null, exifModel = null;
   if (isImage) {
@@ -631,11 +665,13 @@ export const autoUploadStealthCloudUploadOneAsset = async ({
         }
       }
     } catch (e) {
-      // EXIF extraction is best-effort - don't fail upload
+      logStep('STEP6', `EXIF extraction failed (non-critical): ${e?.message}`);
       console.warn('AutoUpload: EXIF extraction failed (non-critical):', filename, e?.message);
     }
   }
+  logStep('STEP6', `EXIF done: captureTime=${exifCaptureTime}, make=${exifMake}, model=${exifModel}`);
 
+  logStep('STEP7', 'Generating thumbnail');
   // Generate and upload encrypted thumbnail for Sync Select previews (best-effort, matches manual backup)
   let thumbChunkId = null;
   let thumbNonceB64 = null;
@@ -703,9 +739,12 @@ export const autoUploadStealthCloudUploadOneAsset = async ({
     }
   } catch (e) {
     // Best-effort: thumbnail failures must not fail backup
+    logStep('STEP7', `Thumbnail FAILED (non-fatal): ${e?.message}`);
     console.warn('AutoUpload: thumbnail generation failed (non-fatal):', filename, e?.message);
   }
+  logStep('STEP7', `Thumbnail done: ${thumbChunkId ? 'uploaded' : 'skipped'}, ${thumbW}x${thumbH}`);
 
+  logStep('STEP8', 'Building and uploading manifest');
   const manifest = {
     v: 1, assetId: asset.id, filename: assetInfo.filename || asset.filename || null,
     mediaType: asset.mediaType || null, originalSize: originalSize,
@@ -749,10 +788,13 @@ export const autoUploadStealthCloudUploadOneAsset = async ({
       }, { headers: config.headers, timeout: 30000 });
     }, { retries: 10, baseDelayMs: 1000, maxDelayMs: 30000, shouldRetry: shouldRetryChunkUpload });
   } catch (e) {
+    logStep('STEP8', `Manifest upload FAILED: ${e?.message}`);
     console.warn('Background: manifest upload failed after retries:', manifestId, e?.message);
     return { uploaded: 0, skipped: 0, failed: 1 };
   }
+  logStep('STEP8', 'Manifest uploaded successfully');
 
+  logStep('STEP9', 'Storing full EXIF (fire-and-forget)');
   // Store full EXIF to server for universal cross-platform preservation (matches manual backup)
   // Fire-and-forget, non-blocking - store full EXIF to server
   const isImageForExif = asset.mediaType === 'photo' || /\.(jpg|jpeg|png|heic|heif|gif|bmp|webp|tiff?)$/i.test(filename || '');
@@ -818,6 +860,7 @@ export const autoUploadStealthCloudUploadOneAsset = async ({
     try { await FileSystem.deleteAsync(staged.tmpUri, { idempotent: true }); } catch (e) {}
   }
 
+  logStep('COMPLETE', `Successfully uploaded ${filename}`);
   return { uploaded: 1, skipped: 0, failed: 0, manifestId, perceptualHash, fileHash: exactFileHash, filename };
 };
 
@@ -835,9 +878,12 @@ export const chooseStealthCloudChunkBytes = ({ platform, originalSize, fastMode 
 };
 
 export const chooseStealthCloudMaxParallelChunkUploads = ({ platform, originalSize, fastMode = false }) => {
-  // No concurrency - sequential uploads only to prevent crashes on weak phones
-  // Both fast and slow mode use 1 parallel to eliminate memory pressure
-  return 1;
+  // Fast mode: moderate concurrency for speed
+  if (fastMode) {
+    return platform === 'android' ? 6 : 5;
+  }
+  // Slow mode: conservative to prevent phone heating
+  return platform === 'android' ? 3 : 2;
 };
 
 export const createConcurrencyLimiter = (maxParallel) => {

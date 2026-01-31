@@ -1179,9 +1179,11 @@ export default function App() {
           const sampleFilenames = Array.from(alreadyFilenames).slice(0, 5);
           console.log(`AutoUpload: sample filenames in set: ${JSON.stringify(sampleFilenames)}`);
           
-          // Skip dedup cache - SecureStore has 2048 byte limit, cache is too large
-          // Dedup sets are rebuilt from server manifests each session (fast enough)
-          console.log('AutoUpload: dedup sets built from server manifests');
+          // Memory cleanup: clear existingManifests array after building dedup sets
+          // The dedup sets contain all needed info, no need to keep raw manifests in memory
+          existingManifests.length = 0;
+          try { if (global.gc) global.gc(); } catch (e) {}
+          console.log('AutoUpload: dedup sets built, cleared manifest array to free memory');
         }
 
         let after = null;
@@ -1408,12 +1410,19 @@ export default function App() {
             const assetCooldown = getThrottleAssetCooldownMs();
             if (assetCooldown > 0) await sleep(assetCooldown);
 
+            // Memory cleanup: hint GC every 5 assets to prevent memory buildup
+            if ((uploaded + skipped + failed) % 5 === 0) {
+              try { if (global.gc) global.gc(); } catch (e) {}
+            }
+
             // Thermal batch limit: long cooling pause every N assets
             const batchLimit = getThrottleBatchLimit();
             const batchCooldown = getThrottleBatchCooldownMs();
             if (batchCooldown > 0 && uploaded > 0 && uploaded % batchLimit === 0) {
               setStatus(t('status.autoBackupPausing'));
               await sleep(batchCooldown);
+              // Force GC during long pause
+              try { if (global.gc) global.gc(); } catch (e) {}
             }
           }
 
@@ -4376,104 +4385,59 @@ export default function App() {
       {!quickSetupCollapsed && serverType !== 'stealthcloud' && (
         <View style={[styles.overlay, { backgroundColor: 'rgba(0,0,0,0.97)' }]}>
           <View style={[styles.overlayCard, { backgroundColor: '#000000', maxWidth: 420, width: '94%', padding: scaleSpacing(20) }]}>
-            {/* Header with icon */}
-            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: scaleSpacing(16) }}>
-              <View style={{ width: scale(40), height: scale(40), borderRadius: scale(12), backgroundColor: serverType === 'local' ? 'rgba(3, 225, 255, 0.15)' : serverType === 'remote' ? 'rgba(3, 225, 255, 0.15)' : 'rgba(139, 92, 246, 0.15)', alignItems: 'center', justifyContent: 'center', marginRight: scaleSpacing(12) }}>
-                <Feather name={serverType === 'local' ? 'wifi' : serverType === 'remote' ? 'globe' : 'cloud'} size={scale(20)} color={serverType === 'local' ? '#03E1FF' : serverType === 'remote' ? '#03E1FF' : '#8B5CF6'} />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={{ color: '#FFFFFF', fontSize: scale(18), fontWeight: '700' }}>
-                  {serverType === 'local' ? t('quickSetup.localTitle') : serverType === 'remote' ? t('quickSetup.remoteTitle') : t('quickSetup.stealthcloudTitle')}
-                </Text>
-                <Text style={{ color: '#888888', fontSize: scale(12), marginTop: 2 }}>
-                  {serverType === 'local' ? t('quickSetup.localSubtitle') : serverType === 'remote' ? t('quickSetup.remoteSubtitle') : t('quickSetup.stealthcloudSubtitle')}
-                </Text>
-              </View>
+            {/* Header */}
+            <View style={{ marginBottom: scaleSpacing(20) }}>
+              <Text style={{ color: '#FFFFFF', fontSize: scale(20), fontWeight: '700', marginBottom: scaleSpacing(4) }}>
+                {serverType === 'local' ? 'Local Network Setup' : 'Remote Server Setup'}
+              </Text>
+              <Text style={{ color: '#888888', fontSize: scale(13) }}>
+                {serverType === 'local' ? 'Back up to your computer on the same network' : 'Back up to your own server anywhere'}
+              </Text>
             </View>
 
             {serverType === 'local' && (
               <>
-                {/* Step 1: Computer */}
-                <View style={{ backgroundColor: '#111111', borderRadius: scale(12), padding: scaleSpacing(14), marginBottom: scaleSpacing(16), borderWidth: 1, borderColor: '#333333' }}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: scaleSpacing(10) }}>
-                    <Feather name="monitor" size={scale(16)} color="#03E1FF" />
-                    <Text style={{ color: '#03E1FF', fontSize: scale(13), fontWeight: '600', marginLeft: scaleSpacing(8) }}>{t('quickSetup.onYourComputer')}</Text>
+                {/* Step 1: Download */}
+                <View style={{ flexDirection: 'row', alignItems: 'flex-start', marginBottom: scaleSpacing(16) }}>
+                  <View style={{ width: scale(28), height: scale(28), borderRadius: scale(14), backgroundColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center', marginRight: scaleSpacing(12) }}>
+                    <Text style={{ color: '#000', fontSize: scale(14), fontWeight: '700' }}>1</Text>
                   </View>
-                  <View style={{ flexDirection: 'row', alignItems: 'flex-start', marginBottom: scaleSpacing(8) }}>
-                    <View style={{ width: scale(20), height: scale(20), borderRadius: scale(10), backgroundColor: '#03E1FF', alignItems: 'center', justifyContent: 'center', marginRight: scaleSpacing(10) }}>
-                      <Text style={{ color: '#fff', fontSize: scale(11), fontWeight: '700' }}>1</Text>
-                    </View>
-                    <View style={{ flex: 1 }}>
-                      <Text style={{ color: '#FFFFFF', fontSize: scale(13) }}>{t('quickSetup.downloadServer')}</Text>
-                      <TouchableOpacity
-                        style={{ marginTop: scaleSpacing(6), backgroundColor: '#0A0A0A', borderRadius: scale(8), padding: scaleSpacing(8), borderWidth: 1, borderColor: '#333' }}
-                        onPress={() => { Clipboard.setString(GITHUB_RELEASES_LATEST_URL); showDarkAlert(t('alerts.copied'), t('alerts.linkCopied')); }}
-                        onLongPress={() => openLink(GITHUB_RELEASES_LATEST_URL)}>
-                        <Text style={{ color: '#888', fontSize: scale(10) }} numberOfLines={1} ellipsizeMode="middle">{GITHUB_RELEASES_LATEST_URL}</Text>
-                        <Text style={{ color: '#666', fontSize: scale(9), marginTop: 2 }}>{t('quickSetup.tapToCopy')}</Text>
-                      </TouchableOpacity>
-                    </View>
-                  </View>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: scaleSpacing(6) }}>
-                    <View style={{ width: scale(20), height: scale(20), borderRadius: scale(10), backgroundColor: '#03E1FF', alignItems: 'center', justifyContent: 'center', marginRight: scaleSpacing(10) }}>
-                      <Text style={{ color: '#fff', fontSize: scale(11), fontWeight: '700' }}>2</Text>
-                    </View>
-                    <Text style={{ color: '#FFFFFF', fontSize: scale(13) }}>{t('quickSetup.installAndRun')}</Text>
-                  </View>
-                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    <View style={{ width: scale(20), height: scale(20), borderRadius: scale(10), backgroundColor: '#03E1FF', alignItems: 'center', justifyContent: 'center', marginRight: scaleSpacing(10) }}>
-                      <Text style={{ color: '#fff', fontSize: scale(11), fontWeight: '700' }}>3</Text>
-                    </View>
-                    <Text style={{ color: '#FFFFFF', fontSize: scale(13) }}>{t('quickSetup.trayPairMobile')}</Text>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ color: '#FFFFFF', fontSize: scale(15), fontWeight: '600', marginBottom: scaleSpacing(6) }}>Download from GitHub</Text>
+                    <TouchableOpacity
+                      style={{ backgroundColor: '#1A1A1A', borderRadius: scale(8), padding: scaleSpacing(12), borderWidth: 1, borderColor: '#333' }}
+                      onPress={() => { Clipboard.setString(GITHUB_RELEASES_LATEST_URL); showDarkAlert(t('alerts.copied'), t('alerts.linkCopied')); }}
+                      onLongPress={() => openLink(GITHUB_RELEASES_LATEST_URL)}>
+                      <Text style={{ color: '#FFFFFF', fontSize: scale(11) }} numberOfLines={1} ellipsizeMode="middle">{GITHUB_RELEASES_LATEST_URL}</Text>
+                      <Text style={{ color: '#888', fontSize: scale(10), marginTop: 4 }}>Tap to copy link</Text>
+                    </TouchableOpacity>
                   </View>
                 </View>
 
-                {/* Step 2: Phone */}
-                <View style={{ backgroundColor: '#111111', borderRadius: scale(12), padding: scaleSpacing(14), borderWidth: 1, borderColor: '#333333' }}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: scaleSpacing(10) }}>
-                    <Feather name="smartphone" size={scale(16)} color="#03E1FF" />
-                    <Text style={{ color: '#03E1FF', fontSize: scale(13), fontWeight: '600', marginLeft: scaleSpacing(8) }}>{t('quickSetup.onYourPhone')}</Text>
+                {/* Step 2: Scan QR */}
+                <View style={{ flexDirection: 'row', alignItems: 'flex-start', marginBottom: scaleSpacing(16) }}>
+                  <View style={{ width: scale(28), height: scale(28), borderRadius: scale(14), backgroundColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center', marginRight: scaleSpacing(12) }}>
+                    <Text style={{ color: '#000', fontSize: scale(14), fontWeight: '700' }}>2</Text>
                   </View>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: scaleSpacing(6) }}>
-                    <View style={{ width: scale(20), height: scale(20), borderRadius: scale(10), backgroundColor: '#03E1FF', alignItems: 'center', justifyContent: 'center', marginRight: scaleSpacing(10) }}>
-                      <Text style={{ color: '#fff', fontSize: scale(11), fontWeight: '700' }}>4</Text>
-                    </View>
-                    <Text style={{ color: '#FFFFFF', fontSize: scale(13) }}>{t('quickSetup.scanQrOrEnterIp')}</Text>
-                  </View>
-                  {/* IP Input with red highlight if required */}
-                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: scaleSpacing(10), marginLeft: scale(30) }}>
-                    <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: '#0A0A0A', borderRadius: scale(8), borderWidth: 2, borderColor: quickSetupHighlightInput && !localHost ? '#EF4444' : '#333', paddingHorizontal: scaleSpacing(10) }}>
-                      <Feather name="wifi" size={scale(16)} color={quickSetupHighlightInput && !localHost ? '#EF4444' : '#666'} />
-                      <TextInput
-                        style={{ flex: 1, color: '#FFFFFF', fontSize: scale(13), paddingVertical: scaleSpacing(10), marginLeft: scaleSpacing(8) }}
-                        placeholder="192.168.1.xxx"
-                        placeholderTextColor="#666"
-                        value={localHost}
-                        onChangeText={(t) => setLocalHost(normalizeHostInput(t))}
-                        autoCapitalize="none"
-                        keyboardType="numeric"
-                      />
-                    </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ color: '#FFFFFF', fontSize: scale(15), fontWeight: '600', marginBottom: scaleSpacing(6) }}>Scan QR code from desktop app</Text>
                     <TouchableOpacity 
-                      style={{ marginLeft: scaleSpacing(8), backgroundColor: '#03E1FF', borderRadius: scale(8), padding: scaleSpacing(10) }} 
+                      style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFFFFF', borderRadius: scale(8), padding: scaleSpacing(12) }} 
                       onPress={() => { setQuickSetupCollapsed(true); setQuickSetupHighlightInput(false); setQrScannerOpen(true); }}>
-                      <Feather name="maximize" size={scale(18)} color="#FFFFFF" />
+                      <Feather name="maximize" size={scale(18)} color="#000000" />
+                      <Text style={{ color: '#000000', fontSize: scale(14), fontWeight: '600', marginLeft: scaleSpacing(8) }}>Open Scanner</Text>
                     </TouchableOpacity>
                   </View>
-                  {quickSetupHighlightInput && !localHost && (
-                    <Text style={{ color: '#EF4444', fontSize: scale(11), marginLeft: scale(30), marginBottom: scaleSpacing(6) }}>⚠ {t('quickSetup.enterIpToRegister')}</Text>
-                  )}
-                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: scaleSpacing(6) }}>
-                    <View style={{ width: scale(20), height: scale(20), borderRadius: scale(10), backgroundColor: '#03E1FF', alignItems: 'center', justifyContent: 'center', marginRight: scaleSpacing(10) }}>
-                      <Text style={{ color: '#fff', fontSize: scale(11), fontWeight: '700' }}>5</Text>
-                    </View>
-                    <Text style={{ color: '#FFFFFF', fontSize: scale(13) }}>{t('quickSetup.createAccountLogin')}</Text>
+                </View>
+
+                {/* Step 3: Start backing up */}
+                <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
+                  <View style={{ width: scale(28), height: scale(28), borderRadius: scale(14), backgroundColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center', marginRight: scaleSpacing(12) }}>
+                    <Text style={{ color: '#000', fontSize: scale(14), fontWeight: '700' }}>3</Text>
                   </View>
-                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    <View style={{ width: scale(20), height: scale(20), borderRadius: scale(10), backgroundColor: '#03E1FF', alignItems: 'center', justifyContent: 'center', marginRight: scaleSpacing(10) }}>
-                      <Text style={{ color: '#fff', fontSize: scale(11), fontWeight: '700' }}>6</Text>
-                    </View>
-                    <Text style={{ color: '#FFFFFF', fontSize: scale(13) }}>{t('quickSetup.startBackingUp')}</Text>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ color: '#FFFFFF', fontSize: scale(15), fontWeight: '600' }}>Start backing up</Text>
+                    <Text style={{ color: '#888', fontSize: scale(12), marginTop: 4 }}>Your photos will be encrypted and stored on your computer</Text>
                   </View>
                 </View>
               </>
@@ -4481,53 +4445,34 @@ export default function App() {
 
             {serverType === 'remote' && (
               <>
-                {/* Step 1: Server */}
-                <View style={{ backgroundColor: '#1A1A1A', borderRadius: scale(12), padding: scaleSpacing(14), marginBottom: scaleSpacing(10), borderWidth: 1, borderColor: '#2A2A2A' }}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: scaleSpacing(10) }}>
-                    <Feather name="terminal" size={scale(16)} color="#03E1FF" />
-                    <Text style={{ color: '#03E1FF', fontSize: scale(13), fontWeight: '600', marginLeft: scaleSpacing(8) }}>{t('quickSetup.onYourServer')}</Text>
+                {/* Step 1: Run install script */}
+                <View style={{ flexDirection: 'row', alignItems: 'flex-start', marginBottom: scaleSpacing(16) }}>
+                  <View style={{ width: scale(28), height: scale(28), borderRadius: scale(14), backgroundColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center', marginRight: scaleSpacing(12) }}>
+                    <Text style={{ color: '#000', fontSize: scale(14), fontWeight: '700' }}>1</Text>
                   </View>
-                  <View style={{ flexDirection: 'row', alignItems: 'flex-start', marginBottom: scaleSpacing(8) }}>
-                    <View style={{ width: scale(20), height: scale(20), borderRadius: scale(10), backgroundColor: '#03E1FF', alignItems: 'center', justifyContent: 'center', marginRight: scaleSpacing(10), marginTop: 2 }}>
-                      <Text style={{ color: '#fff', fontSize: scale(11), fontWeight: '700' }}>1</Text>
-                    </View>
-                    <View style={{ flex: 1 }}>
-                      <Text style={{ color: '#FFFFFF', fontSize: scale(13) }}>{t('quickSetup.runInstallScript')}</Text>
-                      <TouchableOpacity
-                        style={{ marginTop: scaleSpacing(6), backgroundColor: '#0A0A0A', borderRadius: scale(8), padding: scaleSpacing(8), borderWidth: 1, borderColor: '#333' }}
-                        onPress={() => { Clipboard.setString('sudo curl -fsSL https://raw.githubusercontent.com/viktorvishyn369/PhotoLynk/main/install-server.sh | bash'); showDarkAlert(t('alerts.copied'), t('alerts.commandCopied')); }}
-                        onLongPress={() => openLink('https://github.com/viktorvishyn369/PhotoLynk/blob/main/install-server.sh')}>
-                        <Text style={{ color: '#888', fontSize: scale(10) }} numberOfLines={2}>sudo curl -fsSL https://...install-server.sh | bash</Text>
-                        <Text style={{ color: '#666', fontSize: scale(9), marginTop: 2 }}>{t('quickSetup.tapToCopyView')}</Text>
-                      </TouchableOpacity>
-                    </View>
-                  </View>
-                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    <View style={{ width: scale(20), height: scale(20), borderRadius: scale(10), backgroundColor: '#03E1FF', alignItems: 'center', justifyContent: 'center', marginRight: scaleSpacing(10) }}>
-                      <Text style={{ color: '#fff', fontSize: scale(11), fontWeight: '700' }}>2</Text>
-                    </View>
-                    <Text style={{ color: '#FFFFFF', fontSize: scale(13) }}>{t('quickSetup.followInstructions')}</Text>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ color: '#FFFFFF', fontSize: scale(15), fontWeight: '600', marginBottom: scaleSpacing(6) }}>Run install script on your server</Text>
+                    <TouchableOpacity
+                      style={{ backgroundColor: '#1A1A1A', borderRadius: scale(8), padding: scaleSpacing(12), borderWidth: 1, borderColor: '#333' }}
+                      onPress={() => { Clipboard.setString('sudo curl -fsSL https://raw.githubusercontent.com/viktorvishyn369/PhotoLynk/main/install-server.sh | bash'); showDarkAlert(t('alerts.copied'), t('alerts.commandCopied')); }}
+                      onLongPress={() => openLink('https://github.com/viktorvishyn369/PhotoLynk/blob/main/install-server.sh')}>
+                      <Text style={{ color: '#FFFFFF', fontSize: scale(10) }} numberOfLines={2}>sudo curl -fsSL https://...install-server.sh | bash</Text>
+                      <Text style={{ color: '#888', fontSize: scale(10), marginTop: 4 }}>Tap to copy command</Text>
+                    </TouchableOpacity>
                   </View>
                 </View>
 
-                {/* Step 2: Phone */}
-                <View style={{ backgroundColor: '#1A1A1A', borderRadius: scale(12), padding: scaleSpacing(14), borderWidth: 1, borderColor: '#2A2A2A' }}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: scaleSpacing(10) }}>
-                    <Feather name="smartphone" size={scale(16)} color="#03E1FF" />
-                    <Text style={{ color: '#03E1FF', fontSize: scale(13), fontWeight: '600', marginLeft: scaleSpacing(8) }}>{t('quickSetup.onYourPhone')}</Text>
+                {/* Step 2: Enter domain */}
+                <View style={{ flexDirection: 'row', alignItems: 'flex-start', marginBottom: scaleSpacing(16) }}>
+                  <View style={{ width: scale(28), height: scale(28), borderRadius: scale(14), backgroundColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center', marginRight: scaleSpacing(12) }}>
+                    <Text style={{ color: '#000', fontSize: scale(14), fontWeight: '700' }}>2</Text>
                   </View>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: scaleSpacing(6) }}>
-                    <View style={{ width: scale(20), height: scale(20), borderRadius: scale(10), backgroundColor: '#03E1FF', alignItems: 'center', justifyContent: 'center', marginRight: scaleSpacing(10) }}>
-                      <Text style={{ color: '#fff', fontSize: scale(11), fontWeight: '700' }}>3</Text>
-                    </View>
-                    <Text style={{ color: '#FFFFFF', fontSize: scale(13) }}>{t('quickSetup.enterDomainBelow')}</Text>
-                  </View>
-                  {/* Domain Input with red highlight if required */}
-                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: scaleSpacing(10), marginLeft: scale(30) }}>
-                    <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: '#0A0A0A', borderRadius: scale(8), borderWidth: 2, borderColor: quickSetupHighlightInput && !remoteHost ? '#EF4444' : '#333', paddingHorizontal: scaleSpacing(10) }}>
-                      <Feather name="globe" size={scale(16)} color={quickSetupHighlightInput && !remoteHost ? '#EF4444' : '#666'} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ color: '#FFFFFF', fontSize: scale(15), fontWeight: '600', marginBottom: scaleSpacing(6) }}>Enter your server domain</Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#1A1A1A', borderRadius: scale(8), borderWidth: 1, borderColor: quickSetupHighlightInput && !remoteHost ? '#EF4444' : '#333', paddingHorizontal: scaleSpacing(12) }}>
+                      <Feather name="globe" size={scale(16)} color={quickSetupHighlightInput && !remoteHost ? '#EF4444' : '#888'} />
                       <TextInput
-                        style={{ flex: 1, color: '#FFFFFF', fontSize: scale(13), paddingVertical: scaleSpacing(10), marginLeft: scaleSpacing(8) }}
+                        style={{ flex: 1, color: '#FFFFFF', fontSize: scale(14), paddingVertical: scaleSpacing(12), marginLeft: scaleSpacing(8) }}
                         placeholder="example.com"
                         placeholderTextColor="#666"
                         value={remoteHost}
@@ -4536,21 +4481,20 @@ export default function App() {
                         keyboardType="url"
                       />
                     </View>
+                    {quickSetupHighlightInput && !remoteHost && (
+                      <Text style={{ color: '#EF4444', fontSize: scale(11), marginTop: 4 }}>Please enter your server domain</Text>
+                    )}
                   </View>
-                  {quickSetupHighlightInput && !remoteHost && (
-                    <Text style={{ color: '#EF4444', fontSize: scale(11), marginLeft: scale(30), marginBottom: scaleSpacing(6) }}>⚠ {t('quickSetup.enterDomainToRegister')}</Text>
-                  )}
-                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: scaleSpacing(6) }}>
-                    <View style={{ width: scale(20), height: scale(20), borderRadius: scale(10), backgroundColor: '#03E1FF', alignItems: 'center', justifyContent: 'center', marginRight: scaleSpacing(10) }}>
-                      <Text style={{ color: '#fff', fontSize: scale(11), fontWeight: '700' }}>4</Text>
-                    </View>
-                    <Text style={{ color: '#FFFFFF', fontSize: scale(13) }}>{t('quickSetup.createAccountLogin')}</Text>
+                </View>
+
+                {/* Step 3: Start backing up */}
+                <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
+                  <View style={{ width: scale(28), height: scale(28), borderRadius: scale(14), backgroundColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center', marginRight: scaleSpacing(12) }}>
+                    <Text style={{ color: '#000', fontSize: scale(14), fontWeight: '700' }}>3</Text>
                   </View>
-                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    <View style={{ width: scale(20), height: scale(20), borderRadius: scale(10), backgroundColor: '#03E1FF', alignItems: 'center', justifyContent: 'center', marginRight: scaleSpacing(10) }}>
-                      <Text style={{ color: '#fff', fontSize: scale(11), fontWeight: '700' }}>5</Text>
-                    </View>
-                    <Text style={{ color: '#FFFFFF', fontSize: scale(13) }}>{t('quickSetup.startBackingUp')}</Text>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ color: '#FFFFFF', fontSize: scale(15), fontWeight: '600' }}>Start backing up</Text>
+                    <Text style={{ color: '#888', fontSize: scale(12), marginTop: 4 }}>Your photos will be encrypted and stored on your server</Text>
                   </View>
                 </View>
               </>
