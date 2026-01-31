@@ -259,41 +259,45 @@ export const LoginScreen = ({
             }}
           />
           
-          {/* Other Servers - Collapsible */}
-          <View style={styles.divider} />
-          <TouchableOpacity
-            style={styles.otherServersToggle}
-            onPress={() => setShowOtherServers(!showOtherServers)}
-            activeOpacity={0.7}
-          >
-            <View style={styles.otherServersToggleLeft}>
-              <Feather name="server" size={scale(16)} color="#666666" />
-              <Text style={styles.otherServersToggleText}>{t('login.otherServers')}</Text>
-            </View>
-            <Feather 
-              name={showOtherServers || isOtherServerSelected ? "chevron-up" : "chevron-down"} 
-              size={scale(18)} 
-              color="#666666" 
-            />
-          </TouchableOpacity>
-          
-          {/* Expanded other servers */}
-          {(showOtherServers || isOtherServerSelected) && (
+          {/* Other Servers - Collapsible (hidden on first run to guide users to StealthCloud) */}
+          {!isFirstRun && (
             <>
               <View style={styles.divider} />
-              <ServerOption
-                icon="wifi"
-                label={t('login.localNetwork')}
-                isSelected={serverType === 'local'}
-                onPress={() => setServerType('local')}
-              />
-              <View style={styles.divider} />
-              <ServerOption
-                icon="globe"
-                label={t('settings.remoteServer')}
-                isSelected={serverType === 'remote'}
-                onPress={() => setServerType('remote')}
-              />
+              <TouchableOpacity
+                style={styles.otherServersToggle}
+                onPress={() => setShowOtherServers(!showOtherServers)}
+                activeOpacity={0.7}
+              >
+                <View style={styles.otherServersToggleLeft}>
+                  <Feather name="server" size={scale(16)} color="#666666" />
+                  <Text style={styles.otherServersToggleText}>{t('login.otherServers')}</Text>
+                </View>
+                <Feather 
+                  name={showOtherServers || isOtherServerSelected ? "chevron-up" : "chevron-down"} 
+                  size={scale(18)} 
+                  color="#666666" 
+                />
+              </TouchableOpacity>
+              
+              {/* Expanded other servers */}
+              {(showOtherServers || isOtherServerSelected) && (
+                <>
+                  <View style={styles.divider} />
+                  <ServerOption
+                    icon="wifi"
+                    label={t('login.localNetwork')}
+                    isSelected={serverType === 'local'}
+                    onPress={() => setServerType('local')}
+                  />
+                  <View style={styles.divider} />
+                  <ServerOption
+                    icon="globe"
+                    label={t('settings.remoteServer')}
+                    isSelected={serverType === 'remote'}
+                    onPress={() => setServerType('remote')}
+                  />
+                </>
+              )}
             </>
           )}
         </Card>
