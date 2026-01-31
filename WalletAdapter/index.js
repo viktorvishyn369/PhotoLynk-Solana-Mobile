@@ -187,7 +187,14 @@ export const getAvailableWallets = async () => {
   const platform = Platform.OS;
   const available = [];
   
+  // TEMPORARILY HIDDEN: Only show MWA (native hardware wallet) for now
+  // Other wallets (Phantom, WalletConnect, MetaMask) are hidden but logic preserved for future development
+  const ENABLED_WALLET_TYPES = [WALLET_TYPES.MWA];
+  
   for (const [type, info] of Object.entries(WALLET_INFO)) {
+    // Skip wallets that are not enabled (hidden for now)
+    if (!ENABLED_WALLET_TYPES.includes(type)) continue;
+    
     // Check platform compatibility
     if (!info.platforms.includes(platform)) continue;
     
