@@ -4373,7 +4373,7 @@ export default function App() {
         </View>
       )}
 
-      {!quickSetupCollapsed && (
+      {!quickSetupCollapsed && serverType !== 'stealthcloud' && (
         <View style={[styles.overlay, { backgroundColor: 'rgba(0,0,0,0.97)' }]}>
           <View style={[styles.overlayCard, { backgroundColor: '#000000', maxWidth: 420, width: '94%', padding: scaleSpacing(20) }]}>
             {/* Header with icon */}
