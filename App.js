@@ -434,23 +434,29 @@ export default function App() {
         setLocalHost(serverIp);
         setServerType('local');
         setQrScannerOpen(false);
+        // Close Quick Setup modal if open
+        setQuickSetupOpen(false);
+        setQuickSetupCollapsed(true);
 
         // Save to SecureStore
         await SecureStore.setItemAsync('local_host', serverIp);
         await SecureStore.setItemAsync('server_type', 'local');
 
-        // Send credentials to desktop for pairing (if user is logged in and pairing port available)
-        // Try to get credentials from state first, then from SecureStore
-        let pairEmail = email;
-        let pairPassword = password;
-        if (!pairEmail || !pairPassword) {
-          try {
-            pairEmail = await SecureStore.getItemAsync('user_email');
-            // Password is stored in 'user_password_v1' (SAVED_PASSWORD_KEY from authHelpers)
-            pairPassword = await SecureStore.getItemAsync('user_password_v1');
-          } catch (e) {
-            console.log('[QR] Failed to get credentials from SecureStore:', e.message);
-          }
+        // On auth screen (login/register): just set IP, user must press login button
+        if (view === 'auth') {
+          showDarkAlert(t('login.connected'), t('login.serverIpSetTo', { ip: serverIp + ':' + parsed.port }));
+          return;
+        }
+
+        // On settings: do full pairing with desktop
+        // Try to get credentials from SecureStore (user is logged in)
+        let pairEmail = null;
+        let pairPassword = null;
+        try {
+          pairEmail = await SecureStore.getItemAsync('user_email');
+          pairPassword = await SecureStore.getItemAsync('user_password_v1');
+        } catch (e) {
+          console.log('[QR] Failed to get credentials from SecureStore:', e.message);
         }
         console.log('[QR] Pairing check:', { pairingPort: parsed.pairingPort, hasToken: !!parsed.token, email: pairEmail || '(empty)', hasPassword: !!pairPassword });
         if (parsed.pairingPort && parsed.token && pairEmail && pairPassword) {
@@ -464,48 +470,16 @@ export default function App() {
             });
             const result = await response.json();
             if (result.success) {
-              // Auto-login after successful pairing from any screen
-              if (view === 'settings' || view === 'auth') {
-                setLoading(true);
-                try {
-                  await handleAuth('login');
-                  setView('home');
-                  showDarkAlert(t('login.paired'), t('login.pairedWithDesktop', { ip: serverIp }));
-                } catch (e) {
-                  // Show error but don't throw - pairing succeeded, login failed
-                  showDarkAlert(t('alerts.error'), e.message || t('alerts.connectionFailed'));
-                } finally {
-                  setLoading(false);
-                }
-              } else {
-                showDarkAlert(t('login.paired'), t('login.pairedWithDesktop', { ip: serverIp }));
-              }
+              showDarkAlert(t('login.paired'), t('login.pairedWithDesktop', { ip: serverIp }));
               return;
             }
           } catch (pairErr) {
-            // Pairing failed, continue with normal flow
             console.log('[QR] Pairing request failed:', pairErr.message);
           }
         }
 
-        // Auto-login after QR scan from settings or login screen
-        if (view === 'settings' || view === 'auth') {
-          setLoading(true);
-          try {
-            await handleAuth('login');
-            setView('home');
-            showDarkAlert(t('login.connected'), t('login.serverIpSetTo', { ip: serverIp + ':' + parsed.port }));
-          } catch (e) {
-            showDarkAlert(t('alerts.error'), e.message || t('alerts.connectionFailed'));
-          } finally {
-            setLoading(false);
-          }
-        } else {
-          showDarkAlert(
-            t('login.connected'),
-            t('login.serverIpSetTo', { ip: serverIp + ':' + parsed.port }) + (parsed.name ? '\n\n' + t('login.serverName', { name: parsed.name }) : '')
-          );
-        }
+        // Fallback: just show IP set message
+        showDarkAlert(t('login.connected'), t('login.serverIpSetTo', { ip: serverIp + ':' + parsed.port }));
       } else if (parsed.type === 'photolynk-decrypt' && parsed.sessionId && parsed.server) {
         // Web portal decryption request - connect via WebSocket
         setQrScannerOpen(false);
@@ -624,6 +598,9 @@ export default function App() {
 
   // Custom dark-themed alert (replaces Alert.alert for duplicate results)
   const showDarkAlert = (title, message, buttons = null) => {
+    // Close Quick Setup modal if open to ensure alert is visible
+    setQuickSetupOpen(false);
+    setQuickSetupCollapsed(true);
     setCustomAlert({
       title,
       message,
@@ -2107,14 +2084,7 @@ export default function App() {
     } catch (e) {} finally { setBackupPickerLoading(false); }
   };
 
-  const openBackupPicker = async () => {
-    if (loadingRef.current) return;
-    // Check network connectivity before starting
-    if (!(await checkNetworkForOperation('backup'))) {
-      return;
-    }
-    resetBackupPickerState(); setBackupPickerPreview(null); setBackupPickerOpen(true); await loadBackupPickerPage({ reset: true });
-  };
+  const openBackupPicker = async () => { if (loadingRef.current) return; resetBackupPickerState(); setBackupPickerPreview(null); setBackupPickerOpen(true); await loadBackupPickerPage({ reset: true }); };
   const closeBackupPicker = () => { setBackupPickerOpen(false); setBackupPickerPreview(null); resetBackupPickerState(); };
 
   const ensureBackupPickerAssetMeta = useCallback(async (asset) => {
@@ -2221,14 +2191,7 @@ export default function App() {
   // NFT FUNCTIONS
   // ============================================================================
   
-  const openNftPicker = async () => {
-    if (loadingRef.current) return;
-    // Check internet connectivity for NFT operations
-    if (!(await checkNetworkForOperation('nft'))) {
-      return;
-    }
-    setNftPickerOpen(true);
-  };
+  const openNftPicker = async () => { if (loadingRef.current) return; setNftPickerOpen(true); };
   
   const closeNftPicker = () => {
     setNftPickerOpen(false);
@@ -2454,10 +2417,6 @@ export default function App() {
 
   const openSyncPicker = async () => {
     if (loadingRef.current) return;
-    // Check network connectivity before starting
-    if (!(await checkNetworkForOperation('sync'))) {
-      return;
-    }
     resetSyncPickerState(); setSyncPickerOpen(true); setSyncPickerLoading(true);
     try {
       // Ensure media library permission before listing local assets
@@ -3295,29 +3254,34 @@ export default function App() {
         return true;
       }
       
+      // Read from SecureStore to get the most up-to-date values (state may lag after QR pairing)
+      const effectiveServerType = serverType || (await SecureStore.getItemAsync('server_type')) || 'local';
+      const effectiveLocalHost = localHost || (await SecureStore.getItemAsync('local_host'));
+      const effectiveRemoteHost = remoteHost || (await SecureStore.getItemAsync('remote_host'));
+      
       // For local/remote server - check local network
-      if (serverType === 'local' || serverType === 'remote') {
+      if (effectiveServerType === 'local' || effectiveServerType === 'remote') {
         if (!networkState.isConnected) {
-          showDarkAlert(t('alerts.noNetwork') || 'No Network Connection', t('alerts.noLocalNetworkMessage') || 'Cannot connect to your desktop app. Please ensure you are on the same network as your PhotoLynk Server.');
+          showDarkAlert(t('alerts.noNetwork') || 'No Network Connection', t('alerts.noLocalNetworkMessage') || 'Cannot connect to your desktop app. Please ensure you are on the same network as your PhotoLynk Server or pair via QR code in the Settings tab.');
           return false;
         }
         // Try to ping the server
         try {
-          const SERVER_URL = getServerUrl();
-          if (!SERVER_URL) {
-            showDarkAlert(t('alerts.noServer') || 'Server Not Configured', t('alerts.configureServerFirst') || 'Please configure your server connection first.');
-            return false;
+          const SERVER_URL = computeServerUrl(effectiveServerType, effectiveLocalHost, effectiveRemoteHost);
+          if (!SERVER_URL || SERVER_URL.includes('localhost')) {
+            // No server configured yet - skip check and let the actual operation handle the error
+            return true;
           }
           await axios.get(`${SERVER_URL}/api/health`, { timeout: 5000 });
           return true;
         } catch (e) {
-          showDarkAlert(t('alerts.noNetwork') || 'No Network Connection', t('alerts.noLocalNetworkMessage') || 'Cannot connect to your desktop app. Please ensure you are on the same network as your PhotoLynk Server.');
+          showDarkAlert(t('alerts.noNetwork') || 'No Network Connection', t('alerts.noLocalNetworkMessage') || 'Cannot connect to your desktop app. Please ensure you are on the same network as your PhotoLynk Server or pair via QR code in the Settings tab.');
           return false;
         }
       }
       
       // For StealthCloud - need internet, retry for 3 minutes
-      if (serverType === 'stealthcloud') {
+      if (effectiveServerType === 'stealthcloud') {
         const maxRetryMs = 3 * 60 * 1000; // 3 minutes
         const retryIntervalMs = 5000; // 5 seconds
         const startTime = Date.now();
@@ -4136,11 +4100,6 @@ export default function App() {
    * 4. Upload missing files to server
    */
   const backupPhotos = async () => {
-    // Check network connectivity before starting
-    if (!(await checkNetworkForOperation('backup'))) {
-      return;
-    }
-
     if (serverType === 'stealthcloud') {
       return stealthCloudBackup();
     }
@@ -4239,11 +4198,6 @@ export default function App() {
    * 4. Download and save missing files to gallery
    */
   const restorePhotos = async (opts = null) => {
-    // Check network connectivity before starting
-    if (!(await checkNetworkForOperation('sync'))) {
-      return;
-    }
-
     if (serverType === 'stealthcloud') {
       return stealthCloudRestore(opts);
     }
@@ -4535,7 +4489,7 @@ export default function App() {
                     <Text style={{ color: '#000', fontSize: scale(14), fontWeight: '700' }}>1</Text>
                   </View>
                   <View style={{ flex: 1 }}>
-                    <Text style={{ color: '#FFFFFF', fontSize: scale(15), fontWeight: '600', marginBottom: scaleSpacing(6) }}>Download from GitHub</Text>
+                    <Text style={{ color: '#FFFFFF', fontSize: scale(15), fontWeight: '600', marginBottom: scaleSpacing(6) }}>Download from GitHub onto your desktop computer and run the app</Text>
                     <TouchableOpacity
                       style={{ backgroundColor: '#1A1A1A', borderRadius: scale(8), padding: scaleSpacing(12), borderWidth: 1, borderColor: '#333' }}
                       onPress={() => { Clipboard.setString(GITHUB_RELEASES_LATEST_URL); showDarkAlert(t('alerts.copied'), t('alerts.linkCopied')); }}
@@ -4546,28 +4500,14 @@ export default function App() {
                   </View>
                 </View>
 
-                {/* Step 2: Scan QR */}
+                {/* Step 2: Scan QR in Settings */}
                 <View style={{ flexDirection: 'row', alignItems: 'flex-start', marginBottom: scaleSpacing(16) }}>
                   <View style={{ width: scale(28), height: scale(28), borderRadius: scale(14), backgroundColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center', marginRight: scaleSpacing(12) }}>
                     <Text style={{ color: '#000', fontSize: scale(14), fontWeight: '700' }}>2</Text>
                   </View>
                   <View style={{ flex: 1 }}>
-                    <Text style={{ color: '#FFFFFF', fontSize: scale(15), fontWeight: '600', marginBottom: scaleSpacing(6) }}>Scan QR code from desktop app</Text>
-                    <TouchableOpacity 
-                      style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFFFFF', borderRadius: scale(8), padding: scaleSpacing(12) }} 
-                      onPress={() => {
-                        if (!email || !password) {
-                          setQuickSetupOpen(false);
-                          setTimeout(() => {
-                            showDarkAlert(t('alerts.missingCredentials'), t('alerts.enterEmailPassword'));
-                          }, 300);
-                          return;
-                        }
-                        setQuickSetupCollapsed(true); setQuickSetupHighlightInput(false); setQrScannerOpen(true);
-                      }}>
-                      <Feather name="maximize" size={scale(18)} color="#000000" />
-                      <Text style={{ color: '#000000', fontSize: scale(14), fontWeight: '600', marginLeft: scaleSpacing(8) }}>Open Scanner</Text>
-                    </TouchableOpacity>
+                    <Text style={{ color: '#FFFFFF', fontSize: scale(15), fontWeight: '600', marginBottom: scaleSpacing(6) }}>Scan QR code in Settings of this app</Text>
+                    <Text style={{ color: '#888', fontSize: scale(12) }}>Use the QR scanner in Settings to connect to your desktop app</Text>
                   </View>
                 </View>
 
@@ -4592,7 +4532,7 @@ export default function App() {
                     <Text style={{ color: '#000', fontSize: scale(14), fontWeight: '700' }}>1</Text>
                   </View>
                   <View style={{ flex: 1 }}>
-                    <Text style={{ color: '#FFFFFF', fontSize: scale(15), fontWeight: '600', marginBottom: scaleSpacing(6) }}>Run install script on your server</Text>
+                    <Text style={{ color: '#FFFFFF', fontSize: scale(15), fontWeight: '600', marginBottom: scaleSpacing(6) }}>Run install script on your server and follow its instructions</Text>
                     <TouchableOpacity
                       style={{ backgroundColor: '#1A1A1A', borderRadius: scale(8), padding: scaleSpacing(12), borderWidth: 1, borderColor: '#333' }}
                       onPress={() => { Clipboard.setString('sudo curl -fsSL https://raw.githubusercontent.com/viktorvishyn369/PhotoLynk/main/install-server.sh | bash'); showDarkAlert(t('alerts.copied'), t('alerts.commandCopied')); }}
@@ -4603,28 +4543,14 @@ export default function App() {
                   </View>
                 </View>
 
-                {/* Step 2: Enter domain */}
+                {/* Step 2: Enter domain in Settings */}
                 <View style={{ flexDirection: 'row', alignItems: 'flex-start', marginBottom: scaleSpacing(16) }}>
                   <View style={{ width: scale(28), height: scale(28), borderRadius: scale(14), backgroundColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center', marginRight: scaleSpacing(12) }}>
                     <Text style={{ color: '#000', fontSize: scale(14), fontWeight: '700' }}>2</Text>
                   </View>
                   <View style={{ flex: 1 }}>
-                    <Text style={{ color: '#FFFFFF', fontSize: scale(15), fontWeight: '600', marginBottom: scaleSpacing(6) }}>Enter your server domain</Text>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#1A1A1A', borderRadius: scale(8), borderWidth: 1, borderColor: quickSetupHighlightInput && !remoteHost ? '#EF4444' : '#333', paddingHorizontal: scaleSpacing(12) }}>
-                      <Feather name="globe" size={scale(16)} color={quickSetupHighlightInput && !remoteHost ? '#EF4444' : '#888'} />
-                      <TextInput
-                        style={{ flex: 1, color: '#FFFFFF', fontSize: scale(14), paddingVertical: scaleSpacing(12), marginLeft: scaleSpacing(8) }}
-                        placeholder="example.com"
-                        placeholderTextColor="#666"
-                        value={remoteHost}
-                        onChangeText={(t) => setRemoteHost(normalizeHostInput(t))}
-                        autoCapitalize="none"
-                        keyboardType="url"
-                      />
-                    </View>
-                    {quickSetupHighlightInput && !remoteHost && (
-                      <Text style={{ color: '#EF4444', fontSize: scale(11), marginTop: 4 }}>Please enter your server domain</Text>
-                    )}
+                    <Text style={{ color: '#FFFFFF', fontSize: scale(15), fontWeight: '600', marginBottom: scaleSpacing(6) }}>Enter domain in Settings of this app</Text>
+                    <Text style={{ color: '#888', fontSize: scale(12) }}>Enter your server domain in Settings to connect</Text>
                   </View>
                 </View>
 

@@ -314,50 +314,6 @@ export const LoginScreen = ({
           </View>
         )}
 
-        {authMode !== 'forgot' && serverType === 'local' && (
-          <Card style={{ marginTop: scaleSpacing(16) }}>
-            <View style={styles.inputRow}>
-              <InputField
-                icon="wifi"
-                placeholder={t('login.enterLocalIp')}
-                value={localHost}
-                onChangeText={(t) => setLocalHost(normalizeHostInput(t))}
-                keyboardType="url"
-                autoComplete="off"
-                importantForAutofill="no"
-                style={{ flex: 1, marginRight: scaleSpacing(10) }}
-              />
-              <TouchableOpacity style={styles.qrButton} onPress={openQrScanner}>
-                <Feather name="maximize" size={scale(20)} color="#FFFFFF" />
-              </TouchableOpacity>
-            </View>
-            <Text style={styles.inputHint}>{t('login.localIpHint')}</Text>
-            <TouchableOpacity style={styles.quickSetupLinkInline} onPress={openQuickSetupGuide}>
-              <Feather name="book-open" size={scale(14)} color="#03E1FF" />
-              <Text style={styles.quickSetupTextInline}>{t('login.quickSetupGuide')}</Text>
-            </TouchableOpacity>
-          </Card>
-        )}
-
-        {authMode !== 'forgot' && serverType === 'remote' && (
-          <Card style={{ marginTop: scaleSpacing(16) }}>
-            <InputField
-              icon="globe"
-              placeholder={t('login.enterRemoteDomain')}
-              value={remoteHost}
-              onChangeText={(t) => setRemoteHost(normalizeHostInput(t))}
-              keyboardType="url"
-              autoComplete="off"
-              importantForAutofill="no"
-            />
-            <Text style={styles.inputHint}>{t('login.remoteDomainHint')}</Text>
-            <TouchableOpacity style={styles.quickSetupLinkInline} onPress={openQuickSetupGuide}>
-              <Feather name="book-open" size={scale(14)} color="#03E1FF" />
-              <Text style={styles.quickSetupTextInline}>{t('login.quickSetupGuide')}</Text>
-            </TouchableOpacity>
-          </Card>
-        )}
-
         {/* Plan Selection (StealthCloud Register only) - Hide in forgot mode */}
         {authMode !== 'forgot' && serverType === 'stealthcloud' && authMode === 'register' && (
           <>
@@ -457,6 +413,52 @@ export const LoginScreen = ({
             </>
           )}
         </Card>
+
+        {/* Local Network Config - After credentials, before terms */}
+        {authMode !== 'forgot' && serverType === 'local' && (
+          <Card style={{ marginTop: scaleSpacing(16) }}>
+            <View style={styles.inputRow}>
+              <InputField
+                icon="wifi"
+                placeholder={t('login.enterLocalIp')}
+                value={localHost}
+                onChangeText={(t) => setLocalHost(normalizeHostInput(t))}
+                keyboardType="url"
+                autoComplete="off"
+                importantForAutofill="no"
+                style={{ flex: 1, marginRight: scaleSpacing(10) }}
+              />
+              <TouchableOpacity style={styles.qrButton} onPress={openQrScanner}>
+                <Feather name="maximize" size={scale(20)} color="#FFFFFF" />
+              </TouchableOpacity>
+            </View>
+            <Text style={styles.inputHint}>{t('login.localIpHint')}</Text>
+            <TouchableOpacity style={styles.quickSetupLinkInline} onPress={openQuickSetupGuide}>
+              <Feather name="book-open" size={scale(14)} color="#03E1FF" />
+              <Text style={styles.quickSetupTextInline}>{t('login.quickSetupGuide')}</Text>
+            </TouchableOpacity>
+          </Card>
+        )}
+
+        {/* Remote Server Config - After credentials, before terms */}
+        {authMode !== 'forgot' && serverType === 'remote' && (
+          <Card style={{ marginTop: scaleSpacing(16) }}>
+            <InputField
+              icon="globe"
+              placeholder={t('login.enterRemoteDomain')}
+              value={remoteHost}
+              onChangeText={(t) => setRemoteHost(normalizeHostInput(t))}
+              keyboardType="url"
+              autoComplete="off"
+              importantForAutofill="no"
+            />
+            <Text style={styles.inputHint}>{t('login.remoteDomainHint')}</Text>
+            <TouchableOpacity style={styles.quickSetupLinkInline} onPress={openQuickSetupGuide}>
+              <Feather name="book-open" size={scale(14)} color="#03E1FF" />
+              <Text style={styles.quickSetupTextInline}>{t('login.quickSetupGuide')}</Text>
+            </TouchableOpacity>
+          </Card>
+        )}
 
         {/* Terms Checkbox (Register only) */}
         {authMode === 'register' && (
