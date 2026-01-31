@@ -184,6 +184,8 @@ const { MediaDelete } = NativeModules;
 
 const CLIENT_BUILD = `photolynk-mobile-v2/${Application.nativeApplicationVersion || '0'}(${Application.nativeBuildVersion || '0'}) sc-debug-2025-12-13`;
 
+const AUTO_UPLOAD_FEATURE_ENABLED = false;
+
 // Alias for backward compatibility with global function name
 const ensureAutoUploadPolicyAllowsWorkIfBackgrounded = ensureAutoUploadPolicyAllowsWorkIfBackgroundedGlobal;
 
@@ -683,8 +685,9 @@ export default function App() {
   };
 
   const persistAutoUploadEnabled = async (enabled) => {
-    setAutoUploadEnabledSafe(enabled);
-    try { await SecureStore.setItemAsync('auto_upload_enabled', enabled ? 'true' : 'false'); } catch (e) {}
+    const next = AUTO_UPLOAD_FEATURE_ENABLED ? !!enabled : false;
+    setAutoUploadEnabledSafe(next);
+    try { await SecureStore.setItemAsync('auto_upload_enabled', next ? 'true' : 'false'); } catch (e) {}
   };
 
   const persistFastModeEnabled = async (enabled) => {
@@ -3275,9 +3278,13 @@ export default function App() {
     if (serverSettings.normalizedRemoteHost) setRemoteHost(serverSettings.normalizedRemoteHost);
 
     // Restore saved Auto Upload state
+    // Feature is currently disabled: force OFF even if previously enabled.
     const savedAutoUpload = await SecureStore.getItemAsync('auto_upload_enabled');
-    if (savedAutoUpload === 'true') {
+    if (AUTO_UPLOAD_FEATURE_ENABLED && savedAutoUpload === 'true') {
       setAutoUploadEnabledSafe(true);
+    } else {
+      setAutoUploadEnabledSafe(false);
+      try { await SecureStore.setItemAsync('auto_upload_enabled', 'false'); } catch (e) {}
     }
 
     const savedFastMode = await SecureStore.getItemAsync('fast_mode_enabled');
@@ -3681,9 +3688,13 @@ export default function App() {
         setTokenSafe(token);
 
         // Restore saved Auto Upload state after login
+        // Feature is currently disabled: force OFF even if previously enabled.
         const savedAutoUpload = await SecureStore.getItemAsync('auto_upload_enabled');
-        if (savedAutoUpload === 'true') {
+        if (AUTO_UPLOAD_FEATURE_ENABLED && savedAutoUpload === 'true') {
           setAutoUploadEnabledSafe(true);
+        } else {
+          setAutoUploadEnabledSafe(false);
+          try { await SecureStore.setItemAsync('auto_upload_enabled', 'false'); } catch (e) {}
         }
 
         // Clear logout flag on successful login

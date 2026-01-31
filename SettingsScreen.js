@@ -363,7 +363,7 @@ export const SettingsScreen = ({
         {/* Preferences */}
         <Text style={styles.sectionTitle}>{t('settings.preferences')}</Text>
         <Card glassModeEnabled={glassModeEnabled}>
-          {serverType === 'stealthcloud' && (
+          {false && (
             <>
               <ToggleSetting
                 icon="upload-cloud"
