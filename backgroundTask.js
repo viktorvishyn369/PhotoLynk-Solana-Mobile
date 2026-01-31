@@ -835,14 +835,9 @@ export const chooseStealthCloudChunkBytes = ({ platform, originalSize, fastMode 
 };
 
 export const chooseStealthCloudMaxParallelChunkUploads = ({ platform, originalSize, fastMode = false }) => {
-  // Fast mode: reduced concurrency to prevent crashes on weak phones
-  // iOS: 4 parallel, Android: 5 parallel (was 8/10)
-  if (fastMode) {
-    return platform === 'android' ? 5 : 4;
-  }
-  // Slow mode: very conservative to prevent phone heating and crashes
-  // iOS: 1 parallel, Android: 2 parallel (was 2/3)
-  return platform === 'android' ? 2 : 1;
+  // No concurrency - sequential uploads only to prevent crashes on weak phones
+  // Both fast and slow mode use 1 parallel to eliminate memory pressure
+  return 1;
 };
 
 export const createConcurrencyLimiter = (maxParallel) => {
