@@ -462,16 +462,16 @@ export default function App() {
             });
             const result = await response.json();
             if (result.success) {
-              // If in settings, auto-relogin and navigate to main
-              if (view === 'settings') {
+              // Auto-login after successful pairing from any screen
+              if (view === 'settings' || view === 'auth') {
                 setLoading(true);
                 try {
                   await handleAuth('login');
                   setView('home');
                   showDarkAlert(t('login.paired'), t('login.pairedWithDesktop', { ip: serverIp }));
                 } catch (e) {
-                  // Re-throw so SettingsScreen can handle with custom message
-              throw e;
+                  // Show error but don't throw - pairing succeeded, login failed
+                  showDarkAlert(t('alerts.error'), e.message || t('alerts.connectionFailed'));
                 } finally {
                   setLoading(false);
                 }
@@ -486,8 +486,8 @@ export default function App() {
           }
         }
 
-        // If in settings, auto-relogin and navigate to main
-        if (view === 'settings') {
+        // Auto-login after QR scan from settings or login screen
+        if (view === 'settings' || view === 'auth') {
           setLoading(true);
           try {
             await handleAuth('login');
