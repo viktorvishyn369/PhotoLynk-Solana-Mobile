@@ -8,12 +8,13 @@
 import { Platform } from 'react-native';
 import * as MediaLibrary from 'expo-media-library';
 import * as FileSystem from 'expo-file-system';
-import { normalizeFilenameForCompare, getMimeFromFilename } from './utils';
+import { normalizeFilenameForCompare, getMimeFromFilename, detectRealFormatFromMagic } from './utils';
 import { createConcurrencyLimiter } from './backgroundTask';
 import { buildLocalAssetIdSetPaged, fetchAllServerFilesPaged } from './mediaHelpers';
 import { PHOTO_ALBUM_NAME, LEGACY_PHOTO_ALBUM_NAME } from './backupManager';
 import { findFirstAlbumByTitle } from './autoUpload';
 import { computePerceptualHash, computeExactFileHash, findPerceptualHashMatch } from './duplicateScanner';
+import { getCachedHash, setCachedHash, loadHashCache, flushHashCache } from './hashCache';
 import { extractFullExif } from './exifExtractor';
 import axios from 'axios';
 
@@ -91,6 +92,9 @@ export const localRemoteBackupCore = async ({
 
   try {
     console.log('\n🔍 ===== BACKUP TRACE START =====');
+
+    // Load hash cache for faster dedup (avoids re-hashing files)
+    await loadHashCache();
 
     // 1. Get Server List with hash metadata (for cross-device dedup)
     const config = await getAuthHeaders();
@@ -281,21 +285,40 @@ export const localRemoteBackupCore = async ({
         }
 
         // iOS fix: Use the actual filename from assetInfo, not the UUID
-        const actualFilename = assetInfo.filename || asset.filename;
+        let actualFilename = assetInfo.filename || asset.filename;
         const isVideo = /\.(mov|mp4|m4v|avi|mkv|webm|3gp)$/i.test(actualFilename);
+        
+        // Detect real format from magic bytes and fix extension if mismatched
+        // Android sometimes reports screenshots as .jpg when they're actually PNG
+        if (!isVideo) {
+          actualFilename = await detectRealFormatFromMagic(filePath, actualFilename);
+        }
 
         // Compute hash for cross-device dedup (same content, different filename)
+        // IMPORTANT: Add hash to session set IMMEDIATELY after computing to prevent race conditions
+        // with parallel uploads (two similar files checking before either adds their hash)
+        // USE CACHE: Check if hash was already computed for this asset to avoid re-hashing
         let skipByHash = false;
         let skipReason = null;
+        let computedPhash = null; // Store for sending to server
         try {
           if (isVideo) {
-            const fileHash = await computeExactFileHash(filePath);
+            // Try cache first for video file hash
+            let fileHash = getCachedHash(asset, 'file');
+            if (!fileHash) {
+              fileHash = await computeExactFileHash(filePath);
+              if (fileHash) setCachedHash(asset, 'file', fileHash);
+            }
             if (fileHash) {
+              // Add to session FIRST to prevent race condition with parallel uploads
+              const alreadyInSession = sessionFileHashes.has(fileHash);
+              sessionFileHashes.add(fileHash);
+              
               // Check against server hashes first (cross-device dedup)
               if (serverFileHashes.has(fileHash)) {
                 skipByHash = true;
                 skipReason = 'server fileHash';
-              } else if (sessionFileHashes.has(fileHash)) {
+              } else if (alreadyInSession) {
                 skipByHash = true;
                 skipReason = 'session fileHash';
               } else {
@@ -307,29 +330,37 @@ export const localRemoteBackupCore = async ({
                     break;
                   }
                 }
-                if (!skipByHash) sessionFileHashes.add(fileHash);
               }
             }
           } else {
-            const phash = await computePerceptualHash(filePath);
-            if (phash) {
+            // Try cache first for perceptual hash
+            computedPhash = getCachedHash(asset, 'perceptual');
+            if (!computedPhash) {
+              computedPhash = await computePerceptualHash(filePath);
+              if (computedPhash) setCachedHash(asset, 'perceptual', computedPhash);
+            }
+            if (computedPhash) {
+              // Add to session FIRST to prevent race condition with parallel uploads
+              // Check if already in session before adding
+              const alreadyInSession = findPerceptualHashMatch(computedPhash, sessionPerceptualHashes, BACKUP_DHASH_THRESHOLD);
+              sessionPerceptualHashes.add(computedPhash);
+              
               // Check against server hashes first (cross-device dedup)
-              if (findPerceptualHashMatch(phash, serverPerceptualHashes, BACKUP_DHASH_THRESHOLD)) {
+              if (findPerceptualHashMatch(computedPhash, serverPerceptualHashes, BACKUP_DHASH_THRESHOLD)) {
                 skipByHash = true;
                 skipReason = 'server perceptualHash';
-              } else if (findPerceptualHashMatch(phash, sessionPerceptualHashes, BACKUP_DHASH_THRESHOLD)) {
+              } else if (alreadyInSession) {
                 skipByHash = true;
                 skipReason = 'session perceptualHash';
               } else {
                 // FALLBACK: Check ALL platform hashes (double-confirm before upload)
                 for (const plat of ['ios', 'android']) {
-                  if (findPerceptualHashMatch(phash, platformPerceptualHashes[plat], BACKUP_DHASH_THRESHOLD)) {
+                  if (findPerceptualHashMatch(computedPhash, platformPerceptualHashes[plat], BACKUP_DHASH_THRESHOLD)) {
                     skipByHash = true;
                     skipReason = `platform_${plat} perceptualHash`;
                     break;
                   }
                 }
-                if (!skipByHash) sessionPerceptualHashes.add(phash);
               }
             }
           }
@@ -348,16 +379,22 @@ export const localRemoteBackupCore = async ({
         const fileUri = filePath.startsWith('file://') ? filePath : `file://${filePath}`;
 
         // Mobile: use FOREGROUND uploads
+        // Include perceptual hash in header so server can use it for HEIC files (sharp can't compute)
         const sessionTypeUpload = FileSystem.FileSystemSessionType.FOREGROUND;
+        const uploadHeaders = {
+          ...config.headers,
+          'Content-Type': mime,
+          'X-Filename': actualFilename,
+        };
+        // Send client's perceptual hash for server-side dedup (critical for HEIC where sharp fails)
+        if (computedPhash) {
+          uploadHeaders['X-Perceptual-Hash'] = computedPhash;
+        }
         const uploadRes = await FileSystem.uploadAsync(`${SERVER_URL}/api/upload/raw`, fileUri, {
           httpMethod: 'POST',
           uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT,
           sessionType: sessionTypeUpload,
-          headers: {
-            ...config.headers,
-            'Content-Type': mime,
-            'X-Filename': actualFilename,
-          }
+          headers: uploadHeaders
         });
 
         if (!uploadRes || uploadRes.status < 200 || uploadRes.status >= 300) {
@@ -378,6 +415,10 @@ export const localRemoteBackupCore = async ({
         } else {
           successCount++;
           console.log(`✓ Uploaded: ${actualFilename}`);
+          // Add uploaded file's hashes to server sets to prevent race conditions
+          // when user starts another backup immediately after this one finishes
+          if (parsed?.fileHash) serverFileHashes.add(parsed.fileHash);
+          if (parsed?.perceptualHash) serverPerceptualHashes.add(parsed.perceptualHash);
           
           // Store full EXIF to server for universal cross-platform preservation
           // Non-blocking, fire-and-forget
@@ -445,19 +486,25 @@ export const localRemoteBackupCore = async ({
     await Promise.all(uploadTasks);
 
     // Show detailed completion status
+    // serverFilesOnServer = files that existed before + newly uploaded (excluding server-rejected dups)
+    const serverFilesOnServer = allServerFiles.length + successCount;
     console.log('\n📊 ===== BACKUP SUMMARY =====');
     console.log(`Total on device: ${totalCount || checkedCount}`);
     console.log(`Album excluded: ${excludedIds.size}`);
     console.log(`To check: ${checkedCount}`);
-    console.log(`On server before: ${serverFiles.size}`);
+    console.log(`On server before: ${allServerFiles.length}`);
     console.log(`Marked for upload: ${toUpload.length}`);
     console.log(`Actually uploaded: ${successCount}`);
-    console.log(`Duplicates skipped (filename): ${duplicateCount}`);
-    console.log(`Duplicates skipped (hash): ${hashDedupCount}`);
+    console.log(`Server rejected (duplicate): ${duplicateCount}`);
+    console.log(`Client skipped (hash): ${hashDedupCount}`);
     console.log(`Failed: ${failedCount}`);
+    console.log(`Now on server: ${serverFilesOnServer}`);
     console.log('===== END BACKUP TRACE =====\n');
 
     const skippedCount = checkedCount - toUpload.length + duplicateCount + hashDedupCount;
+
+    // Flush hash cache to disk
+    await flushHashCache();
 
     return {
       uploaded: successCount,
@@ -465,9 +512,11 @@ export const localRemoteBackupCore = async ({
       failed: failedCount,
       checkedCount,
       totalCount: totalCount || checkedCount,
+      serverTotal: serverFilesOnServer, // Actual count on server after backup
     };
   } catch (error) {
     console.error('Backup error:', error);
+    await flushHashCache(); // Save cache even on error
     throw error;
   }
 };
@@ -511,6 +560,9 @@ export const localRemoteBackupSelectedCore = async ({
   onProgress?.(0);
 
   try {
+    // Load hash cache for faster dedup (avoids re-hashing files)
+    await loadHashCache();
+    
     const config = await getAuthHeaders();
     const SERVER_URL = getServerUrl();
     
@@ -624,19 +676,36 @@ export const localRemoteBackupSelectedCore = async ({
           continue;
         }
 
-        const actualFilename = assetInfo.filename || asset.filename;
+        let actualFilename = assetInfo.filename || asset.filename;
         const isVideo = /\.(mov|mp4|m4v|avi|mkv|webm|3gp)$/i.test(actualFilename);
+        
+        // Detect real format from magic bytes and fix extension if mismatched
+        if (!isVideo) {
+          actualFilename = await detectRealFormatFromMagic(filePath, actualFilename);
+        }
 
         // Compute hash for cross-device dedup
+        // IMPORTANT: Add hash to session set IMMEDIATELY after computing to prevent race conditions
+        // USE CACHE: Check if hash was already computed for this asset to avoid re-hashing
         let skipByHash = false;
+        let computedPhash = null; // Store for sending to server
         try {
           if (isVideo) {
-            const fileHash = await computeExactFileHash(filePath);
+            // Try cache first for video file hash
+            let fileHash = getCachedHash(asset, 'file');
+            if (!fileHash) {
+              fileHash = await computeExactFileHash(filePath);
+              if (fileHash) setCachedHash(asset, 'file', fileHash);
+            }
             if (fileHash) {
+              // Add to session FIRST to prevent race condition with parallel uploads
+              const alreadyInSession = sessionFileHashes.has(fileHash);
+              sessionFileHashes.add(fileHash);
+              
               // Check against server hashes first (cross-device dedup)
               if (serverFileHashes.has(fileHash)) {
                 skipByHash = true;
-              } else if (sessionFileHashes.has(fileHash)) {
+              } else if (alreadyInSession) {
                 skipByHash = true;
               } else {
                 // FALLBACK: Check ALL platform hashes (double-confirm before upload)
@@ -646,26 +715,33 @@ export const localRemoteBackupSelectedCore = async ({
                     break;
                   }
                 }
-                if (!skipByHash) sessionFileHashes.add(fileHash);
               }
             }
           } else {
-            const phash = await computePerceptualHash(filePath);
-            if (phash) {
+            // Try cache first for perceptual hash
+            computedPhash = getCachedHash(asset, 'perceptual');
+            if (!computedPhash) {
+              computedPhash = await computePerceptualHash(filePath);
+              if (computedPhash) setCachedHash(asset, 'perceptual', computedPhash);
+            }
+            if (computedPhash) {
+              // Add to session FIRST to prevent race condition with parallel uploads
+              const alreadyInSession = findPerceptualHashMatch(computedPhash, sessionPerceptualHashes, BACKUP_DHASH_THRESHOLD);
+              sessionPerceptualHashes.add(computedPhash);
+              
               // Check against server hashes first (cross-device dedup)
-              if (findPerceptualHashMatch(phash, serverPerceptualHashes, BACKUP_DHASH_THRESHOLD)) {
+              if (findPerceptualHashMatch(computedPhash, serverPerceptualHashes, BACKUP_DHASH_THRESHOLD)) {
                 skipByHash = true;
-              } else if (findPerceptualHashMatch(phash, sessionPerceptualHashes, BACKUP_DHASH_THRESHOLD)) {
+              } else if (alreadyInSession) {
                 skipByHash = true;
               } else {
                 // FALLBACK: Check ALL platform hashes (double-confirm before upload)
                 for (const plat of ['ios', 'android']) {
-                  if (findPerceptualHashMatch(phash, platformPerceptualHashes[plat], BACKUP_DHASH_THRESHOLD)) {
+                  if (findPerceptualHashMatch(computedPhash, platformPerceptualHashes[plat], BACKUP_DHASH_THRESHOLD)) {
                     skipByHash = true;
                     break;
                   }
                 }
-                if (!skipByHash) sessionPerceptualHashes.add(phash);
               }
             }
           }
@@ -686,15 +762,20 @@ export const localRemoteBackupSelectedCore = async ({
         const sessionType = (Platform.OS === 'ios' && !isHttps)
           ? FileSystem.FileSystemSessionType.FOREGROUND
           : FileSystem.FileSystemSessionType.BACKGROUND;
+        const uploadHeaders = {
+          ...config.headers,
+          'Content-Type': mime,
+          'X-Filename': actualFilename,
+        };
+        // Send client's perceptual hash for server-side dedup (critical for HEIC where sharp fails)
+        if (computedPhash) {
+          uploadHeaders['X-Perceptual-Hash'] = computedPhash;
+        }
         const uploadRes = await FileSystem.uploadAsync(`${SERVER_URL}/api/upload/raw`, fileUri, {
           httpMethod: 'POST',
           uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT,
           sessionType,
-          headers: {
-            ...config.headers,
-            'Content-Type': mime,
-            'X-Filename': actualFilename,
-          }
+          headers: uploadHeaders
         });
 
         // Check HTTP status - uploadAsync doesn't throw on 4xx/5xx errors
@@ -703,6 +784,16 @@ export const localRemoteBackupSelectedCore = async ({
           failedCount++;
           continue;
         }
+
+        // Parse response to get hashes
+        let parsed = null;
+        try {
+          parsed = uploadRes && uploadRes.body ? JSON.parse(uploadRes.body) : null;
+        } catch (e) { parsed = null; }
+
+        // Add uploaded file's hashes to server sets to prevent race conditions
+        if (parsed?.fileHash) serverFileHashes.add(parsed.fileHash);
+        if (parsed?.perceptualHash) serverPerceptualHashes.add(parsed.perceptualHash);
 
         successCount++;
       } catch (e) {
@@ -739,9 +830,16 @@ export const localRemoteBackupSelectedCore = async ({
     }
 
     const skippedCount = list.length - toUpload.length + hashDedupCount;
-    return { uploaded: successCount, skipped: skippedCount, failed: failedCount };
+    // serverTotal = files on server before + newly uploaded
+    const serverTotal = allServerFiles.length + successCount;
+    
+    // Flush hash cache to disk
+    await flushHashCache();
+    
+    return { uploaded: successCount, skipped: skippedCount, failed: failedCount, serverTotal };
   } catch (error) {
     console.error('Backup selected error:', error);
+    await flushHashCache(); // Save cache even on error
     throw error;
   }
 };

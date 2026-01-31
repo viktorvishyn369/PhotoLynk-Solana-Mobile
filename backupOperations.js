@@ -20,6 +20,7 @@ import {
   makeChunkNonce,
   normalizeFilenameForCompare,
   computeFileIdentity,
+  detectRealFormatFromMagic,
 } from './utils';
 
 import {
@@ -524,10 +525,17 @@ const getAssetFileInfo = async (asset) => {
     }
   }
 
-  const filename = assetInfo?.filename || asset.filename || null;
+  let filename = assetInfo?.filename || asset.filename || null;
+  const isImage = asset.mediaType === 'photo' || assetInfo?.mediaType === 'photo';
+  
+  // Detect real format from magic bytes and fix extension if mismatched
+  // Android sometimes reports screenshots as .jpg when they're actually PNG
+  if (isImage && filePath && filename) {
+    filename = await detectRealFormatFromMagic(filePath, filename);
+  }
+  
   const fileIdentity = computeFileIdentity(filename, originalSize);
   const manifestId = fileIdentity ? sha256(`file:${fileIdentity}`) : sha256(`asset:${asset.id}`);
-  const isImage = asset.mediaType === 'photo' || assetInfo?.mediaType === 'photo';
 
   return {
     assetInfo,
@@ -1271,7 +1279,9 @@ export const stealthCloudBackupCore = async ({
   updateProgress(onProgress, 1.0, true);
   updateStatus(onStatus, t('status.backupCompleteStats', { uploaded, skipped, failed }), true);
 
-  return { uploaded, skipped, failed };
+  // serverTotal = files on server before + newly uploaded
+  const serverTotal = serverManifests.length + uploaded;
+  return { uploaded, skipped, failed, serverTotal };
 };
 
 // ============================================================================
@@ -1434,7 +1444,9 @@ export const stealthCloudBackupSelectedCore = async ({
   }
 
   updateProgress(onProgress, 1.0, true);
-  return { uploaded, skipped, failed };
+  // serverTotal = files on server before + newly uploaded
+  const serverTotal = serverManifests.length + uploaded;
+  return { uploaded, skipped, failed, serverTotal };
 };
 
 export default {

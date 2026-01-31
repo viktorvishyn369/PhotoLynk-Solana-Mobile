@@ -178,6 +178,57 @@ export const isValidUrl = (string) => {
   }
 };
 
+// Detect real file format from magic bytes and fix extension if mismatched
+// Android sometimes reports screenshots as .jpg when they're actually PNG
+export const detectRealFormatFromMagic = async (filePath, filename) => {
+  try {
+    const FileSystem = require('expo-file-system');
+    // Read first 12 bytes to detect format
+    const base64 = await FileSystem.readAsStringAsync(filePath, {
+      encoding: FileSystem.EncodingType.Base64,
+      length: 12,
+      position: 0,
+    });
+    const bytes = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+    
+    // Magic byte signatures
+    const isPNG = bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4E && bytes[3] === 0x47;
+    const isJPEG = bytes[0] === 0xFF && bytes[1] === 0xD8 && bytes[2] === 0xFF;
+    const isGIF = bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46;
+    const isWEBP = bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46 &&
+                   bytes[8] === 0x57 && bytes[9] === 0x45 && bytes[10] === 0x42 && bytes[11] === 0x50;
+    const isBMP = bytes[0] === 0x42 && bytes[1] === 0x4D;
+    // HEIC/HEIF: ftyp box with heic/heix/hevc/mif1 brand
+    const isFTYP = bytes[4] === 0x66 && bytes[5] === 0x74 && bytes[6] === 0x79 && bytes[7] === 0x70;
+    
+    const ext = (filename || '').split('.').pop()?.toLowerCase();
+    let correctedFilename = filename;
+    
+    if (isPNG && ext !== 'png') {
+      correctedFilename = filename.replace(/\.[^.]+$/, '.png');
+      console.log(`[Format] Corrected ${filename} -> ${correctedFilename} (PNG magic bytes)`);
+    } else if (isJPEG && ext !== 'jpg' && ext !== 'jpeg') {
+      correctedFilename = filename.replace(/\.[^.]+$/, '.jpg');
+      console.log(`[Format] Corrected ${filename} -> ${correctedFilename} (JPEG magic bytes)`);
+    } else if (isGIF && ext !== 'gif') {
+      correctedFilename = filename.replace(/\.[^.]+$/, '.gif');
+      console.log(`[Format] Corrected ${filename} -> ${correctedFilename} (GIF magic bytes)`);
+    } else if (isWEBP && ext !== 'webp') {
+      correctedFilename = filename.replace(/\.[^.]+$/, '.webp');
+      console.log(`[Format] Corrected ${filename} -> ${correctedFilename} (WEBP magic bytes)`);
+    } else if (isBMP && ext !== 'bmp') {
+      correctedFilename = filename.replace(/\.[^.]+$/, '.bmp');
+      console.log(`[Format] Corrected ${filename} -> ${correctedFilename} (BMP magic bytes)`);
+    }
+    // Don't correct HEIC - it's complex and usually correct
+    
+    return correctedFilename;
+  } catch (e) {
+    // If detection fails, return original filename
+    return filename;
+  }
+};
+
 // MIME type detection from filename (case-insensitive)
 export const getMimeFromFilename = (filename, fallbackMediaType) => {
   const ext = (filename || '').split('.').pop()?.toLowerCase();

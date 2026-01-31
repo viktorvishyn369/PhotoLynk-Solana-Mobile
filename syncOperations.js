@@ -53,6 +53,8 @@ import {
   normalizeFullTimestamp,
 } from './duplicateScanner';
 
+import { getCachedHash, setCachedHash, loadHashCache, flushHashCache } from './hashCache';
+
 // Sync-specific dHash threshold (6 bits = ~9% tolerance for cross-platform decoder differences)
 // This is more lenient than backup dedup (0 bits) to handle HEIC/JPEG conversion differences
 const SYNC_DHASH_THRESHOLD = 6;
@@ -568,6 +570,9 @@ const buildLocalHashIndex = async (resolveReadableFilePath, onStatus, onProgress
     baseNameDates: new Map(),
   };
 
+  // Load hash cache for faster dedup (avoids re-hashing files)
+  await loadHashCache();
+
   // Collect all assets from all albums + trigger iCloud download
   const allAssets = await collectAllAssetsFromAllAlbums(onStatus, onProgress, progressStart, progressStart + (progressEnd - progressStart) * 0.3);
   
@@ -632,11 +637,19 @@ const buildLocalHashIndex = async (resolveReadableFilePath, onStatus, onProgress
           }
           
           // Compute file hash for videos (cross-device dedup)
+          // USE CACHE: Check if hash was already computed for this asset to avoid re-hashing
           const isVideo = asset.mediaType === 'video' || (asset.duration && asset.duration > 0);
           if (isVideo) {
             try {
-              if (i < 5) console.log(`[Sync] File ${i}: computing video hash...`);
-              const fileHash = await computeExactFileHash(filePath);
+              // Try cache first
+              let fileHash = getCachedHash(asset, 'file');
+              if (!fileHash) {
+                if (i < 5) console.log(`[Sync] File ${i}: computing video hash...`);
+                fileHash = await computeExactFileHash(filePath);
+                if (fileHash) setCachedHash(asset, 'file', fileHash);
+              } else {
+                if (i < 5) console.log(`[Sync] File ${i}: using cached video hash`);
+              }
               if (fileHash) {
                 localSets.fileHashes.add(fileHash);
                 hashedCount++;
@@ -650,9 +663,17 @@ const buildLocalHashIndex = async (resolveReadableFilePath, onStatus, onProgress
             }
           } else {
             // Compute perceptual hash for images (cross-device dedup)
+            // USE CACHE: Check if hash was already computed for this asset
             try {
-              if (i < 5) console.log(`[Sync] File ${i}: computing perceptual hash...`);
-              const phash = await computePerceptualHash(filePath);
+              // Try cache first
+              let phash = getCachedHash(asset, 'perceptual');
+              if (!phash) {
+                if (i < 5) console.log(`[Sync] File ${i}: computing perceptual hash...`);
+                phash = await computePerceptualHash(filePath);
+                if (phash) setCachedHash(asset, 'perceptual', phash);
+              } else {
+                if (i < 5) console.log(`[Sync] File ${i}: using cached perceptual hash`);
+              }
               if (phash) {
                 localSets.perceptualHashes.add(phash);
                 hashedCount++;
@@ -701,6 +722,9 @@ const buildLocalHashIndex = async (resolveReadableFilePath, onStatus, onProgress
   // Final progress update
   updateProgress(onProgress, progressEnd, true);
   updateStatus(onStatus, t('status.syncIndexed', { count: allAssets.length }), true);
+
+  // Flush hash cache to disk
+  await flushHashCache();
 
   console.log(`[Sync] Local index: ${localSets.filenames.size} filenames, ${localSets.manifestIds.size} manifestIds, ${localSets.fileHashes.size} fileHashes, ${localSets.perceptualHashes.size} perceptualHashes (hashed=${hashedCount}, hashErrors=${hashErrors}, resolveErrors=${resolveErrors})`);
   return localSets;

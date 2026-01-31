@@ -523,9 +523,20 @@ export const autoUploadStealthCloudUploadOneAsset = async ({
   // Progressive yields: even fast mode needs small yields to prevent ANR/crash on weak phones
   // Large files (videos) get bigger cooldowns to prevent overheating
   const isLargeFile = originalSize > 10 * 1024 * 1024; // >10MB = large file (video)
-  const baseCooldown = fastMode ? 10 : (Platform.OS === 'ios' ? 500 : 400);
+  // Increase cooldowns for memory stability on weak phones
+  const baseCooldown = fastMode ? 50 : (Platform.OS === 'ios' ? 600 : 500);
   const CPU_COOLDOWN_MS = isLargeFile ? baseCooldown * 2 : baseCooldown;
   const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+  
+  // Memory pressure relief: hint GC periodically (every 5 chunks)
+  const hintGC = () => {
+    try {
+      if (global.gc) global.gc();
+    } catch (e) {}
+  };
+  
+  // Quick yield to event loop - matches manual backup pattern to prevent crashes
+  const quickYield = () => new Promise(r => setImmediate ? setImmediate(r) : setTimeout(r, 0));
 
   // Concurrency for fast mode: parallel chunk uploads
   const maxParallel = chooseStealthCloudMaxParallelChunkUploads({ platform: Platform.OS, originalSize: null, fastMode });
@@ -533,22 +544,43 @@ export const autoUploadStealthCloudUploadOneAsset = async ({
   const inFlightUploads = [];
 
   while (true) {
+    // Yield before file read (matches manual backup)
+    await quickYield();
+    
     let nextB64 = '';
     try {
       nextB64 = await FileSystem.readAsStringAsync(fileUri, { encoding: FileSystem.EncodingType.Base64, position, length: effectiveBytes });
     } catch (e) { nextB64 = ''; }
     if (!nextB64) break;
     
+    // Yield after file read, before decode (matches manual backup)
+    await quickYield();
+    
     // CPU cooldown before encryption (skip if fast mode)
     // Always yield to prevent ANR - progressive: larger files get more frequent yields
     const shouldYield = chunkIndex > 0 && (CPU_COOLDOWN_MS > 0 || chunkIndex % 5 === 0);
     if (shouldYield) await sleep(Math.max(CPU_COOLDOWN_MS, 10));
     
+    // Memory relief: hint GC every 5 chunks to prevent memory buildup
+    if (chunkIndex > 0 && chunkIndex % 5 === 0) hintGC();
+    
     const plaintext = naclUtil.decodeBase64(nextB64);
     if (!plaintext || plaintext.length === 0) break;
+    
+    // Yield before encryption (CPU intensive - matches manual backup)
+    await quickYield();
+    
     const nonce = makeChunkNonce(baseNonce16, chunkIndex);
     const boxed = nacl.secretbox(plaintext, nonce, fileKey);
+    
+    // Yield after encryption, before hash (matches manual backup)
+    await quickYield();
+    
     const chunkId = sha256.create().update(boxed).hex();
+    
+    // Yield after hash, before upload (matches manual backup)
+    await quickYield();
+    
     if (onStatus) onStatus('uploading');
     
     // Use concurrent upload via limiter
@@ -803,14 +835,14 @@ export const chooseStealthCloudChunkBytes = ({ platform, originalSize, fastMode 
 };
 
 export const chooseStealthCloudMaxParallelChunkUploads = ({ platform, originalSize, fastMode = false }) => {
-  // Fast mode: maximum concurrency for speed (matches Local/Remote file-level concurrency)
-  // iOS: 8 parallel, Android: 10 parallel
+  // Fast mode: reduced concurrency to prevent crashes on weak phones
+  // iOS: 4 parallel, Android: 5 parallel (was 8/10)
   if (fastMode) {
-    return platform === 'android' ? 10 : 8;
+    return platform === 'android' ? 5 : 4;
   }
-  // Slow mode: conservative to prevent phone heating
-  // iOS: 2 parallel, Android: 3 parallel
-  return platform === 'android' ? 3 : 2;
+  // Slow mode: very conservative to prevent phone heating and crashes
+  // iOS: 1 parallel, Android: 2 parallel (was 2/3)
+  return platform === 'android' ? 2 : 1;
 };
 
 export const createConcurrencyLimiter = (maxParallel) => {

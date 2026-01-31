@@ -210,11 +210,12 @@ const resetAuthLoadingLabel = (loginStatusTimerRef, loginLabelTimerRef, setAuthL
   setAuthLoadingLabel(label);
 };
 
-// Thermal protection constants to prevent phone overheating (used when Fast Mode is OFF)
-const THERMAL_BATCH_LIMIT = 10; // Max assets per batch before long cooling pause
-const THERMAL_BATCH_COOLDOWN_MS = 30000; // 30 second pause between batches
-const THERMAL_ASSET_COOLDOWN_MS = Platform.OS === 'ios' ? 2000 : 1500; // Cooldown between assets
-const THERMAL_CHUNK_COOLDOWN_MS = 300; // Delay between chunks
+// Thermal protection constants to prevent phone overheating and crashes (used when Fast Mode is OFF)
+// Increased values for better stability on weak phones
+const THERMAL_BATCH_LIMIT = 5; // Max assets per batch before long cooling pause (was 10)
+const THERMAL_BATCH_COOLDOWN_MS = 45000; // 45 second pause between batches for memory cleanup (was 30s)
+const THERMAL_ASSET_COOLDOWN_MS = Platform.OS === 'ios' ? 3000 : 2500; // Cooldown between assets (was 2000/1500)
+const THERMAL_CHUNK_COOLDOWN_MS = 400; // Delay between chunks (was 300)
 
 // Fast mode constants (used when Fast Mode is ON) - no throttling, maximum speed
 const FAST_BATCH_LIMIT = 999999; // Effectively no batch limit
@@ -649,12 +650,12 @@ export default function App() {
       let msg = '';
       if (type === 'backup') {
         const u = stats.uploaded || 0;
-        const s = stats.skipped || 0;
-        const total = u + s;
+        // Use serverTotal if available (actual files on server), otherwise fall back to uploaded + skipped
+        const serverTotal = stats.serverTotal || (u + (stats.skipped || 0));
         if (u > 0) {
-          msg = t('results.xOfYUploaded', { uploaded: u, total });
+          msg = t('results.xOfYUploaded', { uploaded: u, total: serverTotal });
         } else {
-          msg = t('results.filesOnServer', { count: s });
+          msg = t('results.filesOnServer', { count: serverTotal });
         }
       } else if (type === 'sync') {
         const d = stats.downloaded || 0;
@@ -1669,7 +1670,7 @@ export default function App() {
         return;
       }
 
-      const { uploaded, skipped, failed } = result;
+      const { uploaded, skipped, failed, serverTotal } = result;
 
       if (uploaded === 0 && skipped === 0 && failed === 0) {
         setProgress(1);
@@ -1686,7 +1687,7 @@ export default function App() {
       setProgress(1);
       await sleep(300);
       setStatus(t('status.backupComplete'));
-      showResultAlert('backup', { uploaded, skipped, failed });
+      showResultAlert('backup', { uploaded, skipped, failed, serverTotal });
     } catch (e) {
       console.error('StealthCloud backup error:', e);
       setStatus(t('status.backupFailed'));
@@ -1759,7 +1760,7 @@ export default function App() {
       setProgress(1); // Show 100% before checkmark
       setStatus(t('status.backupComplete'));
       await sleep(400); // Brief pause to show 100%
-      showResultAlert('backup', { uploaded: result.uploaded, skipped: result.skipped, failed: result.failed });
+      showResultAlert('backup', { uploaded: result.uploaded, skipped: result.skipped, failed: result.failed, serverTotal: result.serverTotal });
       setProgress(0);
     } catch (error) {
       setStatus(t('status.backupFailed'));
@@ -3133,7 +3134,7 @@ export default function App() {
         return;
       }
 
-      const { uploaded, skipped, failed } = result;
+      const { uploaded, skipped, failed, serverTotal } = result;
 
       if (uploaded === 0 && skipped === 0 && failed === 0) {
         setProgress(1);
@@ -3146,7 +3147,7 @@ export default function App() {
       setProgress(1);
       await sleep(300);
       setStatus(t('status.backupComplete'));
-      showResultAlert('backup', { uploaded, skipped, failed });
+      showResultAlert('backup', { uploaded, skipped, failed, serverTotal });
     } catch (e) {
       console.error('StealthCloud backup error:', e);
       setStatus(t('status.backupFailed'));
@@ -4092,11 +4093,11 @@ export default function App() {
         return;
       }
 
-      const { uploaded, skipped, failed } = result;
+      const { uploaded, skipped, failed, serverTotal } = result;
       setProgress(1); // Show 100% before checkmark
       setStatus(t('status.backupComplete'));
       await sleep(400); // Brief pause to show 100%
-      showResultAlert('backup', { uploaded, skipped, failed });
+      showResultAlert('backup', { uploaded, skipped, failed, serverTotal });
       setProgress(0);
     } catch (error) {
       console.error(error);
@@ -4555,6 +4556,7 @@ export default function App() {
               </>
             )}
 
+            {/* StealthCloud setup instructions - hidden for now, kept for future use
             {serverType === 'stealthcloud' && (
               <View style={{ backgroundColor: '#1A1A1A', borderRadius: scale(12), padding: scaleSpacing(14), borderWidth: 1, borderColor: '#2A2A2A' }}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: scaleSpacing(10) }}>
@@ -4585,6 +4587,7 @@ export default function App() {
                 </View>
               </View>
             )}
+            */}
 
             <TouchableOpacity 
               style={{ marginTop: scaleSpacing(16), backgroundColor: '#1A1A1A', borderRadius: scale(12), paddingVertical: scaleSpacing(14), alignItems: 'center', borderWidth: 1, borderColor: '#2A2A2A' }} 

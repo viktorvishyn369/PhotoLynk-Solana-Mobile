@@ -183,21 +183,34 @@ export const fetchStealthCloudThumbFileUri = async ({
  * @param {string} SERVER_URL - Server URL
  * @returns {Promise<string|null>} - Base64 data URI or null on failure
  */
-export const fetchThumbnailBase64 = async (filename, config, SERVER_URL) => {
+export const fetchThumbnailBase64 = async (filename, config, SERVER_URL, retryCount = 0) => {
   if (!filename) {
     console.log('Thumbnail fetch skipped: no filename');
     return null;
   }
+  
+  // HEIC files may need longer timeout as server converts them
+  const ext = (filename || '').split('.').pop()?.toLowerCase() || '';
+  const isHeic = ['heic', 'heif'].includes(ext);
+  const timeout = isHeic ? 15000 : 8000;
+  
   try {
-    const url = `${SERVER_URL}/api/files/${encodeURIComponent(filename)}/thumb`;
+    // Add cache-busting parameter to ensure fresh thumbnails after server fixes
+    const cacheBuster = Date.now();
+    const url = `${SERVER_URL}/api/files/${encodeURIComponent(filename)}/thumb?_=${cacheBuster}`;
     const response = await axios.get(url, {
       ...config,
       responseType: 'arraybuffer',
-      timeout: 8000,
+      timeout,
     });
     // Check we got actual data
     if (!response.data || response.data.byteLength < 100) {
       console.log('[THUMB] Too small:', filename, response.data?.byteLength || 0);
+      // Retry once for small responses (server may have returned placeholder)
+      if (retryCount < 1) {
+        await new Promise(r => setTimeout(r, 500));
+        return fetchThumbnailBase64(filename, config, SERVER_URL, retryCount + 1);
+      }
       return null;
     }
     const base64 = Buffer.from(response.data, 'binary').toString('base64');
@@ -205,6 +218,12 @@ export const fetchThumbnailBase64 = async (filename, config, SERVER_URL) => {
     return `data:image/jpeg;base64,${base64}`;
   } catch (e) {
     console.log('[THUMB] FAIL:', filename, e?.message || 'unknown');
+    // Retry once on timeout for HEIC files
+    if (retryCount < 1 && isHeic && e?.code === 'ECONNABORTED') {
+      console.log('[THUMB] Retrying HEIC:', filename);
+      await new Promise(r => setTimeout(r, 1000));
+      return fetchThumbnailBase64(filename, config, SERVER_URL, retryCount + 1);
+    }
     return null;
   }
 };
