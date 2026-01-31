@@ -123,6 +123,15 @@ android {
             crunchPngs (findProperty('android.enablePngCrunchInReleaseBuilds')?.toBoolean() ?: true)
         }
     }
+    
+    // Rename APK to photolynk-solana.apk
+    applicationVariants.all { variant ->
+        variant.outputs.all {
+            def versionName = variant.versionName
+            def versionCode = variant.versionCode
+            outputFileName = "photolynk-solana-${versionName}-${versionCode}.apk"
+        }
+    }
     packagingOptions {
         jniLibs {
             useLegacyPackaging (findProperty('expo.useLegacyPackaging')?.toBoolean() ?: false)
