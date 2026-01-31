@@ -291,6 +291,18 @@ export const autoUploadStealthCloudUploadOneAsset = async ({
   
   if (!asset || !asset.id) return { uploaded: 0, skipped: 0, failed: 0 };
 
+  // FAST PATH: Check filename dedup BEFORE any heavy operations (getAssetInfo, resolveFilePath)
+  // This prevents memory buildup from processing files that will be skipped anyway
+  const { normalizeFilenameForCompare } = require('./utils');
+  const quickFilename = asset.filename || null;
+  if (quickFilename && alreadyFilenames) {
+    const normalizedQuick = normalizeFilenameForCompare(quickFilename);
+    if (normalizedQuick && alreadyFilenames.has(normalizedQuick)) {
+      logStep('SKIP-FAST', `filename already on server: ${quickFilename}`);
+      return { uploaded: 0, skipped: 1, failed: 0 };
+    }
+  }
+
   logStep('START', `mediaType=${asset.mediaType}, fastMode=${fastMode}`);
   
   if (onStatus) onStatus('encrypting');
@@ -350,6 +362,7 @@ export const autoUploadStealthCloudUploadOneAsset = async ({
 
   // Compute stable cross-device manifestId from filename + size
   const filename = assetInfo.filename || asset.filename || null;
+  const { extractBaseFilename, normalizeDateForCompare } = require('./duplicateScanner');
   const fileIdentity = computeFileIdentity(filename, originalSize);
   const manifestId = fileIdentity ? sha256(`file:${fileIdentity}`) : sha256(`asset:${asset.id}`);
   
@@ -364,11 +377,7 @@ export const autoUploadStealthCloudUploadOneAsset = async ({
     return { uploaded: 0, skipped: 1, failed: 0, manifestId };
   }
 
-  // Cross-platform deduplication checks
-  const { normalizeFilenameForCompare } = require('./utils');
-  const { extractBaseFilename, normalizeDateForCompare } = require('./duplicateScanner');
-  
-  // Skip if filename already exists on server
+  // Skip if filename already exists on server (double-check with assetInfo filename)
   const normalizedFilename = filename ? normalizeFilenameForCompare(filename) : null;
   if (normalizedFilename && alreadyFilenames && alreadyFilenames.has(normalizedFilename)) {
     logStep('SKIP', `filename already on server: ${filename}`);
