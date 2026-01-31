@@ -374,7 +374,7 @@ export const HomeScreen = ({
             {completionMessage ? (
               <Text style={styles.completionMessage}>{completionMessage}</Text>
             ) : null}
-            {completionMessage && (completionMessage.includes(t('results.filesDeleted').split(' ')[0]) || completionMessage.includes(t('results.cleanupDone'))) ? (
+            {completionMessage && (completionMessage.includes('deleted') || completionMessage.includes(t('results.cleanupDone'))) ? (
               <Text style={[styles.completionDismissHint, { marginTop: scaleSpacing(8), marginBottom: scaleSpacing(4), fontWeight: '600' }]}>
                 {t('results.filesMovedToDeleted')}
               </Text>
