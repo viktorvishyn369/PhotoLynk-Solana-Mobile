@@ -596,6 +596,12 @@ export const collectAllPhotoAssets = async (options = {}) => {
     const albums = await MediaLibrary.getAlbumsAsync({ includeSmartAlbums: true });
     for (let i = 0; i < albums.length; i++) {
       const album = albums[i];
+      
+      // Skip PhotoLynkDeleted album to avoid scanning deleted duplicates
+      if (album.title === 'PhotoLynkDeleted') {
+        continue;
+      }
+      
       try {
         const albumAssets = await MediaLibrary.getAssetsAsync({
           first: 5000,

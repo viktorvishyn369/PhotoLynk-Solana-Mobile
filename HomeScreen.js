@@ -120,7 +120,7 @@ export const HomeScreen = ({
   const isLandscape = windowWidth > windowHeight;
   const minDim = Math.min(windowWidth, windowHeight);
   const isTabletDevice = minDim >= 600; // 7"+ tablets
-  const shouldEnableScroll = isTabletDevice && isLandscape;
+  const shouldEnableScroll = true; // Always enable scroll to handle expanding status messages
 
   const serverLabel = serverType === 'stealthcloud' ? 'StealthCloud' : serverType === 'remote' ? 'Remote Server' : 'Local Server';
   const serverIcon = serverType === 'stealthcloud' ? 'cloud' : serverType === 'remote' ? 'globe' : 'wifi';
@@ -138,6 +138,7 @@ export const HomeScreen = ({
   const progressPercent = Math.min(Math.max(progress, 0), 1) * 100;
   // Hide progress bar during fetching/preparing phases, show during actual work (including 100%)
   const showProgress = progressPercent > 0 && !isFetching && !isIdle;
+  const statusLines = isShortScreen ? 2 : 3;
 
   // Status color based on activity
   const getStatusColor = () => {
@@ -204,19 +205,17 @@ export const HomeScreen = ({
             {isIdle ? t('home.ready') : isMintingNFT ? t('home.mintingNft') : isCleaning ? t('home.scanning') : isSyncing ? t('home.syncing') : t('home.backingUp')}
           </Text>
 
-          {/* Progress Ring/Bar */}
-          {showProgress && (
-            <View style={styles.progressContainer}>
-              <View style={styles.progressBar}>
-                <View style={[styles.progressFill, { width: `${progressPercent}%`, backgroundColor: statusColor }]} />
-              </View>
-              <Text style={[styles.progressText, { color: statusColor }]}>{Math.round(progressPercent)}%</Text>
+          {/* Progress Ring/Bar - always rendered for consistent layout */}
+          <View style={[styles.progressContainer, { opacity: showProgress ? 1 : 0 }]}>
+            <View style={styles.progressBar}>
+              <View style={[styles.progressFill, { width: `${progressPercent}%`, backgroundColor: statusColor }]} />
             </View>
-          )}
+            <Text style={[styles.progressText, { color: statusColor }]}>{Math.round(progressPercent)}%</Text>
+          </View>
 
           {/* Detailed Status Message */}
           <View style={styles.statusMessageContainer}>
-            <Text style={styles.statusMessage} numberOfLines={3}>
+            <Text style={styles.statusMessage}>
               {status}
             </Text>
           </View>
@@ -375,6 +374,11 @@ export const HomeScreen = ({
             {completionMessage ? (
               <Text style={styles.completionMessage}>{completionMessage}</Text>
             ) : null}
+            {completionMessage && (completionMessage.includes(t('results.filesDeleted').split(' ')[0]) || completionMessage.includes(t('results.cleanupDone'))) ? (
+              <Text style={[styles.completionDismissHint, { marginTop: scaleSpacing(8), marginBottom: scaleSpacing(4), fontWeight: '600' }]}>
+                {t('results.filesMovedToDeleted')}
+              </Text>
+            ) : null}
             <Text style={styles.completionDismissHint}>{t('home.tapToDismiss')}</Text>
           </View>
         </TouchableOpacity>
@@ -450,7 +454,7 @@ const styles = StyleSheet.create({
     top: 0,
     left: 0,
     right: 0,
-    height: scaleStatus(200),
+    bottom: 0, // Cover entire hero section including status message area
   },
   heroIconContainer: {
     width: scaleStatus(80),
@@ -500,23 +504,25 @@ const styles = StyleSheet.create({
   },
   statusMessageContainer: {
     backgroundColor: 'transparent',
-    paddingVertical: scaleSpacing(8),
-    paddingHorizontal: scaleSpacing(12),
+    paddingVertical: scaleSpacing(isShortScreen ? 4 : 8),
+    paddingHorizontal: scaleSpacing(16),
     width: '100%',
+    // Fixed height for 4 lines of status text - keeps action buttons in consistent position
+    height: scale(isShortScreen ? 64 : 80) + scaleSpacing(isShortScreen ? 8 : 16),
+    justifyContent: 'flex-start',
   },
   statusMessage: {
-    fontSize: scale(12),
+    fontSize: scale(isShortScreen ? 12 : 14),
     color: COLORS.textMuted,
     textAlign: 'center',
-    lineHeight: scale(16),
+    lineHeight: scale(isShortScreen ? 16 : 20),
   },
 
   // Actions Section
   actionsSection: {
-    flex: 1,
+    flexShrink: 1,
     paddingHorizontal: scaleSpacing(16),
     gap: scaleSpacing(10),
-    justifyContent: 'flex-end',
     paddingBottom: Platform.OS === 'android' ? ANDROID_NAV_BAR_HEIGHT + scaleSpacing(16) : scaleSpacing(16),
   },
   actionRow: {

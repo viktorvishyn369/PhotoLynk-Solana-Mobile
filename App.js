@@ -46,6 +46,7 @@ import {
   computeServerUrl,
   formatBytes,
   normalizeFilenameForCompare,
+  formatFilenameForStatus,
   normalizeEmailForDeviceUuid,
   isValidUrl,
   computeFileIdentity,
@@ -1334,7 +1335,7 @@ export default function App() {
 
             autoUploadNightRunnerHeartbeatMsRef.current = Date.now();
 
-            const assetFilename = asset.filename || 'file';
+            const assetFilename = formatFilenameForStatus(asset.filename || 'file');
             console.log('AutoUpload: attempting upload for asset:', asset.id, assetFilename);
             const r = await autoUploadStealthCloudUploadOneAsset({
               asset,
@@ -2340,8 +2341,6 @@ export default function App() {
       
       if (result.success) {
         setStatus(t('status.nftMinted'));
-        await sleep(400);
-        showCompletionTickBriefly(t('results.nftMinted'));
         
         // Show success with different info for cNFT vs standard NFT
         const isCompressed = result.isCompressed || result.mintAddress?.startsWith('cnft_');
@@ -4474,10 +4473,10 @@ export default function App() {
             {/* Header */}
             <View style={{ marginBottom: scaleSpacing(20) }}>
               <Text style={{ color: '#FFFFFF', fontSize: scale(20), fontWeight: '700', marginBottom: scaleSpacing(4) }}>
-                {serverType === 'local' ? 'Local Network Setup' : 'Remote Server Setup'}
+                {serverType === 'local' ? t('quickSetup.localNetworkSetup') : t('quickSetup.remoteServerSetup')}
               </Text>
               <Text style={{ color: '#888888', fontSize: scale(13) }}>
-                {serverType === 'local' ? 'Back up to your computer on the same network' : 'Back up to your own server anywhere'}
+                {serverType === 'local' ? t('quickSetup.localNetworkDesc') : t('quickSetup.remoteServerDesc')}
               </Text>
             </View>
 
@@ -4489,13 +4488,13 @@ export default function App() {
                     <Text style={{ color: '#000', fontSize: scale(14), fontWeight: '700' }}>1</Text>
                   </View>
                   <View style={{ flex: 1 }}>
-                    <Text style={{ color: '#FFFFFF', fontSize: scale(15), fontWeight: '600', marginBottom: scaleSpacing(6) }}>Download from GitHub onto your desktop computer and run the app</Text>
+                    <Text style={{ color: '#FFFFFF', fontSize: scale(15), fontWeight: '600', marginBottom: scaleSpacing(6) }}>{t('quickSetup.step1Local')}</Text>
                     <TouchableOpacity
                       style={{ backgroundColor: '#1A1A1A', borderRadius: scale(8), padding: scaleSpacing(12), borderWidth: 1, borderColor: '#333' }}
                       onPress={() => { Clipboard.setString(GITHUB_RELEASES_LATEST_URL); showDarkAlert(t('alerts.copied'), t('alerts.linkCopied')); }}
                       onLongPress={() => openLink(GITHUB_RELEASES_LATEST_URL)}>
                       <Text style={{ color: '#FFFFFF', fontSize: scale(11) }} numberOfLines={1} ellipsizeMode="middle">{GITHUB_RELEASES_LATEST_URL}</Text>
-                      <Text style={{ color: '#888', fontSize: scale(10), marginTop: 4 }}>Tap to copy link</Text>
+                      <Text style={{ color: '#888', fontSize: scale(10), marginTop: 4 }}>{t('quickSetup.tapToCopyLink')}</Text>
                     </TouchableOpacity>
                   </View>
                 </View>
@@ -4506,8 +4505,8 @@ export default function App() {
                     <Text style={{ color: '#000', fontSize: scale(14), fontWeight: '700' }}>2</Text>
                   </View>
                   <View style={{ flex: 1 }}>
-                    <Text style={{ color: '#FFFFFF', fontSize: scale(15), fontWeight: '600', marginBottom: scaleSpacing(6) }}>Scan QR code in Settings of this app</Text>
-                    <Text style={{ color: '#888', fontSize: scale(12) }}>Use the QR scanner in Settings to connect to your desktop app</Text>
+                    <Text style={{ color: '#FFFFFF', fontSize: scale(15), fontWeight: '600', marginBottom: scaleSpacing(6) }}>{t('quickSetup.step2Local')}</Text>
+                    <Text style={{ color: '#888', fontSize: scale(12) }}>{t('quickSetup.step2LocalDesc')}</Text>
                   </View>
                 </View>
 
@@ -4517,8 +4516,8 @@ export default function App() {
                     <Text style={{ color: '#000', fontSize: scale(14), fontWeight: '700' }}>3</Text>
                   </View>
                   <View style={{ flex: 1 }}>
-                    <Text style={{ color: '#FFFFFF', fontSize: scale(15), fontWeight: '600' }}>Start backing up</Text>
-                    <Text style={{ color: '#888', fontSize: scale(12), marginTop: 4 }}>Your photos will be encrypted and stored on your computer</Text>
+                    <Text style={{ color: '#FFFFFF', fontSize: scale(15), fontWeight: '600' }}>{t('quickSetup.step3')}</Text>
+                    <Text style={{ color: '#888', fontSize: scale(12), marginTop: 4 }}>{t('quickSetup.step3LocalDesc')}</Text>
                   </View>
                 </View>
               </>
@@ -4532,13 +4531,13 @@ export default function App() {
                     <Text style={{ color: '#000', fontSize: scale(14), fontWeight: '700' }}>1</Text>
                   </View>
                   <View style={{ flex: 1 }}>
-                    <Text style={{ color: '#FFFFFF', fontSize: scale(15), fontWeight: '600', marginBottom: scaleSpacing(6) }}>Run install script on your server and follow its instructions</Text>
+                    <Text style={{ color: '#FFFFFF', fontSize: scale(15), fontWeight: '600', marginBottom: scaleSpacing(6) }}>{t('quickSetup.step1Remote')}</Text>
                     <TouchableOpacity
                       style={{ backgroundColor: '#1A1A1A', borderRadius: scale(8), padding: scaleSpacing(12), borderWidth: 1, borderColor: '#333' }}
                       onPress={() => { Clipboard.setString('sudo curl -fsSL https://raw.githubusercontent.com/viktorvishyn369/PhotoLynk/main/install-server.sh | bash'); showDarkAlert(t('alerts.copied'), t('alerts.commandCopied')); }}
                       onLongPress={() => openLink('https://github.com/viktorvishyn369/PhotoLynk/blob/main/install-server.sh')}>
                       <Text style={{ color: '#FFFFFF', fontSize: scale(10) }} numberOfLines={2}>sudo curl -fsSL https://...install-server.sh | bash</Text>
-                      <Text style={{ color: '#888', fontSize: scale(10), marginTop: 4 }}>Tap to copy command</Text>
+                      <Text style={{ color: '#888', fontSize: scale(10), marginTop: 4 }}>{t('quickSetup.tapToCopyCommand')}</Text>
                     </TouchableOpacity>
                   </View>
                 </View>
@@ -4549,8 +4548,8 @@ export default function App() {
                     <Text style={{ color: '#000', fontSize: scale(14), fontWeight: '700' }}>2</Text>
                   </View>
                   <View style={{ flex: 1 }}>
-                    <Text style={{ color: '#FFFFFF', fontSize: scale(15), fontWeight: '600', marginBottom: scaleSpacing(6) }}>Enter domain in Settings of this app</Text>
-                    <Text style={{ color: '#888', fontSize: scale(12) }}>Enter your server domain in Settings to connect</Text>
+                    <Text style={{ color: '#FFFFFF', fontSize: scale(15), fontWeight: '600', marginBottom: scaleSpacing(6) }}>{t('quickSetup.step2Remote')}</Text>
+                    <Text style={{ color: '#888', fontSize: scale(12) }}>{t('quickSetup.step2RemoteDesc')}</Text>
                   </View>
                 </View>
 
@@ -4560,8 +4559,8 @@ export default function App() {
                     <Text style={{ color: '#000', fontSize: scale(14), fontWeight: '700' }}>3</Text>
                   </View>
                   <View style={{ flex: 1 }}>
-                    <Text style={{ color: '#FFFFFF', fontSize: scale(15), fontWeight: '600' }}>Start backing up</Text>
-                    <Text style={{ color: '#888', fontSize: scale(12), marginTop: 4 }}>Your photos will be encrypted and stored on your server</Text>
+                    <Text style={{ color: '#FFFFFF', fontSize: scale(15), fontWeight: '600' }}>{t('quickSetup.step3')}</Text>
+                    <Text style={{ color: '#888', fontSize: scale(12), marginTop: 4 }}>{t('quickSetup.step3RemoteDesc')}</Text>
                   </View>
                 </View>
               </>
@@ -4663,6 +4662,25 @@ export default function App() {
           currentLanguage={currentLanguage}
           onLanguageChange={handleLanguageChange}
         />
+
+        {customAlert && (
+          <View style={[styles.overlay, { backgroundColor: 'rgba(0,0,0,0.97)' }]}> 
+            <View style={[styles.overlayCard, { backgroundColor: '#000000', maxWidth: isTablet ? 450 : 320 }]}> 
+              <Text style={[styles.overlayTitle, { fontSize: scale(18), marginBottom: scaleSpacing(8) }]}>{customAlert.title}</Text>
+              <Text style={{ color: '#FFFFFF', fontSize: scale(14), textAlign: 'center', marginBottom: scaleSpacing(20), lineHeight: scale(20) }}>{customAlert.message}</Text>
+              <View style={{ flexDirection: 'row', justifyContent: 'center', flexWrap: 'wrap', gap: scaleSpacing(12) }}>
+                {(customAlert.buttons || []).map((btn, idx) => (
+                  <TouchableOpacity
+                    key={idx}
+                    style={[styles.overlayBtnPrimary, { paddingVertical: scaleSpacing(10), paddingHorizontal: scaleSpacing(20), minWidth: isTablet ? 100 : 80 }]}
+                    onPress={() => { closeDarkAlert(); if (btn.onPress) btn.onPress(); }}>
+                    <Text style={styles.overlayBtnPrimaryText}>{btn.text}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+          </View>
+        )}
 
         {qrScannerOpen && (
           <View style={{position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: '#000'}}>

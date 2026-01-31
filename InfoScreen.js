@@ -199,7 +199,7 @@ export const InfoScreen = ({
   const isLandscape = windowWidth > windowHeight;
   const minDim = Math.min(windowWidth, windowHeight);
   const isTabletDevice = minDim >= 600; // 7"+ tablets
-  const shouldEnableScroll = isTabletDevice && isLandscape;
+  const shouldEnableScroll = true; // Always enable scroll to handle content on small screens
 
   const handleCopyDeviceId = () => {
     if (deviceUuid) {

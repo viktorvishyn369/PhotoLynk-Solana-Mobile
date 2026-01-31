@@ -21,6 +21,7 @@ import {
   normalizeFilenameForCompare,
   computeFileIdentity,
   detectRealFormatFromMagic,
+  formatFilenameForStatus,
 } from './utils';
 
 import {
@@ -1184,7 +1185,7 @@ export const stealthCloudBackupCore = async ({
     const fileProgress = i / totalFiles;
     updateProgress(onProgress, fileProgress);
     const displayFilename = asset?.filename || 'file';
-    updateStatus(onStatus, t('status.backingUp', { current: fileNum, total: totalFiles, filename: displayFilename }));
+    updateStatus(onStatus, t('status.backingUp', { current: fileNum, total: totalFiles, filename: formatFilenameForStatus(displayFilename) }));
 
     // Yield every few files to keep UI responsive
     if (i % 5 === 0) await yieldToUi();
@@ -1216,7 +1217,7 @@ export const stealthCloudBackupCore = async ({
       await yieldToUi();
       
       // Compute hashes
-      updateStatus(onStatus, t('status.hashing', { current: fileNum, total: totalFiles, filename: filename || displayFilename }), true);
+      updateStatus(onStatus, t('status.hashing', { current: fileNum, total: totalFiles, filename: formatFilenameForStatus(filename || displayFilename) }), true);
       const { fileHash, perceptualHash } = await computeHashes(filePath, asset, assetInfo, isImage);
 
       // Yield after hashing
@@ -1234,7 +1235,7 @@ export const stealthCloudBackupCore = async ({
       await yieldToUi();
       
       // Upload
-      updateStatus(onStatus, t('status.uploading', { current: fileNum, total: totalFiles, filename: filename || displayFilename }), true);
+      updateStatus(onStatus, t('status.uploading', { current: fileNum, total: totalFiles, filename: formatFilenameForStatus(filename || displayFilename) }), true);
       const result = await encryptAndUpload({
         asset, assetInfo, filePath, tmpCopied, tmpUri, originalSize, filename, manifestId,
         fileHash, perceptualHash, masterKey, config, SERVER_URL, fastMode
@@ -1389,7 +1390,7 @@ export const stealthCloudBackupSelectedCore = async ({
       // Yield before hashing (CPU intensive)
       await yieldToUi();
       
-      updateStatus(onStatus, t('status.hashing', { current: fileNum, total: totalFiles, filename: filename || 'file' }), true);
+      updateStatus(onStatus, t('status.hashing', { current: fileNum, total: totalFiles, filename: formatFilenameForStatus(filename || 'file') }), true);
       const { fileHash, perceptualHash } = await computeHashes(filePath, asset, assetInfo, isImage);
 
       // Yield after hashing
@@ -1405,7 +1406,7 @@ export const stealthCloudBackupSelectedCore = async ({
       // Yield before upload (network + encryption intensive)
       await yieldToUi();
       
-      updateStatus(onStatus, t('status.uploading', { current: fileNum, total: totalFiles, filename: filename || 'file' }), true);
+      updateStatus(onStatus, t('status.uploading', { current: fileNum, total: totalFiles, filename: formatFilenameForStatus(filename || 'file') }), true);
       const result = await encryptAndUpload({
         asset, assetInfo, filePath, tmpCopied, tmpUri, originalSize, filename, manifestId,
         fileHash, perceptualHash, masterKey, config, SERVER_URL, fastMode

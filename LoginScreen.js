@@ -74,29 +74,49 @@ const ServerOption = ({ icon, label, badge, isSelected, onPress }) => (
   </TouchableOpacity>
 );
 
-// Input Field Component
-const InputField = ({ icon, placeholder, value, onChangeText, secureTextEntry, keyboardType, autoCapitalize, autoComplete, textContentType, importantForAutofill, style }) => (
-  <View style={[styles.inputContainer, style]}>
-    <View style={styles.inputIcon}>
-      <Feather name={icon} size={scale(18)} color="#666666" />
+// Input Field Component with styled placeholder
+const InputField = ({ icon, placeholder, value, onChangeText, secureTextEntry, keyboardType, autoCapitalize, autoComplete, textContentType, importantForAutofill, style }) => {
+  const renderPlaceholder = () => {
+    if (!placeholder || value) return null;
+    
+    const match = placeholder.match(/^(.*)\((.*)\)$/);
+    if (!match) {
+      return <Text style={styles.placeholderText}>{placeholder}</Text>;
+    }
+    
+    const [, mainText, hintText] = match;
+    return (
+      <Text style={styles.placeholderText}>
+        {mainText.trim()}{' '}
+        <Text style={styles.placeholderHint}>({hintText})</Text>
+      </Text>
+    );
+  };
+
+  return (
+    <View style={[styles.inputContainer, style]}>
+      <View style={styles.inputIcon}>
+        <Feather name={icon} size={scale(18)} color="#666666" />
+      </View>
+      <TextInput
+        style={styles.input}
+        placeholder=""
+        placeholderTextColor="#666666"
+        value={value}
+        onChangeText={onChangeText}
+        secureTextEntry={secureTextEntry}
+        keyboardType={keyboardType}
+        autoCapitalize={autoCapitalize || 'none'}
+        autoComplete={autoComplete}
+        textContentType={textContentType}
+        importantForAutofill={importantForAutofill}
+        editable={true}
+        selectTextOnFocus={true}
+      />
+      {renderPlaceholder()}
     </View>
-    <TextInput
-      style={styles.input}
-      placeholder={placeholder}
-      placeholderTextColor="#666666"
-      value={value}
-      onChangeText={onChangeText}
-      secureTextEntry={secureTextEntry}
-      keyboardType={keyboardType}
-      autoCapitalize={autoCapitalize || 'none'}
-      autoComplete={autoComplete}
-      textContentType={textContentType}
-      importantForAutofill={importantForAutofill}
-      editable={true}
-      selectTextOnFocus={true}
-    />
-  </View>
-);
+  );
+};
 
 // Primary Button
 const PrimaryButton = ({ title, onPress, loading, disabled, icon }) => (
@@ -734,6 +754,17 @@ const styles = StyleSheet.create({
     paddingRight: scaleSpacing(16),
     fontSize: scale(13),
     color: '#FFFFFF',
+  },
+  placeholderText: {
+    position: 'absolute',
+    left: scaleSpacing(48),
+    fontSize: scale(13),
+    color: '#666666',
+    pointerEvents: 'none',
+  },
+  placeholderHint: {
+    fontSize: scale(11),
+    color: '#666666',
   },
   inputRow: {
     flexDirection: 'row',

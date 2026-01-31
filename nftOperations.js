@@ -12,6 +12,7 @@ import * as ImageManipulator from 'expo-image-manipulator';
 import axios from 'axios';
 import { sha256 } from 'js-sha256';
 import { getDeviceUUID, SAVED_PASSWORD_KEY } from './authHelpers';
+import { removeNFTImageFromCache } from './nftImageCache';
 
 // WalletAdapter imports for universal wallet support
 let WalletAdapter = null;
@@ -3477,7 +3478,6 @@ export const removeNFTFromStorage = async (mintAddress, serverUrl = null, authHe
     // Clear image from cache
     if (nftToRemove) {
       try {
-        const { removeNFTImageFromCache } = require('./nftImageCache');
         // Remove all possible image URLs from cache
         if (nftToRemove.imageUrl) await removeNFTImageFromCache(nftToRemove.imageUrl);
         if (nftToRemove.thumbnailUrl) await removeNFTImageFromCache(nftToRemove.thumbnailUrl);

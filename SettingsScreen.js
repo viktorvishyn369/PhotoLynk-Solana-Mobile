@@ -185,7 +185,7 @@ export const SettingsScreen = ({
   const isLandscape = windowWidth > windowHeight;
   const minDim = Math.min(windowWidth, windowHeight);
   const isTabletDevice = minDim >= 600; // 7"+ tablets
-  const shouldEnableScroll = isTabletDevice && isLandscape;
+  const shouldEnableScroll = true; // Always enable scroll to handle content on small screens
   const remoteConnectTimerRef = useRef(null);
   const systemLang = getSystemLanguage();
   const systemLangInfo = SUPPORTED_LANGUAGES.find(l => l.code === systemLang);
@@ -292,9 +292,6 @@ export const SettingsScreen = ({
                     <Feather name="maximize" size={scale(18)} color="#FFFFFF" />
                   </TouchableOpacity>
                 </View>
-                <Text style={{ color: '#666', fontSize: scale(11), marginTop: scaleSpacing(4) }}>
-                  {t('settings.scanQrToConnect') || 'Scan QR code from desktop app to connect'}
-                </Text>
               </View>
               {/* Save & Connect button hidden - connection happens via QR scan */}
             </Card>
@@ -309,7 +306,7 @@ export const SettingsScreen = ({
                 <Text style={styles.inputLabel}>{t('settings.serverAddress')}</Text>
                 <TextInput
                   style={[styles.textInput, { flex: 0 }]}
-                  placeholder="your-server.com or IP address"
+                  placeholder={t('settings.remoteAddressPlaceholder') || 'example.com or IP address'}
                   placeholderTextColor="#666"
                   value={remoteHost}
                   onChangeText={(text) => {
@@ -352,13 +349,6 @@ export const SettingsScreen = ({
           </>
         )}
 
-        {/* Current Connection */}
-        {serverType !== 'stealthcloud' && ((serverType === 'local' && localHost) || (serverType === 'remote' && remoteHost)) && (
-          <View style={styles.connectionInfo}>
-            <Feather name="link" size={scale(14)} color="#666" />
-            <Text style={styles.connectionText}>{getServerUrl()}</Text>
-          </View>
-        )}
 
         {/* Preferences */}
         <Text style={styles.sectionTitle}>{t('settings.preferences')}</Text>

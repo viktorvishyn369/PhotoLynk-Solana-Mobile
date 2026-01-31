@@ -134,6 +134,26 @@ export const normalizeFilenameForCompare = (name) => {
   return trimmed.toLowerCase();
 };
 
+export const formatFilenameForStatus = (name, maxLen = 32) => {
+  const max = Math.max(10, Number(maxLen) || 32);
+  const raw = name == null ? '' : String(name);
+  const s = raw.split('?')[0].split('#')[0];
+  const parts = s.split('/');
+  const base = (parts.length ? parts[parts.length - 1] : s).trim();
+  if (!base) return 'file';
+  if (base.length <= max) return base;
+
+  const dot = base.lastIndexOf('.');
+  const hasExt = dot > 0 && (base.length - dot) <= 8;
+  const ext = hasExt ? base.slice(dot) : '';
+  const core = hasExt ? base.slice(0, dot) : base;
+
+  const room = max - ext.length - 3;
+  const front = Math.max(6, Math.floor(room * 0.6));
+  const back = Math.max(3, room - front);
+  return `${core.slice(0, front)}...${core.slice(-back)}${ext}`;
+};
+
 // Check if value is a Seeker ID (.skr domain or plain username)
 export const isSeekerIdFormat = (value) => {
   if (!value) return false;

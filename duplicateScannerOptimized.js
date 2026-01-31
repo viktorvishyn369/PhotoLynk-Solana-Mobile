@@ -340,6 +340,7 @@ const getHashTarget = async ({ asset, info, resolveReadableFilePath }) => {
 
 /**
  * Collect assets with pagination and proper yielding
+ * Excludes PhotoLynkDeleted album to avoid re-detecting moved duplicates
  */
 const collectAssetsPaged = async ({
   includeVideos = true,
@@ -354,6 +355,36 @@ const collectAssetsPaged = async ({
   const allAssets = [];
   const seenIds = new Set();
   let after = null;
+  
+  // Get PhotoLynkDeleted album ID first so we can exclude its assets
+  let photoLynkDeletedAssetIds = new Set();
+  try {
+    const albums = await MediaLibrary.getAlbumsAsync({ includeSmartAlbums: false });
+    const deletedAlbum = albums.find(a => a.title === 'PhotoLynkDeleted');
+    if (deletedAlbum) {
+      // Get all assets in PhotoLynkDeleted to exclude them
+      let deletedAfter = null;
+      while (true) {
+        const deletedPage = await MediaLibrary.getAssetsAsync({
+          first: PAGE_SIZE,
+          after: deletedAfter || undefined,
+          album: deletedAlbum.id,
+          mediaType: mediaTypes,
+        });
+        if (deletedPage?.assets) {
+          for (const asset of deletedPage.assets) {
+            photoLynkDeletedAssetIds.add(asset.id);
+          }
+        }
+        deletedAfter = deletedPage?.endCursor;
+        if (!deletedPage?.hasNextPage) break;
+        if (!deletedPage?.assets?.length) break;
+      }
+      console.log('[DupScanner] Excluding', photoLynkDeletedAssetIds.size, 'assets from PhotoLynkDeleted');
+    }
+  } catch (e) {
+    console.log('[DupScanner] Could not get PhotoLynkDeleted album:', e?.message);
+  }
   
   // Get total count first
   let totalCount = 0;
@@ -378,6 +409,10 @@ const collectAssetsPaged = async ({
 
     const assets = page?.assets || [];
     for (const asset of assets) {
+      // Skip assets in PhotoLynkDeleted album
+      if (photoLynkDeletedAssetIds.has(asset.id)) {
+        continue;
+      }
       if (!seenIds.has(asset.id)) {
         seenIds.add(asset.id);
         allAssets.push(asset);
@@ -403,6 +438,12 @@ const collectAssetsPaged = async ({
       if (abortRef?.current) return { assets: allAssets, aborted: true };
 
       const album = albums[i];
+      
+      // Skip PhotoLynkDeleted album to avoid scanning deleted duplicates
+      if (album.title === 'PhotoLynkDeleted') {
+        continue;
+      }
+      
       try {
         const albumAssets = await MediaLibrary.getAssetsAsync({
           first: PAGE_SIZE * 2,
@@ -411,6 +452,10 @@ const collectAssetsPaged = async ({
         });
         if (albumAssets?.assets) {
           for (const asset of albumAssets.assets) {
+            // Skip assets in PhotoLynkDeleted album
+            if (photoLynkDeletedAssetIds.has(asset.id)) {
+              continue;
+            }
             if (!seenIds.has(asset.id)) {
               seenIds.add(asset.id);
               allAssets.push(asset);

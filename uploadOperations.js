@@ -8,7 +8,7 @@
 import { Platform } from 'react-native';
 import * as MediaLibrary from 'expo-media-library';
 import * as FileSystem from 'expo-file-system';
-import { normalizeFilenameForCompare, getMimeFromFilename, detectRealFormatFromMagic } from './utils';
+import { normalizeFilenameForCompare, getMimeFromFilename, detectRealFormatFromMagic, withSimpleRetries, formatFilenameForStatus } from './utils';
 import { createConcurrencyLimiter } from './backgroundTask';
 import { buildLocalAssetIdSetPaged, fetchAllServerFilesPaged } from './mediaHelpers';
 import { PHOTO_ALBUM_NAME, LEGACY_PHOTO_ALBUM_NAME } from './backupManager';
@@ -197,7 +197,7 @@ export const localRemoteBackupCore = async ({
         if (!actualFilename) continue;
 
         // Scanning phase: 5-20% progress - show filename
-        throttledStatus(onStatus, t('status.analyzing', { current: checkedCount, total: totalCount || '?', filename: actualFilename }));
+        throttledStatus(onStatus, t('status.analyzing', { current: checkedCount, total: totalCount || '?', filename: formatFilenameForStatus(actualFilename) }));
         if (totalCount) {
           const analyzeProgress = 0.05 + (checkedCount / totalCount) * 0.15;
           throttledProgress(onProgress, analyzeProgress);
@@ -478,7 +478,7 @@ export const localRemoteBackupCore = async ({
         // Upload phase: 20-100% progress
         const uploadProgress = 0.2 + (processedCount / toUpload.length) * 0.8;
         const displayFilename = asset.filename || 'file';
-        throttledStatus(onStatus, t('status.backingUp', { current: processedCount, total: toUpload.length, filename: displayFilename }));
+        throttledStatus(onStatus, t('status.backingUp', { current: processedCount, total: toUpload.length, filename: formatFilenameForStatus(displayFilename) }));
         throttledProgress(onProgress, uploadProgress);
       }
     }));
@@ -628,7 +628,7 @@ export const localRemoteBackupSelectedCore = async ({
 
       // Scanning phase: 5-20% progress - show filename
       const analyzeProgress = 0.05 + ((i + 1) / list.length) * 0.15;
-      throttledStatus(onStatus, t('status.analyzing', { current: i + 1, total: list.length, filename: actualFilename }));
+      throttledStatus(onStatus, t('status.analyzing', { current: i + 1, total: list.length, filename: formatFilenameForStatus(actualFilename) }));
       throttledProgress(onProgress, analyzeProgress);
       if (serverFiles.has(actualFilename)) continue;
       toUpload.push(asset);
@@ -667,7 +667,7 @@ export const localRemoteBackupSelectedCore = async ({
 
         // Upload phase: 20-100% progress
         const uploadProgress = 0.2 + ((i + 1) / toUpload.length) * 0.8;
-        throttledStatus(onStatus, t('status.backingUp', { current: i + 1, total: toUpload.length, filename: displayFilename }));
+        throttledStatus(onStatus, t('status.backingUp', { current: i + 1, total: toUpload.length, filename: formatFilenameForStatus(displayFilename) }));
         throttledProgress(onProgress, uploadProgress);
         const resolved = await resolveReadableFilePath({ assetId: asset.id, assetInfo });
         const filePath = resolved && resolved.filePath ? resolved.filePath : null;

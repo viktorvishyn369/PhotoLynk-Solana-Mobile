@@ -42,6 +42,7 @@ import {
   normalizeFilenameForCompare,
   normalizeFilePath,
   computeFileIdentity,
+  formatFilenameForStatus,
 } from './utils';
 
 import {
@@ -715,7 +716,7 @@ const buildLocalHashIndex = async (resolveReadableFilePath, onStatus, onProgress
     // Progress update every file (hashing can be slow for large files)
     const progress = progressStart + (progressEnd - progressStart) * (0.3 + 0.7 * (i / allAssets.length));
     updateProgress(onProgress, Math.min(progress, progressEnd));
-    updateStatus(onStatus, t('status.syncHashing', { current: i + 1, total: allAssets.length, filename: filename || 'file' }));
+    updateStatus(onStatus, t('status.syncHashing', { current: i + 1, total: allAssets.length, filename: formatFilenameForStatus(filename || 'file') }));
     await quickYield();
   }
 
@@ -891,7 +892,7 @@ export const stealthCloudRestoreCore = async ({
     // Progress: 15-100%
     const progress = 0.15 + (fileNum / toDownload.length) * 0.85;
     updateProgress(onProgress, progress);
-    updateStatus(onStatus, t('status.syncDownloadingFile', { current: fileNum, total: toDownload.length, filename: manifest.filename || 'file' }), true);
+    updateStatus(onStatus, t('status.syncDownloadingFile', { current: fileNum, total: toDownload.length, filename: formatFilenameForStatus(manifest.filename || 'file') }), true);
 
     // Yield every few files
     if (i % 3 === 0) await yieldToUi();

@@ -88,6 +88,8 @@ fi
 stop_existing_service() {
   if $SUDO systemctl list-unit-files | grep -q "^${SERVICE_NAME}\.service"; then
     $SUDO systemctl stop "${SERVICE_NAME}" 2>/dev/null || true
+    $SUDO systemctl kill "${SERVICE_NAME}" 2>/dev/null || true
+    $SUDO systemctl reset-failed "${SERVICE_NAME}" 2>/dev/null || true
   fi
 
   # Best-effort: stop any leftover PhotoSync node process (do not kill unrelated services)
@@ -116,6 +118,15 @@ stop_existing_service() {
       warn "⚠ Port 3000 still in use; killing processes: $PIDS2"
       $SUDO kill -9 $PIDS2 2>/dev/null || true
     fi
+  fi
+
+  if command -v ss >/dev/null 2>&1; then
+    for _ in $(seq 1 40); do
+      if ! $SUDO ss -lptn 'sport = :3000' 2>/dev/null | grep -q ':3000'; then
+        break
+      fi
+      sleep 0.25
+    done
   fi
 }
 
