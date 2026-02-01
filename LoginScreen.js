@@ -113,7 +113,9 @@ const InputField = ({ icon, placeholder, value, onChangeText, secureTextEntry, k
         editable={true}
         selectTextOnFocus={true}
       />
-      {renderPlaceholder()}
+      <View pointerEvents="none" style={styles.placeholderWrapper}>
+        {renderPlaceholder()}
+      </View>
     </View>
   );
 };
@@ -755,12 +757,18 @@ const styles = StyleSheet.create({
     fontSize: scale(13),
     color: '#FFFFFF',
   },
-  placeholderText: {
+  placeholderWrapper: {
     position: 'absolute',
-    left: scaleSpacing(48),
+    left: 0,
+    right: 0,
+    top: 0,
+    bottom: 0,
+    justifyContent: 'center',
+  },
+  placeholderText: {
+    marginLeft: scaleSpacing(48),
     fontSize: scale(13),
     color: '#666666',
-    pointerEvents: 'none',
   },
   placeholderHint: {
     fontSize: scale(11),

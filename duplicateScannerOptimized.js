@@ -40,7 +40,7 @@ const MAX_SIMILAR_SCAN = 5000; // Max files for similar scan (O(n²) is expensiv
 
 // Hash thresholds
 const SIMILAR_THRESHOLD = 24;
-const CROSS_PLATFORM_DHASH_THRESHOLD = 3; // 3 bits = ~5% tolerance, matches server
+const CROSS_PLATFORM_DHASH_THRESHOLD = 1; // 1 bit = ~1.5% tolerance, stricter matching for identical
 const EDGE_MATCH_THRESHOLD = 4;
 const CORNER_MATCH_THRESHOLD = 3;
 
@@ -1261,14 +1261,14 @@ export const scanSimilarPhotos = async ({
       // Dynamic threshold based on time proximity
       let threshold;
       if (bothHaveExif) {
-        // Reliable EXIF timestamps: 24 (burst) -> 18 -> 12 -> 6 (far apart)
-        if (dt <= 5000) threshold = 24;           // Within 5 seconds - burst shots with movement
-        else if (dt <= 30000) threshold = 18;     // Within 30 seconds - rapid shooting
+        // Reliable EXIF timestamps
+        if (dt <= 5000) threshold = 24;           // Within 5 seconds - burst shots
+        else if (dt <= 30000) threshold = 18;     // Within 30 seconds
         else if (dt <= 60000) threshold = 12;     // Within 1 minute
         else threshold = 6;                       // More than 1 minute apart
       } else {
-        // No reliable EXIF: use stricter thresholds 11 -> 9 -> 6 -> 3
-        if (dt <= 5000) threshold = 11;           // Within 5 seconds
+        // No reliable EXIF: use stricter fallback thresholds
+        if (dt <= 5000) threshold = 12;           // Within 5 seconds
         else if (dt <= 30000) threshold = 9;      // Within 30 seconds
         else if (dt <= 60000) threshold = 6;      // Within 1 minute
         else threshold = 3;                       // More than 1 minute apart

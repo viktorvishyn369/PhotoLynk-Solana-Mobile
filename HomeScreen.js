@@ -374,7 +374,7 @@ export const HomeScreen = ({
             {completionMessage ? (
               <Text style={styles.completionMessage}>{completionMessage}</Text>
             ) : null}
-            {completionMessage && (completionMessage.includes('deleted') || completionMessage.includes(t('results.cleanupDone'))) ? (
+            {completionMessage && !completionMessage.startsWith('0 ') && !completionMessage.startsWith('0개') && !completionMessage.startsWith('0 ف') && (completionMessage.includes('deleted') || completionMessage.includes('slettet') || completionMessage.includes('eliminad') || completionMessage.includes('dihapus') || completionMessage.includes('удален') || completionMessage.includes('smazán') || completionMessage.includes('excluíd') || completionMessage.includes('삭제') || completionMessage.includes('șters') || completionMessage.includes('हटा') || completionMessage.includes('supprimé') || completionMessage.includes('διαγράφ') || completionMessage.includes('kustuta') || completionMessage.includes('изтрит') || completionMessage.includes('izbris') || completionMessage.includes('cancella') || completionMessage.includes('eliminad') || completionMessage.includes('raderad') || completionMessage.includes('izdzēst') || completionMessage.includes('حذف') || completionMessage.includes(t('results.cleanupDone'))) ? (
               <Text style={[styles.completionDismissHint, { marginTop: scaleSpacing(8), marginBottom: scaleSpacing(4), fontWeight: '600' }]}>
                 {t('results.filesMovedToDeleted')}
               </Text>

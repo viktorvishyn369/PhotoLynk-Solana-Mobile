@@ -57,8 +57,8 @@ const hammingDistance64 = (a, b) => {
 };
 
 // Cross-platform deduplication threshold for 64-bit dHash
-// 3 bits = ~5% difference tolerance, stricter matching
-const CROSS_PLATFORM_DHASH_THRESHOLD = 3;
+// 1 bit = ~1.5% difference tolerance, stricter matching for identical
+const CROSS_PLATFORM_DHASH_THRESHOLD = 1;
 
 // Extract base filename for cross-platform variant deduplication
 // Handles iOS, Android/Google Photos, Windows, and Linux naming patterns:
@@ -89,12 +89,20 @@ const extractBaseFilename = (name) => {
   // Windows patterns:
   nameWithoutExt = nameWithoutExt.replace(/ \(\d+\)$/, '');       // " (2)" with space
   nameWithoutExt = nameWithoutExt.replace(/\(\d+\)$/, '');        // "(2)" no space
-  nameWithoutExt = nameWithoutExt.replace(/ - copy( \(\d+\))?$/i, ''); // " - Copy"
+  nameWithoutExt = nameWithoutExt.replace(/ - copy( \(\d+\))?$/i, ''); // " - Copy", " - Copy (2)"
+  nameWithoutExt = nameWithoutExt.replace(/ copy( \d+)?$/i, '');  // " copy", " copy 1", " copy 2"
+  nameWithoutExt = nameWithoutExt.replace(/_\(\d+\)$/, '');       // "_(1)", "_(2)"
+  nameWithoutExt = nameWithoutExt.replace(/ _\d+$/, '');          // " _1", " _2"
   
   // Linux patterns:
   nameWithoutExt = nameWithoutExt.replace(/ \(copy\)$/i, '');     // " (copy)"
+  nameWithoutExt = nameWithoutExt.replace(/ \(copy \d+\)$/i, ''); // " (copy 1)", " (copy 2)"
   nameWithoutExt = nameWithoutExt.replace(/_copy\d*$/i, '');      // "_copy", "_copy2"
   nameWithoutExt = nameWithoutExt.replace(/\.bak$/i, '');         // ".bak"
+  
+  // Generic duplicate suffixes (standalone _1, _2 at end):
+  nameWithoutExt = nameWithoutExt.replace(/_\d{1,2}$/, '');       // "_1", "_2", "_12" (but not _123456 timestamps)
+  nameWithoutExt = nameWithoutExt.replace(/ \d{1,2}$/, '');       // " 1", " 2" at end
   
   // Generic patterns:
   nameWithoutExt = nameWithoutExt.replace(/_backup$/i, '');
@@ -1281,29 +1289,30 @@ export const scanSimilarPhotos = async ({ resolveReadableFilePath, onProgress, o
         // Both have reliable EXIF timestamps - use full time-based thresholds
         if (dt <= 5000) {
           // Within 5 seconds - burst shots
-          threshold = 20;
-        } else if (dt <= 10000) {
-          // Within 10 seconds
-          threshold = 16;
+          threshold = 24;
         } else if (dt <= 30000) {
           // Within 30 seconds
+          threshold = 18;
+        } else if (dt <= 60000) {
+          // Within 1 minute
           threshold = 12;
-        } else if (dt <= 3600000) {
-          // Within 1 hour
-          threshold = 9;
-        } else if (dt <= 21600000) {
-          // Within 6 hours
-          threshold = 6;
         } else {
-          // More than 6 hours apart
-          threshold = 3;
+          // More than 1 minute apart
+          threshold = 6;
         }
       } else {
         // No EXIF - use system timestamp with stricter fallback thresholds
-        // 11 bits if within 1 hour, 3 bits otherwise
-        if (dt <= 3600000) {
-          threshold = 11;
+        if (dt <= 5000) {
+          // Within 5 seconds
+          threshold = 12;
+        } else if (dt <= 30000) {
+          // Within 30 seconds
+          threshold = 9;
+        } else if (dt <= 60000) {
+          // Within 1 minute
+          threshold = 6;
         } else {
+          // More than 1 minute apart
           threshold = 3;
         }
       }

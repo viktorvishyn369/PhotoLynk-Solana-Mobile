@@ -92,7 +92,7 @@ android {
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 41
-        versionName "1.5.2"
+        versionName "1.5.5"
         resConfigs "en", "en-rGB", "ar", "bg", "cs", "da", "de", "el", "es", "et", "fi", "fr", "hi", "hr", "hu", "in", "it", "ja", "ko", "lt", "lv", "nl", "no", "pl", "pt", "pt-rBR", "ro", "ru", "sv", "tr", "uk", "zh"
     }
     signingConfigs {

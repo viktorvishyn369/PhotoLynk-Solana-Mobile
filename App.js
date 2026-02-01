@@ -301,6 +301,7 @@ export default function App() {
   const [similarGroupIndex, setSimilarGroupIndex] = useState(0);
   const [similarSelected, setSimilarSelected] = useState({});
   const [similarPhotoIndex, setSimilarPhotoIndex] = useState(0); // Current photo in full-screen view
+  const [similarDeletedTotal, setSimilarDeletedTotal] = useState(0); // Track total deleted during similar review
   const [customAlert, setCustomAlert] = useState(null); // { title, message, buttons }
   const [inlineNotification, setInlineNotification] = useState(null); // { title, message, type: 'success'|'error'|'warning' }
   const [showCompletionTick, setShowCompletionTick] = useState(false);
@@ -771,6 +772,8 @@ export default function App() {
       } else if (result.userCancelled) {
         // User cancelled - no message needed
       } else {
+        // Close paywall first so alert is visible
+        closePaywall();
         // Use translated error message based on errorKey
         const errorMessage = result.errorKey 
           ? t(`alerts.${result.errorKey}`) 
@@ -778,6 +781,7 @@ export default function App() {
         showDarkAlert(t('alerts.purchaseFailed'), errorMessage);
       }
     } catch (e) {
+      closePaywall();
       showDarkAlert(t('alerts.purchaseError'), e.message || t('alerts.purchaseErrorMessage'));
     } finally {
       setPurchaseLoading(false);
@@ -2155,7 +2159,7 @@ export default function App() {
   const closeSyncModeChooser = () => setSyncModeOpen(false);
   const openCleanupModeChooser = () => { if (loadingRef.current) return; setCleanupModeOpen(true); };
   const closeCleanupModeChooser = () => setCleanupModeOpen(false);
-  const closeSimilarReview = () => { setSimilarReviewOpen(false); setSimilarGroups([]); setSimilarGroupIndex(0); setSimilarSelected({}); setSimilarPhotoIndex(0); };
+  const closeSimilarReview = () => { setSimilarReviewOpen(false); setSimilarGroups([]); setSimilarGroupIndex(0); setSimilarSelected({}); setSimilarPhotoIndex(0); setSimilarDeletedTotal(0); };
 
   const buildDefaultSimilarSelection = (group) => {
     const items = Array.isArray(group) ? group : [];
@@ -2167,7 +2171,7 @@ export default function App() {
   const openSimilarGroup = ({ groups, index }) => {
     const g = Array.isArray(groups) ? groups : [];
     const i = typeof index === 'number' ? index : 0;
-    setSimilarGroups(g); setSimilarGroupIndex(i); setSimilarSelected(buildDefaultSimilarSelection(g[i] || [])); setSimilarPhotoIndex(0); setSimilarReviewOpen(true);
+    setSimilarGroups(g); setSimilarGroupIndex(i); setSimilarSelected(buildDefaultSimilarSelection(g[i] || [])); setSimilarPhotoIndex(0); setSimilarDeletedTotal(0); setSimilarReviewOpen(true);
   };
 
   const toggleSimilarSelected = (assetId) => {
@@ -2181,10 +2185,16 @@ export default function App() {
     return Object.keys(sel).filter(k => sel[k]);
   };
 
-  const advanceSimilarGroup = ({ groups, nextIndex }) => {
+  const advanceSimilarGroup = ({ groups, nextIndex, deletedCount = 0 }) => {
     const g = Array.isArray(groups) ? groups : [];
     const i = typeof nextIndex === 'number' ? nextIndex : 0;
-    if (i >= g.length) { closeSimilarReview(); setStatus(t('status.cleanupComplete')); showCompletionTickBriefly(t('results.cleanupDone')); return; }
+    if (i >= g.length) {
+      const totalDeleted = deletedCount || similarDeletedTotal;
+      closeSimilarReview();
+      setStatus(t('status.cleanupComplete'));
+      showCompletionTickBriefly(t('results.filesDeleted', { count: totalDeleted }));
+      return;
+    }
     openSimilarGroup({ groups: g, index: i });
   };
 
@@ -3215,9 +3225,7 @@ export default function App() {
       if (result.noBackups) {
         setProgress(1);
         setStatus(t('status.syncNoFiles'));
-        await sleep(800);
-        showDarkAlert(t('alerts.noBackups'), t('alerts.noBackupsMessage'));
-        await sleep(500);
+        await sleep(1500);
         setProgress(0);
         return;
       }
@@ -4770,7 +4778,7 @@ export default function App() {
         <InfoScreen
           onBack={() => setView('home')}
           appDisplayName={APP_DISPLAY_NAME}
-          appVersion="1.5.1"
+          appVersion="1.5.5"
           deviceUuid={deviceUuid}
           serverType={serverType}
           stealthUsage={stealthUsage}
@@ -5054,8 +5062,8 @@ export default function App() {
                         const result = await MediaDelete.deleteAssets(ids);
                         if (result === true) {
                           didDelete = true;
+                          setSimilarDeletedTotal(prev => prev + ids.length);
                           setStatus(t('status.deletedItems', { count: ids.length }));
-                          showCompletionTickBriefly(t('results.filesDeleted', { count: ids.length }));
                         } else {
                           setStatus(t('status.deletionCancelled'));
                         }
@@ -5064,8 +5072,8 @@ export default function App() {
                         const result = await MediaLibrary.deleteAssetsAsync(ids);
                         if (result === true) {
                           didDelete = true;
+                          setSimilarDeletedTotal(prev => prev + ids.length);
                           setStatus(t('status.deletedItems', { count: ids.length }));
-                          showCompletionTickBriefly(t('results.filesDeleted', { count: ids.length }));
                         } else {
                           setStatus(t('status.deletionCancelledPartial'));
                         }
@@ -5086,9 +5094,10 @@ export default function App() {
                       .filter((g) => Array.isArray(g) && g.length >= 2);
 
                     if (nextGroups.length === 0) {
+                      const totalDeleted = similarDeletedTotal + ids.length;
                       closeSimilarReview();
                       setStatus(t('status.cleanupComplete'));
-                      showCompletionTickBriefly(t('results.cleanupDone'));
+                      showCompletionTickBriefly(t('results.filesDeleted', { count: totalDeleted }));
                       return;
                     }
 
@@ -5700,7 +5709,7 @@ export default function App() {
           </ScrollView>
 
           {/* Bottom action bar */}
-          <View style={{ backgroundColor: 'rgba(0,0,0,0.95)', paddingBottom: Platform.OS === 'ios' ? 34 : 20, paddingTop: 12, paddingHorizontal: 16 }}>
+          <View style={{ backgroundColor: 'rgba(0,0,0,0.95)', paddingBottom: Platform.OS === 'ios' ? 34 : 60, paddingTop: 12, paddingHorizontal: 16 }}>
             <View style={{ flexDirection: 'row', gap: 10 }}>
               <TouchableOpacity
                 style={{ flex: 1, backgroundColor: '#222', paddingVertical: 14, borderRadius: 12, alignItems: 'center', borderWidth: 1, borderColor: '#444' }}
