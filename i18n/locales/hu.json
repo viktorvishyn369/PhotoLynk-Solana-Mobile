@@ -125,7 +125,8 @@
 		"filesDeleted": "{{count}} fájl törölve",
 		"allFilesKept": "Minden fájl megőrizve",
 		"cleanupDone": "Tisztítás befejezve",
-		"filesMovedToDeleted": "Fájlok áthelyezve a PhotoLynkDeleted mappába",
+		"filesMovedToDeleted": "A fájlok a PhotoLynkDeleted mappába kerültek",
+		"filesMovedToRecentlyDeleted": "A fájlok a Nemrég törölt mappába kerültek",
 		"noDuplicatesFound": "0 duplikátum található",
 		"noIdenticalFiles": "0 azonos fájl",
 		"noSimilarPhotos": "0 hasonló fénykép",
@@ -162,7 +163,7 @@
 		"loadingEncryptionKey": "Titkosítási kulcs betöltése...",
 		"fetchingServerState": "Kiszolgáló állapotának lekérése...",
 		"preparingDeduplication": "Deduplikáció előkészítése...",
-		"noPhotosFound": "Nem találtak fényképeket a biztonsági mentéshez",
+		"noPhotosFound": "Nincs fájl a Backup-hoz",
 		"backupPreparing": "Biztonsági mentés: Előkészítés...",
 		"backupEncrypting": "Biztonsági mentés: Titkosítás...",
 		"backupUploading": "Biztonsági mentés: Feltöltés...",
@@ -178,7 +179,7 @@
 		"syncComplete": "Szinkronizálás: Teljes",
 		"syncFailed": "A szinkronizálás sikertelen",
 		"syncLimitedAccess": "Szinkronizálás: Korlátozott fénykép-hozzáférés",
-		"syncNoFiles": "Szinkronizálás: Nincs szinkronizálandó fotó és videó",
+		"syncNoFiles": "Nincs fájl a Sync-hez",
 		"checkingSubscription": "Előfizetés ellenőrzése...",
 		"nftPreparing": "NFT: Felkészülés...",
 		"securingSession": "A munkamenet biztosítása...",
@@ -248,7 +249,10 @@
 		"idleWithMode": "Üresjárat - {{mode}} üzemmód",
 		"coolingDown": "Lehűlés (tétel {{batch}})...",
 		"foundDuplicates": "{{count}} azonos fotókat/videókat találtak az {{groups}} csoport(ok)ban",
-		"deletionCancelledPartial": "Törlés törölt vagy részleges"
+		"deletionCancelledPartial": "Törlés törölt vagy részleges",
+		"scanningAnalyzingTotalPhotos": "Szkennelés: {{total}} fotó elemzése",
+		"scanningAnalyzingProgressPhotos": "Szkennelés: {{current}}/{{total}} fotó elemzése",
+		"switchingServer": "Szerver váltása..."
 	},
 	"restore": {
 		"title": "Fotók helyreállítása",
@@ -418,7 +422,7 @@
 		"keepThisPhoto": "Tartsa meg ezt a képet",
 		"delete": "Törölje a  címet.",
 		"keepAllNext": "Mindent megtartani → Következő",
-		"keepAllDone": "Keep All & Done"
+		"keepAllDone": "Mindent megtartani és kész"
 	},
 	"nftMint": {
 		"createNft": "NFT létrehozása",

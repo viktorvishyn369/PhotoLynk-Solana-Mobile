@@ -127,6 +127,7 @@
 		"allFilesKept": "جميع الملفات المحفوظة",
 		"cleanupDone": "تم التنظيف",
 		"filesMovedToDeleted": "تم نقل الملفات إلى مجلد PhotoLynkDeleted",
+		"filesMovedToRecentlyDeleted": "تم نقل الملفات إلى المحذوفة مؤخراً",
 		"noDuplicatesFound": "تم العثور على 0 نسخ مكررة",
 		"noIdenticalFiles": "0 ملفات متطابقة",
 		"noSimilarPhotos": "0 صور مماثلة",
@@ -163,7 +164,7 @@
 		"loadingEncryptionKey": "تحميل مفتاح التشفير...",
 		"fetchingServerState": "جلب حالة الخادم...",
 		"preparingDeduplication": "إعداد إلغاء التكرار...",
-		"noPhotosFound": "لم يتم العثور على صور للنسخ الاحتياطي",
+		"noPhotosFound": "لا توجد ملفات للنسخ الاحتياطي",
 		"backupPreparing": "النسخ الاحتياطي: إعداد",
 		"backupEncrypting": "النسخ الاحتياطي: تشفير...",
 		"backupUploading": "النسخ الاحتياطي: تحميل...",
@@ -179,7 +180,7 @@
 		"syncComplete": "المزامنة: اكتمل",
 		"syncFailed": "فشل المزامنة",
 		"syncLimitedAccess": "المزامنة: وصول محدود للصور",
-		"syncNoFiles": "المزامنة: لا توجد صور ومقاطع فيديو للمزامنة",
+		"syncNoFiles": "لا توجد ملفات",
 		"checkingSubscription": "التحقق من الاشتراك...",
 		"nftPreparing": "NFT: إعداد...",
 		"securingSession": "تأمين الجلسة...",
@@ -249,7 +250,10 @@
 		"idleWithMode": "وضع الخمول - وضع {{mode}}",
 		"coolingDown": "التبريد (الدفعة {{batch}})...",
 		"foundDuplicates": "تم العثور على {{count}} صورة وفيديو متطابقة في {{groups}} مجموعة",
-		"deletionCancelledPartial": "تم إلغاء الحذف أو الحذف الجزئي"
+		"deletionCancelledPartial": "تم إلغاء الحذف أو الحذف الجزئي",
+		"scanningAnalyzingTotalPhotos": "المسح: تحليل {{total}} صورة",
+		"scanningAnalyzingProgressPhotos": "المسح: تحليل {{current}} من {{total}} صورة",
+		"switchingServer": "جارٍ تبديل الخادم..."
 	},
 	"restore": {
 		"title": "استعادة الصور",

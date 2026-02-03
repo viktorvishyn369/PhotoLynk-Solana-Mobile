@@ -40,7 +40,7 @@ import lv from './locales/lv.json';
 import hi from './locales/hi.json';
 
 // All translations indexed by language code
-const translations = { en, uk, fr, de, es, it, pl, pt, ru, da, nl, fi, no, sv, tr, ja, ko, zh, ar, et, lt, lv, hi };
+const translations = { en, uk, fr, de, es, it, bg, cs, el, 'en-GB': enGB, hr, hu, id, 'pt-BR': ptBR, ro, pl, pt, ru, da, nl, fi, no, sv, tr, ja, ko, zh, ar, et, lt, lv, hi };
 
 // Current language state
 let currentLocale = 'en';

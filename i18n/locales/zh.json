@@ -127,6 +127,7 @@
 		"allFilesKept": "保留所有文件",
 		"cleanupDone": "清理完成",
 		"filesMovedToDeleted": "文件已移至 PhotoLynkDeleted 文件夹",
+		"filesMovedToRecentlyDeleted": "文件已移至最近删除",
 		"noDuplicatesFound": "找到 0 个重复项",
 		"noIdenticalFiles": "0 个相同文件",
 		"noSimilarPhotos": "0 张相似照片",
@@ -163,7 +164,7 @@
 		"loadingEncryptionKey": "加载加密密钥...",
 		"fetchingServerState": "获取服务器状态...",
 		"preparingDeduplication": "准备重复数据删除",
-		"noPhotosFound": "未找到要备份的照片",
+		"noPhotosFound": "没有文件要Backup",
 		"backupPreparing": "备份：准备",
 		"backupEncrypting": "备份加密...",
 		"backupUploading": "备份：上传...",
@@ -179,7 +180,7 @@
 		"syncComplete": "同步：完成",
 		"syncFailed": "同步失败",
 		"syncLimitedAccess": "同步：有限的照片访问权限",
-		"syncNoFiles": "同步：无法同步照片和视频",
+		"syncNoFiles": "没有文件要Sync",
 		"checkingSubscription": "检查订阅...",
 		"nftPreparing": "NFT：准备...",
 		"securingSession": "确保会议...",
@@ -248,7 +249,10 @@
 		"idleWithMode": "空闲 - {{mode}} 模式",
 		"coolingDown": "冷却（批次 {{batch}}）...",
 		"foundDuplicates": "在 {{groups}} 组中发现 {{count}} 个相同的照片和视频",
-		"deletionCancelledPartial": "取消或部分删除"
+		"deletionCancelledPartial": "取消或部分删除",
+		"scanningAnalyzingTotalPhotos": "扫描：分析 {{total}} 张照片",
+		"scanningAnalyzingProgressPhotos": "扫描：分析 {{current}}/{{total}} 张照片",
+		"switchingServer": "正在切换服务器..."
 	},
 	"restore": {
 		"title": "恢复照片",

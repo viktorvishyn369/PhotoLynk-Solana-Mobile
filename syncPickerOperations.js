@@ -260,7 +260,7 @@ export const fetchLocalRemotePickerPage = async ({
       const batch = serverFiles.slice(i, i + BATCH_SIZE);
       const batchResults = await Promise.all(batch.map(async (file, batchIdx) => {
         const ext = (file.filename || '').split('.').pop()?.toLowerCase() || '';
-        const isImage = ['jpg', 'jpeg', 'png', 'heic', 'heif', 'webp', 'gif', 'bmp', 'tiff'].includes(ext);
+        const isImage = ['jpg', 'jpeg', 'png', 'heic', 'heif', 'webp', 'gif', 'bmp', 'tiff', 'tif', 'raw', 'cr2', 'nef', 'arw', 'dng', 'orf', 'rw2', 'pef', 'srw', 'raf', 'psd', 'psb', 'exr', 'hdr', 'avif'].includes(ext);
         const isVideo = ['mp4', 'mov', 'avi', 'mkv', 'm4v', '3gp', 'webm'].includes(ext);
         if (isImage || isVideo) {
           const thumbUri = await fetchThumbnailBase64(file.filename, config, SERVER_URL);

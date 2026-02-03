@@ -20,6 +20,8 @@
 		MEDIADEL003 /* MediaDelete.m in Sources */ = {isa = PBXBuildFile; fileRef = MEDIADEL004 /* MediaDelete.m */; };
 		PIXELHASH001 /* PixelHashModule.swift in Sources */ = {isa = PBXBuildFile; fileRef = PIXELHASH002 /* PixelHashModule.swift */; };
 		PIXELHASH003 /* PixelHash.m in Sources */ = {isa = PBXBuildFile; fileRef = PIXELHASH004 /* PixelHash.m */; };
+		EXIFEXT001 /* ExifExtractorModule.swift in Sources */ = {isa = PBXBuildFile; fileRef = EXIFEXT002 /* ExifExtractorModule.swift */; };
+		EXIFEXT003 /* ExifExtractorModule.m in Sources */ = {isa = PBXBuildFile; fileRef = EXIFEXT004 /* ExifExtractorModule.m */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -43,6 +45,8 @@
 		MEDIADEL004 /* MediaDelete.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; name = MediaDelete.m; path = PhotoLynk/MediaDelete.m; sourceTree = "<group>"; };
 		PIXELHASH002 /* PixelHashModule.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; name = PixelHashModule.swift; path = PhotoLynk/PixelHashModule.swift; sourceTree = "<group>"; };
 		PIXELHASH004 /* PixelHash.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; name = PixelHash.m; path = PhotoLynk/PixelHash.m; sourceTree = "<group>"; };
+		EXIFEXT002 /* ExifExtractorModule.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; name = ExifExtractorModule.swift; path = PhotoLynk/ExifExtractorModule.swift; sourceTree = "<group>"; };
+		EXIFEXT004 /* ExifExtractorModule.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; name = ExifExtractorModule.m; path = PhotoLynk/ExifExtractorModule.m; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -74,6 +78,8 @@
 				PIXELHASH004 /* PixelHash.m */,
 				MEDIADEL002 /* MediaDeleteModule.swift */,
 				MEDIADEL004 /* MediaDelete.m */,
+				EXIFEXT002 /* ExifExtractorModule.swift */,
+				EXIFEXT004 /* ExifExtractorModule.m */,
 			);
 			name = PhotoLynk;
 			sourceTree = "<group>";
@@ -357,6 +363,8 @@
 				PIXELHASH003 /* PixelHash.m in Sources */,
 				MEDIADEL001 /* MediaDeleteModule.swift in Sources */,
 				MEDIADEL003 /* MediaDelete.m in Sources */,
+				EXIFEXT001 /* ExifExtractorModule.swift in Sources */,
+				EXIFEXT003 /* ExifExtractorModule.m in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -370,7 +378,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = PhotoLynk/PhotoLynk.entitlements;
-				CURRENT_PROJECT_VERSION = 7;
+				CURRENT_PROJECT_VERSION = 43;
 				DEVELOPMENT_TEAM = C9X2WT7AA5;
 				ENABLE_BITCODE = NO;
 				GCC_PREPROCESSOR_DEFINITIONS = (
@@ -380,7 +388,7 @@
 				INFOPLIST_FILE = PhotoLynk/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 15.1;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
-				MARKETING_VERSION = 1.1.1;
+				MARKETING_VERSION = 1.5.5;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-ObjC",
@@ -404,12 +412,12 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = PhotoLynk/PhotoLynk.entitlements;
-				CURRENT_PROJECT_VERSION = 7;
+				CURRENT_PROJECT_VERSION = 43;
 				DEVELOPMENT_TEAM = C9X2WT7AA5;
 				INFOPLIST_FILE = PhotoLynk/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 15.1;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
-				MARKETING_VERSION = 1.1.1;
+				MARKETING_VERSION = 1.5.5;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-ObjC",

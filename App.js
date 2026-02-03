@@ -170,6 +170,14 @@ import NFTGallery from './NFTGallery';
 import NFTTransferModal from './NFTTransferModal';
 import { initializeLanguage, t, getCurrentLanguage, setLanguage, SUPPORTED_LANGUAGES } from './i18n';
 import LanguageSelector, { LanguageButton } from './LanguageSelector';
+import {
+  loadHashCache,
+  flushHashCache,
+  runBackgroundPreAnalysis,
+  abortPreAnalysis,
+  isPreAnalysisRunning,
+  getHashCacheStats,
+} from './hashCache';
 
 // Constants moved from inline definitions
 const APP_DISPLAY_NAME = 'PhotoLynk';
@@ -186,6 +194,9 @@ const { MediaDelete } = NativeModules;
 const CLIENT_BUILD = `photolynk-mobile-v2/${Application.nativeApplicationVersion || '0'}(${Application.nativeBuildVersion || '0'}) sc-debug-2025-12-13`;
 
 const AUTO_UPLOAD_FEATURE_ENABLED = false;
+
+// Module-level cache for PhotoLynkDeleted asset IDs (avoids hook order issues)
+let backupPickerDeletedIdsCache = null;
 
 // Alias for backward compatibility with global function name
 const ensureAutoUploadPolicyAllowsWorkIfBackgrounded = ensureAutoUploadPolicyAllowsWorkIfBackgroundedGlobal;
@@ -302,6 +313,10 @@ export default function App() {
   const [similarSelected, setSimilarSelected] = useState({});
   const [similarPhotoIndex, setSimilarPhotoIndex] = useState(0); // Current photo in full-screen view
   const [similarDeletedTotal, setSimilarDeletedTotal] = useState(0); // Track total deleted during similar review
+  const similarDeletedTotalRef = useRef(0); // Ref to track cumulative total (state is stale in async handlers)
+  const similarThumbCacheRef = useRef(new Map());
+  const similarThumbInFlightRef = useRef(new Set());
+  const similarThumbLimiterRef = useRef(createConcurrencyLimiter(2));
   const [customAlert, setCustomAlert] = useState(null); // { title, message, buttons }
   const [inlineNotification, setInlineNotification] = useState(null); // { title, message, type: 'success'|'error'|'warning' }
   const [showCompletionTick, setShowCompletionTick] = useState(false);
@@ -1742,7 +1757,7 @@ export default function App() {
       }
 
       if (result.alreadyBackedUp) {
-        const count = result.skipped || list.length;
+        const count = result.serverTotal || result.skipped || list.length;
         setProgress(1); // Show 100% before checkmark
         setStatus(t('status.allFilesBackedUp', { count }));
         await sleep(400); // Brief pause to show 100%
@@ -1868,7 +1883,7 @@ export default function App() {
 
   const setWasBackgroundedDuringWorkSafe = (value) => { wasBackgroundedDuringWorkRef.current = value; setWasBackgroundedDuringWork(value); };
 
-  const resetBackupPickerState = () => { setBackupPickerAssets([]); setBackupPickerAfter(null); setBackupPickerHasNext(true); setBackupPickerLoading(false); setBackupPickerTotal(0); setBackupPickerSelected({}); };
+  const resetBackupPickerState = () => { backupPickerDeletedIdsCache = null; setBackupPickerAssets([]); setBackupPickerAfter(null); setBackupPickerHasNext(true); setBackupPickerLoading(false); setBackupPickerTotal(0); setBackupPickerSelected({}); };
   const openBackupModeChooser = () => { if (loadingRef.current) return; setBackupModeOpen(true); };
   const closeBackupModeChooser = () => setBackupModeOpen(false);
 
@@ -1881,13 +1896,30 @@ export default function App() {
 
       const ext = (asset.filename || '').split('.').pop()?.toLowerCase();
       const isVideo = asset.mediaType === 'video' || ['mov', 'mp4', 'avi', 'mkv', 'm4v', '3gp', 'webm'].includes(ext);
-      if (isVideo) return;
 
       const info = await MediaLibrary.getAssetInfoAsync(asset.id, { shouldDownloadFromNetwork: true });
       const sourceUri = info?.localUri || info?.uri || asset?.uri || asset?.thumbUri;
       let thumbUri = sourceUri || null;
 
-      if (Platform.OS === 'android' && asset.mediaType === 'photo') {
+      if (isVideo) {
+        // Generate video thumbnail
+        let videoThumbUri = null;
+        try {
+          const videoUriCandidates = [info?.localUri, info?.uri, asset?.uri].filter(Boolean);
+          for (const videoUri of videoUriCandidates) {
+            if (videoThumbUri) break;
+            try {
+              let result = await VideoThumbnails.getThumbnailAsync(videoUri, { time: 0 });
+              if (!result?.uri) {
+                result = await VideoThumbnails.getThumbnailAsync(videoUri, { time: 1000 });
+              }
+              if (result?.uri) videoThumbUri = result.uri;
+            } catch (innerErr) {}
+          }
+        } catch (thumbErr) {}
+        if (videoThumbUri) thumbUri = videoThumbUri;
+        else return; // No valid video thumbnail, don't update
+      } else if (Platform.OS === 'android' && asset.mediaType === 'photo') {
         try {
           const shouldForceThumb = !!(sourceUri && typeof sourceUri === 'string' && sourceUri.startsWith('content://'));
           if (sourceUri && (shouldForceThumb || ext === 'heic' || ext === 'heif' || ext === 'avif')) {
@@ -1919,12 +1951,34 @@ export default function App() {
     try {
       const permission = await MediaLibrary.requestPermissionsAsync(false, ['photo', 'video']);
       if (permission.status !== 'granted') { showDarkAlert(t('alerts.permissionNeeded'), t('alerts.permissionNeededMessage')); return; }
+
+      let deletedIds = backupPickerDeletedIdsCache;
+      if (Platform.OS === 'android' && !deletedIds) {
+        try {
+          const albums = await MediaLibrary.getAlbumsAsync({ includeSmartAlbums: false });
+          const deletedAlbum = albums.find(a => a && a.title === 'PhotoLynkDeleted');
+          if (deletedAlbum) {
+            deletedIds = await buildLocalAssetIdSetPaged({ album: deletedAlbum });
+          } else {
+            deletedIds = new Set();
+          }
+        } catch (e) {
+          deletedIds = new Set();
+        }
+        backupPickerDeletedIdsCache = deletedIds;
+      }
+
       const first = 18; // 18 files per batch for thumbnails
       const after = reset ? null : backupPickerAfter;
-      const page = await MediaLibrary.getAssetsAsync({ first, after: after || undefined, mediaType: ['photo', 'video'] });
-      const assets = page && Array.isArray(page.assets) ? page.assets : [];
+      const page = await MediaLibrary.getAssetsAsync({ first, after: after || undefined, mediaType: ['photo', 'video'], sortBy: [MediaLibrary.SortBy.creationTime] });
+      const assetsRaw = page && Array.isArray(page.assets) ? page.assets : [];
+      const assets = (Platform.OS === 'android' && deletedIds && deletedIds.size > 0)
+        ? assetsRaw.filter(a => a && a.id && !deletedIds.has(a.id))
+        : assetsRaw;
       if (page && typeof page.totalCount === 'number') {
-        setBackupPickerTotal(Number(page.totalCount) || 0);
+        const rawTotal = Number(page.totalCount) || 0;
+        const total = (Platform.OS === 'android' && deletedIds && deletedIds.size > 0) ? Math.max(0, rawTotal - deletedIds.size) : rawTotal;
+        setBackupPickerTotal(total);
       } else if (reset) {
         setBackupPickerTotal(assets.length);
       }
@@ -2159,7 +2213,7 @@ export default function App() {
   const closeSyncModeChooser = () => setSyncModeOpen(false);
   const openCleanupModeChooser = () => { if (loadingRef.current) return; setCleanupModeOpen(true); };
   const closeCleanupModeChooser = () => setCleanupModeOpen(false);
-  const closeSimilarReview = () => { setSimilarReviewOpen(false); setSimilarGroups([]); setSimilarGroupIndex(0); setSimilarSelected({}); setSimilarPhotoIndex(0); setSimilarDeletedTotal(0); };
+  const closeSimilarReview = () => { setSimilarReviewOpen(false); setSimilarGroups([]); setSimilarGroupIndex(0); setSimilarSelected({}); setSimilarPhotoIndex(0); setSimilarDeletedTotal(0); similarDeletedTotalRef.current = 0; };
 
   const buildDefaultSimilarSelection = (group) => {
     const items = Array.isArray(group) ? group : [];
@@ -2171,7 +2225,7 @@ export default function App() {
   const openSimilarGroup = ({ groups, index }) => {
     const g = Array.isArray(groups) ? groups : [];
     const i = typeof index === 'number' ? index : 0;
-    setSimilarGroups(g); setSimilarGroupIndex(i); setSimilarSelected(buildDefaultSimilarSelection(g[i] || [])); setSimilarPhotoIndex(0); setSimilarDeletedTotal(0); setSimilarReviewOpen(true);
+    setSimilarGroups(g); setSimilarGroupIndex(i); setSimilarSelected(buildDefaultSimilarSelection(g[i] || [])); setSimilarPhotoIndex(0); setSimilarReviewOpen(true);
   };
 
   const toggleSimilarSelected = (assetId) => {
@@ -2180,16 +2234,79 @@ export default function App() {
     setSimilarSelected(prev => { const next = { ...(prev || {}) }; if (next[key]) delete next[key]; else next[key] = true; return next; });
   };
 
+  const ensureSimilarThumb = useCallback(async (asset) => {
+    try {
+      if (!asset?.id) return;
+      const id = String(asset.id);
+      const cached = similarThumbCacheRef.current.get(id);
+      if (cached) return;
+      if (similarThumbInFlightRef.current.has(id)) return;
+
+      similarThumbInFlightRef.current.add(id);
+
+      await similarThumbLimiterRef.current(async () => {
+        try {
+          const info = await MediaLibrary.getAssetInfoAsync(asset.id, { shouldDownloadFromNetwork: true });
+          const ext = String(asset?.filename || info?.filename || '').split('.').pop()?.toLowerCase();
+          const sourceUri = info?.localUri || info?.uri || asset?.thumbUri || asset?.uri || null;
+          let thumbUri = sourceUri;
+
+          if (Platform.OS === 'android') {
+            const needsThumb = !!(typeof sourceUri === 'string' && (sourceUri.startsWith('content://') || ext === 'heic' || ext === 'heif' || ext === 'avif'));
+            if (needsThumb && sourceUri) {
+              try {
+                const manipResult = await ImageManipulator.manipulateAsync(
+                  sourceUri,
+                  [{ resize: { width: 200 } }],
+                  { compress: 0.7, format: ImageManipulator.SaveFormat.JPEG }
+                );
+                if (manipResult?.uri) thumbUri = manipResult.uri;
+              } catch (e) {}
+            }
+          }
+
+          if (thumbUri) {
+            similarThumbCacheRef.current.set(id, thumbUri);
+            setSimilarGroups(prev => (Array.isArray(prev) ? prev.map(g => (Array.isArray(g) ? g.map(a => {
+              if (!a || String(a.id) !== id) return a;
+              return a.thumbUri === thumbUri ? a : { ...a, thumbUri };
+            }) : g)) : prev));
+          }
+        } finally {
+          similarThumbInFlightRef.current.delete(id);
+        }
+      });
+    } catch (e) {
+      try { if (asset?.id) similarThumbInFlightRef.current.delete(String(asset.id)); } catch (e2) {}
+    }
+  }, []);
+
   const getSimilarSelectedIds = () => {
     const sel = similarSelected && typeof similarSelected === 'object' ? similarSelected : {};
     return Object.keys(sel).filter(k => sel[k]);
   };
 
+  useEffect(() => {
+    if (!similarReviewOpen) return;
+    if (Platform.OS !== 'android') return;
+    const g = Array.isArray(similarGroups) ? similarGroups : [];
+    const group = g[similarGroupIndex] || [];
+    if (!Array.isArray(group) || group.length === 0) return;
+    setTimeout(() => {
+      try {
+        for (const a of group) {
+          void ensureSimilarThumb(a);
+        }
+      } catch (e) {}
+    }, 0);
+  }, [similarReviewOpen, similarGroupIndex, similarGroups, ensureSimilarThumb]);
+
   const advanceSimilarGroup = ({ groups, nextIndex, deletedCount = 0 }) => {
     const g = Array.isArray(groups) ? groups : [];
     const i = typeof nextIndex === 'number' ? nextIndex : 0;
     if (i >= g.length) {
-      const totalDeleted = deletedCount || similarDeletedTotal;
+      // Use ref for accurate cumulative total (state is stale in async handlers)
+      const totalDeleted = deletedCount || similarDeletedTotalRef.current;
       closeSimilarReview();
       setStatus(t('status.cleanupComplete'));
       showCompletionTickBriefly(t('results.filesDeleted', { count: totalDeleted }));
@@ -2421,6 +2538,8 @@ export default function App() {
 
     setLoadingSafe(false);
     setBackgroundWarnEligibleSafe(false);
+    setSimilarDeletedTotal(0);
+    similarDeletedTotalRef.current = 0;
     openSimilarGroup({ groups: result.groups, index: 0 });
   };
 
@@ -2630,6 +2749,64 @@ export default function App() {
       }
     })();
   }, []);
+
+  // Background pre-analysis: silently hash files when user is logged in
+  // This speeds up subsequent duplicate scans by having hashes ready
+  useEffect(() => {
+    if (view !== 'home' || !token) return;
+    if (loading) return; // Don't run during active operations
+    
+    let cancelled = false;
+    
+    (async () => {
+      try {
+        // Check media permission first
+        const permission = await MediaLibrary.getPermissionsAsync();
+        if (permission.status !== 'granted') return;
+        
+        // Load cache to check what's already hashed
+        await loadHashCache();
+        const stats = getHashCacheStats();
+        console.log(`[HashCache] Pre-analysis check: ${stats.total} cached, ${stats.perceptual} perceptual, ${stats.file} file hashes`);
+        
+        // Run background pre-analysis with low resource usage
+        // This will skip files that are already cached
+        if (!cancelled && !isPreAnalysisRunning()) {
+          console.log('[HashCache] Starting background pre-analysis...');
+          await runBackgroundPreAnalysis({
+            resolveReadableFilePath,
+            computeFileHash: computeExactFileHash,
+            computePerceptualHashes: async (filePath, asset, info) => {
+              // Only compute perceptual hash for images (similar scan)
+              const { PixelHash } = NativeModules;
+              if (!PixelHash?.hashImagePixels) return null;
+              try {
+                const phash = await PixelHash.hashImagePixels(filePath);
+                return phash ? { phash } : null;
+              } catch (e) {
+                return null;
+              }
+            },
+            batchSize: 3, // Very small batches for low memory
+            delayBetweenBatches: 200, // Longer delays for low CPU
+            includeVideos: true,
+            onProgress: ({ processed, total, cached, errors }) => {
+              if (processed > 0 && processed % 50 === 0) {
+                console.log(`[HashCache] Pre-analysis: ${processed}/${total} (${cached} already cached, ${errors || 0} errors)`);
+              }
+            },
+          });
+        }
+      } catch (e) {
+        console.log('[HashCache] Pre-analysis error:', e?.message);
+      }
+    })();
+    
+    return () => {
+      cancelled = true;
+      abortPreAnalysis();
+    };
+  }, [view, token, loading]);
 
   // Refresh subscription when email changes
   useEffect(() => {
@@ -3005,6 +3182,12 @@ export default function App() {
 
       console.log('[StealthCloud] fetchUsage - serverType:', effectiveServerType, 'token:', token ? 'present' : 'null');
 
+      // Skip fetch if auth is in progress (loading state) to avoid race conditions
+      if (loadingRef.current) {
+        console.log('[StealthCloud] Skipping usage fetch - auth in progress');
+        return;
+      }
+
       if (effectiveServerType !== 'stealthcloud') return;
 
       // Get token from state or SecureStore
@@ -3055,7 +3238,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [view, serverType, token]);
+  }, [view, serverType, token, loading]);
 
   /**
    * Opens an external URL in the device's default browser.
@@ -3123,8 +3306,8 @@ export default function App() {
       if (result.noFiles) {
         setProgress(1);
         setStatus(t('status.noPhotosFound'));
-        await sleep(1500);
-        setStatus(t('status.idle'));
+        await sleep(400);
+        showCompletionTickBriefly(t('status.noPhotosFound'));
         setProgress(0);
         return;
       }
@@ -3134,7 +3317,18 @@ export default function App() {
       if (uploaded === 0 && skipped === 0 && failed === 0) {
         setProgress(1);
         setStatus(t('status.noPhotosFound'));
-        await sleep(1000);
+        await sleep(400);
+        showCompletionTickBriefly(t('status.noPhotosFound'));
+        setProgress(0);
+        return;
+      }
+
+      // All files already exist on server - show count of selected files that were skipped
+      if (uploaded === 0 && skipped > 0 && failed === 0) {
+        setProgress(1);
+        setStatus(t('status.allFilesBackedUp', { count: skipped }));
+        await sleep(300);
+        showCompletionTickBriefly(t('results.filesOnServer', { count: serverTotal || skipped }));
         setProgress(0);
         return;
       }
@@ -3225,7 +3419,8 @@ export default function App() {
       if (result.noBackups) {
         setProgress(1);
         setStatus(t('status.syncNoFiles'));
-        await sleep(1500);
+        await sleep(400);
+        showCompletionTickBriefly(t('status.syncNoFiles'));
         setProgress(0);
         return;
       }
@@ -3495,16 +3690,21 @@ export default function App() {
    * 4. Stores token and credentials securely
    * 5. Navigates to home view on success
    */
-  const handleAuth = async (type) => {
+  const handleAuth = async (type, opts = {}) => {
+    // Allow passing credentials directly for relogin (state updates are async)
+    const effectiveEmail = opts.email || email;
+    const effectivePassword = opts.password || password;
+    const requestedServerType = (opts && (opts.serverType || opts.serverTypeOverride)) || serverType;
+    
     console.log('handleAuth called:', type);
-    console.log('Email:', email, 'Password:', password ? '***' : 'empty');
+    console.log('Email:', effectiveEmail, 'Password:', effectivePassword ? '***' : 'empty');
 
-    if (!email || !password) {
+    if (!effectiveEmail || !effectivePassword) {
       showDarkAlert(t('alerts.error'), t('alerts.fillAllFields'));
       return;
     }
 
-    const normalizedEmail = normalizeEmailForDeviceUuid(email);
+    const normalizedEmail = normalizeEmailForDeviceUuid(effectiveEmail);
     if (!normalizedEmail) {
       showDarkAlert(t('alerts.error'), t('alerts.invalidEmail'));
       return;
@@ -3515,17 +3715,17 @@ export default function App() {
         showDarkAlert(t('alerts.error'), t('alerts.confirmPasswordRequired'));
         return;
       }
-      if (password !== confirmPassword) {
+      if (effectivePassword !== confirmPassword) {
         showDarkAlert(t('alerts.error'), t('alerts.passwordsDoNotMatch'));
         return;
       }
       // For Local/Remote registration, require server address and show Quick Setup if missing
-      if (serverType === 'local' && !localHost) {
+      if (requestedServerType === 'local' && !localHost) {
         setQuickSetupCollapsed(false);
         setQuickSetupHighlightInput(true);
         return;
       }
-      if (serverType === 'remote' && !remoteHost) {
+      if (requestedServerType === 'remote' && !remoteHost) {
         setQuickSetupCollapsed(false);
         setQuickSetupHighlightInput(true);
         return;
@@ -3534,12 +3734,12 @@ export default function App() {
 
     // For login, also require server address for Local/Remote
     if (type === 'login') {
-      if (serverType === 'local' && !localHost) {
+      if (requestedServerType === 'local' && !localHost) {
         setQuickSetupCollapsed(false);
         setQuickSetupHighlightInput(true);
         return;
       }
-      if (serverType === 'remote' && !remoteHost) {
+      if (requestedServerType === 'remote' && !remoteHost) {
         setQuickSetupCollapsed(false);
         setQuickSetupHighlightInput(true);
         return;
@@ -3557,7 +3757,7 @@ export default function App() {
 
       // Resolve and persist effective server settings
       const { effectiveType, effectiveLocalHost, effectiveRemoteHost } = await resolveEffectiveServerSettings({
-        serverType, localHost, remoteHost
+        serverType: requestedServerType, localHost, remoteHost
       });
       await persistServerSettings({ effectiveType, effectiveLocalHost, effectiveRemoteHost });
 
@@ -3567,7 +3767,7 @@ export default function App() {
       if (effectiveType === 'remote' && remoteHost !== effectiveRemoteHost) setRemoteHost(effectiveRemoteHost);
 
       // Device UUID is derived from email+password and persisted.
-      const deviceId = await getDeviceUUID(normalizedEmail, password);
+      const deviceId = await getDeviceUUID(normalizedEmail, effectivePassword);
       await new Promise(resolve => setTimeout(resolve, 200));
       if (!deviceId) {
         showDarkAlert(t('alerts.deviceIdUnavailable'), t('alerts.deviceIdUnavailableMessage'));
@@ -3593,7 +3793,7 @@ export default function App() {
       const payload = await buildAuthPayload({
         type,
         normalizedEmail,
-        password,
+        password: effectivePassword,
         deviceId,
         effectiveType,
         selectedStealthPlanGb,
@@ -3734,7 +3934,7 @@ export default function App() {
         await SecureStore.setItemAsync('user_email', normalizedEmail);
 
         // Store password with biometrics
-        await storeCredentialsWithBiometrics({ password, normalizedEmail, type: 'login' });
+        await storeCredentialsWithBiometrics({ password: effectivePassword, normalizedEmail, type: 'login' });
         if (userId) {
           await SecureStore.setItemAsync('user_id', String(userId));
           setUserId(userId);
@@ -3742,7 +3942,7 @@ export default function App() {
 
         // Step 4: Finalizing (cache master key)
         setAuthLoadingLabel(t('common.finalizing'));
-        await cacheStealthCloudMasterKey(normalizedEmail, password);
+        await cacheStealthCloudMasterKey(normalizedEmail, effectivePassword);
         await new Promise(resolve => setTimeout(resolve, 500));
 
         setTokenSafe(token);
@@ -3776,7 +3976,7 @@ export default function App() {
         await SecureStore.setItemAsync('user_email', normalizedEmail);
 
         // Store password with biometrics for future auto-login
-        await storeCredentialsWithBiometrics({ password, normalizedEmail, type: 'register' });
+        await storeCredentialsWithBiometrics({ password: effectivePassword, normalizedEmail, type: 'register' });
 
         if (userId) {
           await SecureStore.setItemAsync('user_id', String(userId));
@@ -3785,7 +3985,7 @@ export default function App() {
 
         // Step 4: Finalizing (cache master key)
         setAuthLoadingLabel(t('common.finalizing'));
-        await cacheStealthCloudMasterKey(normalizedEmail, password);
+        await cacheStealthCloudMasterKey(normalizedEmail, effectivePassword);
         await new Promise(resolve => setTimeout(resolve, 500));
 
         setTokenSafe(token);
@@ -4152,23 +4352,26 @@ export default function App() {
       if (result.noFiles) {
         setProgress(1);
         setStatus(t('status.noPhotosFound'));
-        await sleep(1500);
-        setStatus(t('status.idle'));
+        await sleep(400);
+        showCompletionTickBriefly(t('status.noPhotosFound'));
         setProgress(0);
         return;
       }
 
       if (result.noFilesToBackup) {
+        setProgress(1);
         setStatus(t('status.noFilesToBackup'));
-        showDarkAlert(t('alerts.noPhotos'), t('alerts.noPhotosMessage'));
+        await sleep(400);
+        showCompletionTickBriefly(t('status.noFilesToBackup'));
+        setProgress(0);
         return;
       }
 
       if (result.alreadyBackedUp) {
         setProgress(1); // Show 100% before checkmark
-        setStatus(t('status.allFilesBackedUp', { count: result.checkedCount }));
+        setStatus(t('status.allFilesBackedUp', { count: result.serverTotal || result.checkedCount }));
         await sleep(400); // Brief pause to show 100%
-        showCompletionTickBriefly(t('results.filesOnServer', { count: result.checkedCount }));
+        showCompletionTickBriefly(t('results.filesOnServer', { count: result.serverTotal || result.checkedCount }));
         setProgress(0);
         return;
       }
@@ -4265,9 +4468,8 @@ export default function App() {
       if (result.noFiles) {
         setProgress(1);
         setStatus(t('status.syncNoFiles'));
-        await sleep(800);
-        showDarkAlert(t('alerts.noFiles'), t('alerts.noFilesMessage'));
-        await sleep(500);
+        await sleep(400);
+        showCompletionTickBriefly(t('status.syncNoFiles'));
         setProgress(0);
         return;
       }
@@ -4640,16 +4842,58 @@ export default function App() {
           loading={loading}
           logout={logout}
           relogin={async (newServerType) => {
-            // Re-authenticate with new server settings
-            setLoading(true);
+            // Re-authenticate with new server settings using saved credentials
+            // Switch to home view first so user sees the loading spinner
+            setView('home');
+            setLoadingSafe(true);
+            setStatus(t('status.switchingServer') || 'Switching server...');
+            
+            // Clear stale StealthCloud usage data to prevent showing old status
+            setStealthUsage(null);
+            setStealthUsageError(null);
             try {
-              await handleAuth('login');
-              setView('home');
+              // Restore saved credentials from SecureStore
+              const savedEmail = await SecureStore.getItemAsync('user_email');
+              const savedPasswordEmail = await SecureStore.getItemAsync(SAVED_PASSWORD_EMAIL_KEY);
+              let savedPassword = null;
+              
+              if (savedPasswordEmail) {
+                // Try to get password (with or without biometrics depending on how it was stored)
+                const storedWithBiometric = Platform.OS === 'ios' || 
+                  (await SecureStore.getItemAsync('password_stored_with_biometric')) === 'true';
+                
+                if (storedWithBiometric) {
+                  try {
+                    savedPassword = await SecureStore.getItemAsync(SAVED_PASSWORD_KEY, {
+                      requireAuthentication: true,
+                      authenticationPrompt: t('auth.unlockToSignIn')
+                    });
+                  } catch (e) {
+                    console.log('[Relogin] Biometric auth failed, trying without:', e?.message);
+                    savedPassword = await SecureStore.getItemAsync(SAVED_PASSWORD_KEY);
+                  }
+                } else {
+                  savedPassword = await SecureStore.getItemAsync(SAVED_PASSWORD_KEY);
+                }
+              }
+              
+              if (savedEmail && savedPassword) {
+                // Pass credentials directly to handleAuth (state updates are async)
+                if (newServerType) {
+                  try { setServerType(newServerType); } catch (e) {}
+                }
+                await handleAuth('login', { email: savedEmail, password: savedPassword, serverType: newServerType || serverType });
+                setView('home');
+              } else {
+                // No saved credentials - go to auth screen
+                console.log('[Relogin] No saved credentials found');
+                setView('auth');
+              }
             } catch (e) {
               console.log('[Relogin] Error:', e.message);
               showDarkAlert(t('alerts.error'), e.message || t('alerts.connectionFailed'));
             } finally {
-              setLoading(false);
+              setLoadingSafe(false);
             }
           }}
           purgeStealthCloudData={purgeStealthCloudData}
@@ -4944,6 +5188,7 @@ export default function App() {
         const totalInGroup = currentGroup.length || 0;
         const totalGroups = (similarGroups || []).length || 0;
         const selectedCount = getSimilarSelectedIds().length || 0;
+        const similarGroupKey = `${similarGroupIndex}:${totalInGroup}:${String(currentGroup?.[0]?.id || '')}:${String(currentGroup?.[totalInGroup - 1]?.id || '')}`;
         
         // Safety check - close if no valid data
         if (!currentGroup.length || !currentPhoto) {
@@ -5011,17 +5256,27 @@ export default function App() {
             </View>
 
             {/* Thumbnail strip */}
-            <View style={{ backgroundColor: 'rgba(0,0,0,0.9)', paddingVertical: 8 }}>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 12 }}>
+            <View style={{ backgroundColor: 'rgba(0,0,0,0.9)', paddingVertical: 8, minHeight: 86 }}>
+              <ScrollView key={`thumbstrip-${similarGroupKey}`} horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 12 }}>
                 {currentGroup.map((a, idx) => {
                   const thumbSelected = !!(similarSelected && similarSelected[String(a && a.id ? a.id : '')]);
                   const isCurrent = idx === similarPhotoIndex;
+                  const thumbUri = (a && (a.thumbUri || a.uri)) ? (a.thumbUri || a.uri) : null;
                   return (
                     <TouchableOpacity
-                      key={String(a.id)}
+                      key={`${similarGroupKey}-${a.id}`}
                       style={{ width: 70, height: 70, marginRight: 8, borderRadius: 8, overflow: 'hidden', borderWidth: isCurrent ? 3 : 2, borderColor: isCurrent ? CLEANUP_MAGENTA : (thumbSelected ? '#FF3B30' : '#333') }}
                       onPress={() => setSimilarPhotoIndex(idx)}>
-                      <Image source={{ uri: a.uri }} style={{ width: '100%', height: '100%' }} />
+                      {thumbUri ? (
+                        <Image
+                          key={`img-${similarGroupKey}-${a.id}`}
+                          source={{ uri: thumbUri }}
+                          style={{ width: '100%', height: '100%' }}
+                          onError={() => { try { void ensureSimilarThumb(a); } catch (e) {} }}
+                        />
+                      ) : (
+                        <View style={{ width: '100%', height: '100%', backgroundColor: '#111' }} />
+                      )}
                       {thumbSelected && (
                         <View style={{ position: 'absolute', top: 4, right: 4, width: 20, height: 20, borderRadius: 10, backgroundColor: '#FF3B30', justifyContent: 'center', alignItems: 'center' }}>
                           <Text style={{ color: '#FFF', fontSize: 12, fontWeight: '900' }}>✓</Text>
@@ -5037,9 +5292,9 @@ export default function App() {
             <View style={{ backgroundColor: 'rgba(0,0,0,0.95)', paddingBottom: Platform.OS === 'ios' ? 34 : 60, paddingTop: 12, paddingHorizontal: 16 }}>
               {/* Toggle selection button */}
               <TouchableOpacity
-                style={{ backgroundColor: isSelected ? '#333' : '#FF3B30', paddingVertical: 14, borderRadius: 12, marginBottom: 10, alignItems: 'center' }}
+                style={{ backgroundColor: isSelected ? '#333' : '#FF3B30', paddingVertical: 14, borderRadius: 12, marginBottom: 10, alignItems: 'center', paddingHorizontal: 8 }}
                 onPress={() => toggleSimilarSelected(currentPhotoId)}>
-                <Text style={{ color: '#FFF', fontSize: scale(15), fontWeight: '700' }}>
+                <Text style={{ color: '#FFF', fontSize: scale(15), fontWeight: '700', textAlign: 'center' }} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>
                   {isSelected ? t('similarPhotos.keepThisPhoto') : t('similarPhotos.markForDeletion')}
                 </Text>
               </TouchableOpacity>
@@ -5048,40 +5303,41 @@ export default function App() {
                 {/* Delete selected */}
                 <TouchableOpacity
                   disabled={selectedCount === 0 || loading}
-                  style={{ flex: 1, marginRight: 5, backgroundColor: selectedCount > 0 ? CLEANUP_MAGENTA : '#333', paddingVertical: 14, borderRadius: 12, alignItems: 'center', opacity: selectedCount === 0 ? 0.5 : 1 }}
+                  style={{ flex: 1, marginRight: 5, backgroundColor: selectedCount > 0 ? CLEANUP_MAGENTA : '#333', paddingVertical: 14, borderRadius: 12, alignItems: 'center', justifyContent: 'center', opacity: selectedCount === 0 ? 0.5 : 1 }}
                   onPress={async () => {
                     const ids = getSimilarSelectedIds();
                     if (ids.length === 0) return;
                     setLoadingSafe(true);
                     setStatus(t('status.deletingItems', { count: ids.length }));
                     let didDelete = false;
+                    let thisDeletedCount = 0;
 
                     try {
-                      if (MediaDelete && typeof MediaDelete.deleteAssets === 'function') {
-                        console.log('Similar Photos: Using native MediaDelete for', ids.length, 'items');
-                        const result = await MediaDelete.deleteAssets(ids);
-                        if (result === true) {
-                          didDelete = true;
-                          setSimilarDeletedTotal(prev => prev + ids.length);
-                          setStatus(t('status.deletedItems', { count: ids.length }));
-                        } else {
-                          setStatus(t('status.deletionCancelled'));
-                        }
+                      // Use batched deletion to avoid crashes with large numbers of files
+                      const DuplicateScanner = require('./duplicateScannerOptimized').default;
+                      console.log('Similar Photos: Using batched deletion for', ids.length, 'items');
+                      const result = await DuplicateScanner.deleteAssets(ids, (progress, deleted, total) => {
+                        setStatus(t('status.deletingProgress', { deleted, total }));
+                      });
+                      thisDeletedCount = result.deleted;
+                      if (thisDeletedCount > 0) {
+                        didDelete = true;
+                        similarDeletedTotalRef.current += thisDeletedCount;
+                        setSimilarDeletedTotal(similarDeletedTotalRef.current);
+                        setStatus(t('status.deletedItems', { count: thisDeletedCount }));
                       } else {
-                        console.log('Similar Photos: Using MediaLibrary.deleteAssetsAsync fallback for', ids.length, 'items');
-                        const result = await MediaLibrary.deleteAssetsAsync(ids);
-                        if (result === true) {
-                          didDelete = true;
-                          setSimilarDeletedTotal(prev => prev + ids.length);
-                          setStatus(t('status.deletedItems', { count: ids.length }));
-                        } else {
-                          setStatus(t('status.deletionCancelledPartial'));
-                        }
+                        setStatus(t('status.deletionCancelled'));
                       }
                     } catch (e) {
                       console.log('Similar Photos: Delete error', e?.message || e);
-                      setStatus(t('status.deletionFailed'));
-                      showDarkAlert(t('alerts.deleteFailed'), e?.message || t('alerts.deleteFailedMessage'));
+                      const msg = String(e?.message || e || '');
+                      const isUserCancelled = Platform.OS === 'ios' && msg.includes('PHPhotosErrorDomain') && msg.includes('3072');
+                      if (isUserCancelled) {
+                        setStatus(t('status.deletionCancelled'));
+                      } else {
+                        setStatus(t('status.deletionFailed'));
+                        showDarkAlert(t('alerts.deleteFailed'), e?.message || t('alerts.deleteFailedMessage'));
+                      }
                     }
 
                     setLoadingSafe(false);
@@ -5094,7 +5350,8 @@ export default function App() {
                       .filter((g) => Array.isArray(g) && g.length >= 2);
 
                     if (nextGroups.length === 0) {
-                      const totalDeleted = similarDeletedTotal + ids.length;
+                      // Use ref for accurate cumulative total (state is stale in async handlers)
+                      const totalDeleted = similarDeletedTotalRef.current;
                       closeSimilarReview();
                       setStatus(t('status.cleanupComplete'));
                       showCompletionTickBriefly(t('results.filesDeleted', { count: totalDeleted }));
@@ -5107,19 +5364,19 @@ export default function App() {
                     setSimilarSelected(buildDefaultSimilarSelection(nextGroups[nextIndex] || []));
                     setSimilarPhotoIndex(0);
                   }}>
-                  <Text style={{ color: selectedCount > 0 ? '#FFF' : '#888', fontSize: scale(14), fontWeight: '700' }}>
+                  <Text style={{ color: selectedCount > 0 ? '#FFF' : '#888', fontSize: scale(14), fontWeight: '700', textAlign: 'center' }} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>
                     {t('similarPhotos.delete')} {selectedCount > 0 ? `(${selectedCount})` : ''}
                   </Text>
                 </TouchableOpacity>
 
                 {/* Keep all / Next set */}
                 <TouchableOpacity
-                  style={{ flex: 1, marginLeft: 5, backgroundColor: '#222', paddingVertical: 14, borderRadius: 12, alignItems: 'center', borderWidth: 1, borderColor: '#444' }}
+                  style={{ flex: 1, marginLeft: 5, backgroundColor: '#222', paddingVertical: 14, borderRadius: 12, alignItems: 'center', borderWidth: 1, borderColor: '#444', paddingHorizontal: 6 }}
                   onPress={() => {
                     advanceSimilarGroup({ groups: similarGroups, nextIndex: similarGroupIndex + 1 });
                   }}>
-                  <Text style={{ color: '#FFF', fontSize: scale(14), fontWeight: '600' }}>
-                    {similarGroupIndex < totalGroups - 1 ? t('similarPhotos.keepAllNext') : t('similarPhotos.keepAllDone')}
+                  <Text style={{ color: '#FFF', fontSize: scale(14), fontWeight: '600', textAlign: 'center' }} numberOfLines={2} adjustsFontSizeToFit minimumFontScale={0.7}>
+                    {(similarGroupIndex < totalGroups - 1 ? t('similarPhotos.keepAllNext') : t('similarPhotos.keepAllDone')) + (similarDeletedTotal > 0 ? ` (${similarDeletedTotal})` : '')}
                   </Text>
                 </TouchableOpacity>
               </View>
@@ -5226,7 +5483,7 @@ export default function App() {
                   const fileSize = rawSize !== null && rawSize > 0 ? rawSize : null;
                   const ext = (displayName || '').split('.').pop()?.toLowerCase() || '';
                   const isVideo = a && (a.mediaType === 'video' || ['mp4', 'mov', 'avi', 'mkv', 'm4v', '3gp', 'webm'].includes(ext));
-                  const isImage = a && (a.mediaType === 'photo' || ['jpg', 'jpeg', 'png', 'heic', 'heif', 'webp', 'gif', 'bmp', 'tiff'].includes(ext));
+                  const isImage = a && (a.mediaType === 'photo' || ['jpg', 'jpeg', 'png', 'heic', 'heif', 'webp', 'gif', 'bmp', 'tiff', 'tif', 'raw', 'cr2', 'nef', 'arw', 'dng', 'orf', 'rw2', 'pef', 'srw', 'raf', 'psd', 'psb', 'exr', 'hdr', 'avif'].includes(ext));
                   const fileIcon = isVideo ? '🎬' : isImage ? '🖼️' : '📄';
                   const thumbUri = (a && (a.thumbUri || a.uri)) ? (a.thumbUri || a.uri) : null;
                   return (
@@ -5476,7 +5733,7 @@ export default function App() {
                   const mediaType = it && it.mediaType ? it.mediaType : null;
                   const ext = (displayName || '').split('.').pop()?.toLowerCase() || '';
                   const isVideo = mediaType === 'video' || ['mp4', 'mov', 'avi', 'mkv', 'm4v', '3gp', 'webm'].includes(ext);
-                  const isImage = mediaType === 'photo' || ['jpg', 'jpeg', 'png', 'heic', 'heif', 'webp', 'gif', 'bmp', 'tiff'].includes(ext);
+                  const isImage = mediaType === 'photo' || ['jpg', 'jpeg', 'png', 'heic', 'heif', 'webp', 'gif', 'bmp', 'tiff', 'tif', 'raw', 'cr2', 'nef', 'arw', 'dng', 'orf', 'rw2', 'pef', 'srw', 'raf', 'psd', 'psb', 'exr', 'hdr', 'avif'].includes(ext);
                   const fileIcon = isVideo ? '🎬' : isImage ? '🖼️' : '📄';
                   return (
                     <TouchableOpacity
@@ -5733,26 +5990,17 @@ export default function App() {
                     }
                     setStatus(t('status.deletingItems', { count: idsToDelete.length }));
 
-                    // Use native MediaDelete module on both iOS and Android
-                    if (MediaDelete && typeof MediaDelete.deleteAssets === 'function') {
-                      console.log('Clean Duplicates: Using native MediaDelete for', idsToDelete.length, 'items');
-                      const result = await MediaDelete.deleteAssets(idsToDelete);
-                      if (result === true) {
-                        showResultAlert('clean', { deleted: idsToDelete.length });
-                        setStatus(t('status.deletedItems', { count: idsToDelete.length }));
-                      } else {
-                        setStatus(t('status.deletionCancelled'));
-                      }
+                    // Use batched deletion to avoid crashes with large numbers of files
+                    const DuplicateScanner = require('./duplicateScannerOptimized').default;
+                    const result = await DuplicateScanner.deleteAssets(idsToDelete, (progress, deleted, total) => {
+                      setStatus(t('status.deletingProgress', { deleted, total }));
+                    });
+                    
+                    if (result.deleted > 0) {
+                      showResultAlert('clean', { deleted: result.deleted });
+                      setStatus(t('status.deletedItems', { count: result.deleted }));
                     } else {
-                      // Fallback to expo-media-library
-                      console.log('Clean Duplicates: Using MediaLibrary.deleteAssetsAsync fallback for', idsToDelete.length, 'items');
-                      const result = await MediaLibrary.deleteAssetsAsync(idsToDelete);
-                      if (result === true) {
-                        showResultAlert('clean', { deleted: idsToDelete.length });
-                        setStatus(t('status.deletedItems', { count: idsToDelete.length }));
-                      } else {
-                        setStatus(t('status.deletionCancelledPartial'));
-                      }
+                      setStatus(t('status.deletionCancelled'));
                     }
                   } catch (err) {
                     console.log('Exact Duplicates: Delete error', err?.message || err);

@@ -65,11 +65,26 @@ export const resolveReadableFilePath = async ({ assetId, assetInfo }) => {
     : '';
   const tmpUri = `${FileSystem.cacheDirectory}sc_src_${assetId}${ext}`;
   await FileSystem.deleteAsync(tmpUri, { idempotent: true });
-  if (typeof FileSystem.copyAsync === 'function') {
-    await FileSystem.copyAsync({ from: localUri, to: tmpUri });
-  } else {
+  const writeViaBase64 = async () => {
     const data = await FileSystem.readAsStringAsync(localUri, { encoding: FileSystem.EncodingType.Base64 });
     await FileSystem.writeAsStringAsync(tmpUri, data, { encoding: FileSystem.EncodingType.Base64 });
+  };
+  if (typeof FileSystem.copyAsync === 'function') {
+    try {
+      await FileSystem.copyAsync({ from: localUri, to: tmpUri });
+      const tmpInfo = await FileSystem.getInfoAsync(tmpUri, { size: true });
+      if (!tmpInfo?.exists || (typeof tmpInfo?.size === 'number' && tmpInfo.size <= 0)) {
+        await writeViaBase64();
+      }
+    } catch (e) {
+      await writeViaBase64();
+    }
+  } else {
+    await writeViaBase64();
+  }
+  const tmpInfo2 = await FileSystem.getInfoAsync(tmpUri, { size: true });
+  if (!tmpInfo2?.exists || (typeof tmpInfo2?.size === 'number' && tmpInfo2.size <= 0)) {
+    throw new Error('Failed to stage asset (empty file)');
   }
   const p = normalizeFilePath(tmpUri);
   if (!p) throw new Error('Failed to stage asset');
@@ -887,11 +902,13 @@ export const chooseStealthCloudChunkBytes = ({ platform, originalSize, fastMode 
 };
 
 export const chooseStealthCloudMaxParallelChunkUploads = ({ platform, originalSize, fastMode = false }) => {
-  // Fast mode: moderate concurrency for speed
+  // Fast mode: optimal concurrency per platform recommendations
+  // iOS: Apple default httpMaximumConnectionsPerHost is 4, safe max is 6
+  // Android: OkHttp default maxRequestsPerHost is 5, safe max is 10
   if (fastMode) {
-    return platform === 'android' ? 6 : 5;
+    return platform === 'android' ? 8 : 6;
   }
-  // Slow mode: conservative to prevent phone heating
+  // Slow mode: conservative for background/battery-saving (has cooldowns + yielding)
   return platform === 'android' ? 3 : 2;
 };
 
@@ -965,6 +982,30 @@ export const registerBackgroundTask = () => {
       console.log('Existing manifests:', existingManifests.length);
       const already = new Set(existingManifests.map(m => m.manifestId));
 
+      // Get PhotoLynkDeleted album asset IDs to exclude from auto-upload (Android only)
+      let photoLynkDeletedAssetIds = new Set();
+      if (Platform.OS === 'android') {
+        try {
+          const albums = await MediaLibrary.getAlbumsAsync({ includeSmartAlbums: false });
+          const deletedAlbum = albums.find(a => a.title === 'PhotoLynkDeleted');
+          if (deletedAlbum) {
+            const deletedPage = await MediaLibrary.getAssetsAsync({
+              first: 10000,
+              album: deletedAlbum.id,
+              mediaType: [MediaLibrary.MediaType.photo, MediaLibrary.MediaType.video],
+            });
+            if (deletedPage?.assets) {
+              for (const asset of deletedPage.assets) {
+                photoLynkDeletedAssetIds.add(asset.id);
+              }
+            }
+            console.log('[AutoUpload] Excluding', photoLynkDeletedAssetIds.size, 'assets from PhotoLynkDeleted');
+          }
+        } catch (e) {
+          console.log('[AutoUpload] Could not get PhotoLynkDeleted album:', e?.message);
+        }
+      }
+
       let after = null;
       try {
         const savedCursor = await SecureStore.getItemAsync(AUTO_UPLOAD_CURSOR_KEY);
@@ -993,6 +1034,11 @@ export const registerBackgroundTask = () => {
           if (uploaded >= maxUploadsPerRun) break;
           if (Date.now() - startedAt >= timeBudgetMs) break;
           if (!asset || !asset.id) continue;
+          // Skip assets in PhotoLynkDeleted album (Android)
+          if (photoLynkDeletedAssetIds.has(asset.id)) {
+            skipped += 1;
+            continue;
+          }
           const manifestId = sha256(`asset:${asset.id}`);
           if (already.has(manifestId)) {
             skipped += 1;

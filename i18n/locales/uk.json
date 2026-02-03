@@ -127,6 +127,7 @@
 		"allFilesKept": "Усі файли збережено",
 		"cleanupDone": "Очищення завершено",
 		"filesMovedToDeleted": "Файли переміщено до папки PhotoLynkDeleted",
+		"filesMovedToRecentlyDeleted": "Файли переміщено до Нещодавно видалені",
 		"noDuplicatesFound": "0 дублікатів знайдено",
 		"noIdenticalFiles": "0 ідентичних файлів",
 		"noSimilarPhotos": "0 схожих фотографій",
@@ -163,7 +164,7 @@
 		"loadingEncryptionKey": "Завантаження ключа шифрування...",
 		"fetchingServerState": "Отримання стану сервера...",
 		"preparingDeduplication": "Підготовка дедуплікації...",
-		"noPhotosFound": "Фото для резервного копіювання не знайдено",
+		"noPhotosFound": "Немає файлів для Backup",
 		"backupPreparing": "Бекап: Підготовка",
 		"backupEncrypting": "Бекап: Шифрування...",
 		"backupUploading": "Бекап: Вивантаження...",
@@ -179,7 +180,7 @@
 		"syncComplete": "Синхронізація: Завершено",
 		"syncFailed": "Помилка синхронізації",
 		"syncLimitedAccess": "Синхронізація: Обмежений доступ до фото",
-		"syncNoFiles": "Синхронізація: Немає фото та відео для синхронізації",
+		"syncNoFiles": "Немає файлів для Sync",
 		"checkingSubscription": "Перевірка підписки...",
 		"nftPreparing": "NFT: Підготовка...",
 		"securingSession": "Захист сесії...",
@@ -249,7 +250,10 @@
 		"syncScanning": "Синхронізація: Сканування...",
 		"syncScanningAlbums": "Синхронізація: Сканування {{count}} фото & відео",
 		"syncScanningAlbumsFound": "Синхронізація: Знайдено {{count}} фото & відео",
-		"uploading": "Вивантаження {{current}} з {{total}}: {{filename}}"
+		"uploading": "Вивантаження {{current}} з {{total}}: {{filename}}",
+		"scanningAnalyzingTotalPhotos": "Сканування: Аналіз {{total}} фото",
+		"scanningAnalyzingProgressPhotos": "Сканування: Аналіз {{current}} з {{total}} фото",
+		"switchingServer": "Перемикання сервера..."
 	},
 	"restore": {
 		"title": "Відновити фото",

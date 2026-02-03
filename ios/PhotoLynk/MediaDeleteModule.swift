@@ -5,63 +5,9 @@ import React
 @objc(MediaDelete)
 class MediaDeleteModule: NSObject {
   
-  private let deletedAlbumName = "PhotoLynkDeleted"
-  
   @objc
   static func requiresMainQueueSetup() -> Bool {
     return true
-  }
-  
-  // Find or create the PhotoLynkDeleted album
-  private func getOrCreateDeletedAlbum(completion: @escaping (PHAssetCollection?) -> Void) {
-    // Search for existing album
-    let fetchOptions = PHFetchOptions()
-    fetchOptions.predicate = NSPredicate(format: "title = %@", deletedAlbumName)
-    let collections = PHAssetCollection.fetchAssetCollections(with: .album, subtype: .any, options: fetchOptions)
-    
-    if let existingAlbum = collections.firstObject {
-      print("[MediaDelete] Found existing PhotoLynkDeleted album")
-      completion(existingAlbum)
-      return
-    }
-    
-    // Create new album
-    print("[MediaDelete] Creating PhotoLynkDeleted album...")
-    var albumPlaceholder: PHObjectPlaceholder?
-    
-    PHPhotoLibrary.shared().performChanges({
-      let createRequest = PHAssetCollectionChangeRequest.creationRequestForAssetCollection(withTitle: self.deletedAlbumName)
-      albumPlaceholder = createRequest.placeholderForCreatedAssetCollection
-    }) { success, error in
-      if success, let placeholder = albumPlaceholder {
-        let fetchResult = PHAssetCollection.fetchAssetCollections(withLocalIdentifiers: [placeholder.localIdentifier], options: nil)
-        print("[MediaDelete] Successfully created PhotoLynkDeleted album")
-        completion(fetchResult.firstObject)
-      } else {
-        print("[MediaDelete] Failed to create album: \(error?.localizedDescription ?? "unknown")")
-        completion(nil)
-      }
-    }
-  }
-  
-  // Copy assets to the deleted album
-  private func copyAssetsToDeletedAlbum(_ assets: [PHAsset], album: PHAssetCollection, completion: @escaping (Bool) -> Void) {
-    print("[MediaDelete] Copying \(assets.count) assets to PhotoLynkDeleted album...")
-    
-    PHPhotoLibrary.shared().performChanges({
-      guard let albumChangeRequest = PHAssetCollectionChangeRequest(for: album) else {
-        print("[MediaDelete] Failed to create album change request")
-        return
-      }
-      albumChangeRequest.addAssets(assets as NSFastEnumeration)
-    }) { success, error in
-      if success {
-        print("[MediaDelete] Successfully added \(assets.count) assets to PhotoLynkDeleted album")
-      } else {
-        print("[MediaDelete] Failed to add assets to album: \(error?.localizedDescription ?? "unknown")")
-      }
-      completion(success)
-    }
   }
   
   @objc
@@ -69,15 +15,51 @@ class MediaDeleteModule: NSObject {
     
     print("[MediaDelete] deleteAssets called with \(assetIds.count) IDs")
     
-    // Must run on main queue for PHPhotoLibrary
-    DispatchQueue.main.async {
-      let fetchResult = PHAsset.fetchAssets(withLocalIdentifiers: assetIds, options: nil)
+    // Log first few IDs for debugging
+    for (index, id) in assetIds.prefix(3).enumerated() {
+      print("[MediaDelete] ID[\(index)]: \(id)")
+    }
+    
+    // Run on background queue to allow semaphore waiting
+    DispatchQueue.global(qos: .userInitiated).async {
+      // expo-media-library on iOS returns IDs in format like:
+      // "ph://CC95F08C-88C3-4012-9D6D-64A413D254B3/L0/001" or just the UUID part
+      // PHAsset.fetchAssets expects the UUID part only (localIdentifier)
+      
+      // Clean up IDs - extract just the UUID/localIdentifier part
+      let cleanedIds = assetIds.map { id -> String in
+        // If it starts with "ph://", extract the UUID part
+        if id.hasPrefix("ph://") {
+          let withoutPrefix = String(id.dropFirst(5))
+          // Take everything before the first "/" after the UUID
+          if let slashIndex = withoutPrefix.firstIndex(of: "/") {
+            return String(withoutPrefix[..<slashIndex])
+          }
+          return withoutPrefix
+        }
+        // If it contains "/", it might be in format "UUID/L0/001"
+        if let slashIndex = id.firstIndex(of: "/") {
+          return String(id[..<slashIndex])
+        }
+        return id
+      }
+      
+      print("[MediaDelete] Cleaned IDs (first 3):")
+      for (index, id) in cleanedIds.prefix(3).enumerated() {
+        print("[MediaDelete] CleanedID[\(index)]: \(id)")
+      }
+      
+      let fetchResult = PHAsset.fetchAssets(withLocalIdentifiers: cleanedIds, options: nil)
       
       print("[MediaDelete] Fetched \(fetchResult.count) assets from \(assetIds.count) IDs")
       
       if fetchResult.count == 0 {
         print("[MediaDelete] ERROR: No assets found for provided IDs!")
-        reject("E_NOT_FOUND", "No assets found for the provided IDs", nil)
+        print("[MediaDelete] Original IDs: \(assetIds.prefix(5))")
+        print("[MediaDelete] Cleaned IDs: \(cleanedIds.prefix(5))")
+        DispatchQueue.main.async {
+          reject("E_NOT_FOUND", "No assets found for the provided IDs", nil)
+        }
         return
       }
       
@@ -86,45 +68,38 @@ class MediaDeleteModule: NSObject {
         assetsToDelete.append(asset)
       }
       
-      // Step 1: Get or create the PhotoLynkDeleted album
-      self.getOrCreateDeletedAlbum { album in
-        guard let deletedAlbum = album else {
-          print("[MediaDelete] Could not get/create PhotoLynkDeleted album, proceeding with direct delete")
-          self.performDelete(assets: assetsToDelete, resolve: resolve, reject: reject)
-          return
-        }
-        
-        // Step 2: Copy assets to the deleted album first
-        self.copyAssetsToDeletedAlbum(assetsToDelete, album: deletedAlbum) { copySuccess in
-          if copySuccess {
-            print("[MediaDelete] Assets copied to PhotoLynkDeleted, now deleting originals...")
-          } else {
-            print("[MediaDelete] Copy failed, but proceeding with delete anyway")
-          }
-          
-          // Step 3: Delete the original assets (with user confirmation dialog)
-          self.performDelete(assets: assetsToDelete, resolve: resolve, reject: reject)
-        }
+      // Delete assets - iOS will move them to Recently Deleted (trash)
+      // User can recover for 30 days from Photos app > Recently Deleted
+      // Note: On iOS, we cannot copy photos to a custom album before deletion
+      // because addAssets only adds references, not copies.
+      print("[MediaDelete] Requesting deletion of \(assetsToDelete.count) assets to Recently Deleted...")
+      
+      let deleteSemaphore = DispatchSemaphore(value: 0)
+      var deleteSuccess = false
+      var deleteError: Error?
+      
+      PHPhotoLibrary.shared().performChanges({
+        PHAssetChangeRequest.deleteAssets(assetsToDelete as NSFastEnumeration)
+      }) { success, error in
+        deleteSuccess = success
+        deleteError = error
+        print("[MediaDelete] performChanges completed: success=\(success), error=\(String(describing: error))")
+        deleteSemaphore.signal()
       }
-    }
-  }
-  
-  private func performDelete(assets: [PHAsset], resolve: @escaping RCTPromiseResolveBlock, reject: @escaping RCTPromiseRejectBlock) {
-    print("[MediaDelete] Requesting deletion of \(assets.count) assets...")
-    
-    PHPhotoLibrary.shared().performChanges({
-      PHAssetChangeRequest.deleteAssets(assets as NSFastEnumeration)
-    }) { success, error in
-      print("[MediaDelete] performChanges completed: success=\(success), error=\(String(describing: error))")
-      if success {
-        print("[MediaDelete] Successfully deleted \(assets.count) assets")
-        resolve(true)
-      } else if let error = error {
-        print("[MediaDelete] Delete failed with error: \(error.localizedDescription)")
-        reject("E_DELETE", "Failed to delete assets: \(error.localizedDescription)", error)
-      } else {
-        print("[MediaDelete] User cancelled deletion")
-        resolve(false)
+      
+      _ = deleteSemaphore.wait(timeout: .now() + 60.0)
+      
+      DispatchQueue.main.async {
+        if deleteSuccess {
+          print("[MediaDelete] Successfully deleted \(assetsToDelete.count) assets to Recently Deleted")
+          resolve(assetsToDelete.count)
+        } else if let error = deleteError {
+          print("[MediaDelete] Delete failed with error: \(error.localizedDescription)")
+          reject("E_DELETE", "Failed to delete assets: \(error.localizedDescription)", error)
+        } else {
+          print("[MediaDelete] User cancelled deletion")
+          resolve(0)
+        }
       }
     }
   }

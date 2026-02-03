@@ -87,15 +87,17 @@ const Card = ({ children, style, glassModeEnabled }) => (
 );
 
 // Server Option Button
-const ServerOption = ({ icon, label, description, isSelected, onPress, glassModeEnabled }) => (
+const ServerOption = ({ icon, label, description, isSelected, onPress, glassModeEnabled, disabled }) => (
   <TouchableOpacity
     style={[
       styles.serverOption,
       isSelected && styles.serverOptionSelected,
       glassModeEnabled && styles.serverOptionGlass,
+      disabled && styles.serverOptionDisabled,
     ]}
     onPress={onPress}
     activeOpacity={0.7}
+    disabled={disabled}
   >
     <View style={[styles.serverOptionIcon, isSelected && styles.serverOptionIconSelected]}>
       <Feather name={icon} size={scale(20)} color={isSelected ? '#FFFFFF' : '#888888'} />
@@ -198,13 +200,17 @@ export const SettingsScreen = ({
   };
 
   const handleServerTypeChange = async (type) => {
+    // Always persist server_type so it's remembered on app restart
+    await SecureStore.setItemAsync('server_type', type);
+    setServerType(type);
+    
     if (type === 'stealthcloud') {
-      await SecureStore.setItemAsync('server_type', 'stealthcloud');
-      setServerType('stealthcloud');
-      await logout();
-    } else {
-      setServerType(type);
+      // Re-authenticate with StealthCloud using saved credentials instead of logging out
+      if (relogin) {
+        await relogin('stealthcloud');
+      }
     }
+    // For local/remote, user still needs to save settings to trigger relogin
   };
 
   const handleSaveSettings = async () => {
@@ -251,6 +257,7 @@ export const SettingsScreen = ({
             isSelected={serverType === 'stealthcloud'}
             onPress={() => handleServerTypeChange('stealthcloud')}
             glassModeEnabled={glassModeEnabled}
+            disabled={loading}
           />
           <View style={styles.divider} />
           <ServerOption
@@ -260,6 +267,7 @@ export const SettingsScreen = ({
             isSelected={serverType === 'local'}
             onPress={() => handleServerTypeChange('local')}
             glassModeEnabled={glassModeEnabled}
+            disabled={loading}
           />
           <View style={styles.divider} />
           <ServerOption
@@ -269,6 +277,7 @@ export const SettingsScreen = ({
             isSelected={serverType === 'remote'}
             onPress={() => handleServerTypeChange('remote')}
             glassModeEnabled={glassModeEnabled}
+            disabled={loading}
           />
         </Card>
 
@@ -537,6 +546,9 @@ const styles = StyleSheet.create({
     marginVertical: scaleSpacing(2),
   },
   serverOptionGlass: {},
+  serverOptionDisabled: {
+    opacity: 0.5,
+  },
   serverOptionIcon: {
     width: scaleSpacing(36),
     height: scaleSpacing(36),

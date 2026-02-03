@@ -6,6 +6,7 @@
  */
 
 import { Platform, NativeModules } from 'react-native';
+import * as Device from 'expo-device';
 
 const { ExifExtractor } = NativeModules;
 
@@ -175,6 +176,24 @@ export function extractFullExif(assetInfo, asset) {
     // Device info - use safeString to handle encoding issues (Japanese/Chinese cameras)
     if (exif?.Make) result.make = safeString(exif.Make);
     if (exif?.Model) result.model = safeString(exif.Model);
+    
+    // Fallback to device info for formats without EXIF (PNG screenshots, etc.)
+    // iOS Camera app also doesn't embed Make/Model in photos (privacy feature)
+    if (!result.make) {
+      if (Platform.OS === 'ios') {
+        result.make = 'apple';
+      } else if (Device.manufacturer) {
+        result.make = Device.manufacturer.toLowerCase();
+      }
+    }
+    if (!result.model) {
+      if (Device.modelId) {
+        // Device.modelId returns e.g., "iPhone15,2" for iPhone 14 Pro
+        result.model = Device.modelId.toLowerCase();
+      } else if (Device.modelName) {
+        result.model = Device.modelName.toLowerCase();
+      }
+    }
 
     // Camera settings
     if (exif?.ExposureTime != null) result.exposureTime = exif.ExposureTime;

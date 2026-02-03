@@ -54,7 +54,7 @@ import {
   normalizeFullTimestamp,
 } from './duplicateScanner';
 
-import { getCachedHash, setCachedHash, loadHashCache, flushHashCache } from './hashCache';
+import { getCachedHash, setCachedHash, loadHashCache, flushHashCache, abortPreAnalysis } from './hashCache';
 
 // Sync-specific dHash threshold (6 bits = ~9% tolerance for cross-platform decoder differences)
 // This is more lenient than backup dedup (0 bits) to handle HEIC/JPEG conversion differences
@@ -79,12 +79,15 @@ const getAssetCooldownMs = (fastMode) => fastMode ? 0 : (Platform.OS === 'ios' ?
 const getBatchLimit = (fastMode) => fastMode ? 100 : 25;
 const getBatchCooldownMs = (fastMode) => fastMode ? 0 : 5000;
 
-// Concurrency limits for downloads (Android reduced to 1 to prevent crashes)
+// Concurrency limits for downloads per platform recommendations:
+// iOS: Apple httpMaximumConnectionsPerHost default=4, safe max=6
+// Android: OkHttp maxRequestsPerHost default=5, safe max=10
+// Note: Android was reduced to 1 historically to prevent crashes - now testing higher
 const getMaxParallelDownloads = (fastMode) => {
   if (fastMode) {
-    return Platform.OS === 'android' ? 1 : 6;
+    return Platform.OS === 'android' ? 6 : 6;
   }
-  return Platform.OS === 'android' ? 1 : 3;
+  return Platform.OS === 'android' ? 3 : 3;
 };
 
 // ============================================================================
@@ -105,6 +108,37 @@ const collectAllAssetsFromAllAlbums = async (onStatus, onProgress, progressStart
   const seenIds = new Set();
   let after = null;
   
+  // Get PhotoLynkDeleted album asset IDs to exclude from sync (Android only - iOS uses Recently Deleted)
+  let photoLynkDeletedAssetIds = new Set();
+  if (Platform.OS === 'android') {
+    try {
+      const albums = await MediaLibrary.getAlbumsAsync({ includeSmartAlbums: false });
+      const deletedAlbum = albums.find(a => a.title === 'PhotoLynkDeleted');
+      if (deletedAlbum) {
+        let deletedAfter = null;
+        while (true) {
+          const deletedPage = await MediaLibrary.getAssetsAsync({
+            first: PAGE_SIZE,
+            after: deletedAfter || undefined,
+            album: deletedAlbum.id,
+            mediaType: mediaTypes,
+          });
+          if (deletedPage?.assets) {
+            for (const asset of deletedPage.assets) {
+              photoLynkDeletedAssetIds.add(asset.id);
+            }
+          }
+          deletedAfter = deletedPage?.endCursor;
+          if (!deletedPage?.hasNextPage) break;
+          if (!deletedPage?.assets?.length) break;
+        }
+        console.log('[Sync] Excluding', photoLynkDeletedAssetIds.size, 'assets from PhotoLynkDeleted');
+      }
+    } catch (e) {
+      console.log('[Sync] Could not get PhotoLynkDeleted album:', e?.message);
+    }
+  }
+  
   // Get total count first
   let totalCount = 0;
   try {
@@ -114,10 +148,16 @@ const collectAllAssetsFromAllAlbums = async (onStatus, onProgress, progressStart
     totalCount = 1000;
   }
 
+  if (Platform.OS === 'android' && photoLynkDeletedAssetIds && photoLynkDeletedAssetIds.size > 0 && totalCount > 0) {
+    totalCount = Math.max(0, totalCount - photoLynkDeletedAssetIds.size);
+  }
+
   updateStatus(onStatus, t('status.syncScanning', { current: 0, total: totalCount }), true);
   updateProgress(onProgress, progressStart, true);
+  await quickYield(); // Yield to let UI show initial status
 
   // Phase 1: Collect from main library (paged)
+  let pageNum = 0;
   while (true) {
     const page = await MediaLibrary.getAssetsAsync({
       first: PAGE_SIZE,
@@ -126,18 +166,32 @@ const collectAllAssetsFromAllAlbums = async (onStatus, onProgress, progressStart
     });
 
     const assets = page?.assets || [];
-    for (const asset of assets) {
+    for (let j = 0; j < assets.length; j++) {
+      const asset = assets[j];
+      // Skip assets in PhotoLynkDeleted album (Android)
+      if (photoLynkDeletedAssetIds.has(asset.id)) continue;
       if (!seenIds.has(asset.id)) {
         seenIds.add(asset.id);
         allAssets.push(asset);
+
+        // If MediaLibrary totalCount estimate was low, bump it so UI never shows X of (X-1)
+        if (allAssets.length > totalCount) {
+          totalCount = allAssets.length;
+        }
+        
+        // Update progress per file (like backup does)
+        const scanProgress = progressStart + (allAssets.length / Math.max(totalCount, 1)) * (progressEnd - progressStart) * 0.6;
+        updateProgress(onProgress, Math.min(scanProgress, progressEnd), true);
+        updateStatus(onStatus, t('status.syncScanning', { current: allAssets.length, total: totalCount }), true);
+        
+        // Yield every 10 files to let UI update
+        if (allAssets.length % 10 === 0) {
+          await quickYield();
+        }
       }
     }
 
-    // Update progress
-    const scanProgress = progressStart + (allAssets.length / Math.max(totalCount, 1)) * (progressEnd - progressStart) * 0.6;
-    updateProgress(onProgress, Math.min(scanProgress, progressEnd));
-    updateStatus(onStatus, t('status.syncScanning', { current: allAssets.length, total: totalCount }));
-
+    pageNum++;
     after = page?.endCursor;
     if (!page?.hasNextPage) break;
     if (assets.length === 0) break;
@@ -151,6 +205,10 @@ const collectAllAssetsFromAllAlbums = async (onStatus, onProgress, progressStart
     
     for (let i = 0; i < albums.length; i++) {
       const album = albums[i];
+      
+      // Skip PhotoLynkDeleted album entirely (Android)
+      if (album.title === 'PhotoLynkDeleted') continue;
+      
       try {
         let albumAfter = null;
         while (true) {
@@ -163,9 +221,16 @@ const collectAllAssetsFromAllAlbums = async (onStatus, onProgress, progressStart
           
           const albumAssets = albumPage?.assets || [];
           for (const asset of albumAssets) {
+            // Skip assets in PhotoLynkDeleted album (Android)
+            if (photoLynkDeletedAssetIds.has(asset.id)) continue;
             if (!seenIds.has(asset.id)) {
               seenIds.add(asset.id);
               allAssets.push(asset);
+              
+              // Update progress per file (like backup does) - force update to bypass throttle
+              const albumProgress = progressStart + (progressEnd - progressStart) * (0.6 + 0.2 * (i / albums.length));
+              updateProgress(onProgress, Math.min(albumProgress, progressEnd), true);
+              updateStatus(onStatus, t('status.syncScanningAlbumsFound', { count: allAssets.length }), true);
             }
           }
           
@@ -179,9 +244,6 @@ const collectAllAssetsFromAllAlbums = async (onStatus, onProgress, progressStart
       // Yield every few albums
       if (i % 5 === 0) {
         await quickYield();
-        const albumProgress = progressStart + (progressEnd - progressStart) * (0.6 + 0.2 * (i / albums.length));
-        updateProgress(onProgress, Math.min(albumProgress, progressEnd));
-        updateStatus(onStatus, t('status.syncScanningAlbumsFound', { count: allAssets.length }));
       }
     }
   } catch (e) {
@@ -386,6 +448,16 @@ const fetchServerFilesPaged = async (serverUrl, config, onProgress, includeMeta 
 // DEDUPLICATION HELPERS
 // ============================================================================
 
+const decodeServerFilename = (value) => {
+  try {
+    if (!value || typeof value !== 'string') return value;
+    if (value.indexOf('%') === -1) return value;
+    return decodeURIComponent(value);
+  } catch (e) {
+    return value;
+  }
+};
+
 /**
  * Build dedup sets from server manifests metadata (instant, no decryption)
  */
@@ -401,10 +473,11 @@ const buildDedupSetsFromServerMeta = (manifests) => {
     if (m.manifestId) manifestIds.add(m.manifestId);
     
     if (m.filename) {
-      const normalized = normalizeFilenameForCompare(m.filename);
+      const decodedFilename = decodeServerFilename(m.filename);
+      const normalized = normalizeFilenameForCompare(decodedFilename);
       if (normalized) filenames.add(normalized);
       
-      const baseName = extractBaseFilename(m.filename);
+      const baseName = extractBaseFilename(decodedFilename);
       if (baseName) {
         if (m.originalSize) {
           if (!baseNameSizes.has(baseName)) baseNameSizes.set(baseName, new Set());
@@ -432,6 +505,7 @@ const buildDedupSetsFromServerMeta = (manifests) => {
  */
 const shouldSkipServerFile = (serverFile, localSets) => {
   const { manifestId, filename, fileHash, perceptualHash, originalSize, creationTime } = serverFile;
+  const decodedFilename = decodeServerFilename(filename);
   
   // Check by manifestId
   if (manifestId && localSets.manifestIds.has(manifestId)) {
@@ -439,7 +513,7 @@ const shouldSkipServerFile = (serverFile, localSets) => {
   }
   
   // Check by filename
-  const normalized = filename ? normalizeFilenameForCompare(filename) : null;
+  const normalized = decodedFilename ? normalizeFilenameForCompare(decodedFilename) : null;
   if (normalized && localSets.filenames.has(normalized)) {
     return { skip: true, reason: 'filename' };
   }
@@ -457,7 +531,7 @@ const shouldSkipServerFile = (serverFile, localSets) => {
   }
   
   // Fallback: base filename + size
-  const baseName = filename ? extractBaseFilename(filename) : null;
+  const baseName = decodedFilename ? extractBaseFilename(decodedFilename) : null;
   if (baseName && originalSize && localSets.baseNameSizes.has(baseName)) {
     const existingSizes = localSets.baseNameSizes.get(baseName);
     for (const existingSize of existingSizes) {
@@ -761,6 +835,9 @@ export const stealthCloudRestoreCore = async ({
 }) => {
   resetProgress();
   setFastMode(!!fastMode); // Enable fast mode optimizations (skip most yields)
+
+  // Avoid concurrent hashing work with background pre-analysis
+  abortPreAnalysis();
   
   // ========== PHASE 1: Setup (0-1%) ==========
   onStatus(t('status.syncPreparing'));
@@ -804,10 +881,11 @@ export const stealthCloudRestoreCore = async ({
   onStatus(t('status.syncFoundFiles', { count: serverManifests.length }));
   await yieldToUi();
 
-  // ========== PHASE 3: Scan Local Photos (5-10%) ==========
+  // ========== PHASE 3: Scan Local Photos (1-10%) ==========
   onStatus(t('status.syncScanningLocal'));
+  updateProgress(onProgress, 0.01, true); // Start at 1% so user sees action
 
-  const localSets = await buildLocalHashIndex(resolveReadableFilePath, onStatus, onProgress, 0.05, 0.10);
+  const localSets = await buildLocalHashIndex(resolveReadableFilePath, onStatus, onProgress, 0.01, 0.10);
   
   updateProgress(onProgress, 0.10, true);
   await yieldToUi();
@@ -1009,7 +1087,7 @@ export const stealthCloudRestoreCore = async ({
           });
           if (exifRes.status === 200 && exifRes.data?.exif) {
             // Apply EXIF to file using native module
-            if (ExifExtractor && typeof ExifExtractor.writeExif === 'function') {
+            if (ExifExtractor?.writeExif) {
               try {
                 await ExifExtractor.writeExif(outPath, exifRes.data.exif);
                 console.log(`[EXIF] Applied EXIF to ${filename}`);
@@ -1099,6 +1177,9 @@ export const localRemoteRestoreCore = async ({
 }) => {
   resetProgress();
   setFastMode(!!fastMode); // Enable fast mode optimizations (skip most yields)
+
+  // Avoid concurrent hashing work with background pre-analysis
+  abortPreAnalysis();
   
   // ========== PHASE 1: Fetch Server Files (0-5%) ==========
   onStatus(t('status.fetchingServerState'));
@@ -1142,11 +1223,12 @@ export const localRemoteRestoreCore = async ({
   onStatus(t('status.syncFoundFiles', { count: serverFiles.length }));
   await yieldToUi();
 
-  // ========== PHASE 2: Scan Local Photos (5-10%) ==========
+  // ========== PHASE 2: Scan Local Photos (1-10%) ==========
   onStatus(t('status.syncScanningLocal'));
+  updateProgress(onProgress, 0.01, true); // Start at 1% so user sees action
 
   // Use buildLocalHashIndex for perceptual hash matching (handles iOS file renaming)
-  const localSets = await buildLocalHashIndex(resolveReadableFilePath, onStatus, onProgress, 0.05, 0.10);
+  const localSets = await buildLocalHashIndex(resolveReadableFilePath, onStatus, onProgress, 0.01, 0.10);
   
   updateProgress(onProgress, 0.10, true);
   await yieldToUi();
@@ -1183,13 +1265,25 @@ export const localRemoteRestoreCore = async ({
       continue;
     }
     
-    // Check by base filename (handles iOS renaming: IMG_1413.JPG -> IMG_3618.JPG but same base pattern)
-    // This catches files with same base name but different numbering
-    if (baseName && localSets.baseNameSizes.has(baseName)) {
-      skipped++;
-      skipReasons.baseName = (skipReasons.baseName || 0) + 1;
-      if (i < 10) console.log(`[Sync] Skip ${file?.filename}: baseName`);
-      continue;
+    // Check by base filename + size (handles iOS renaming but requires size match)
+    // Only skip if base name matches AND size is within 20% tolerance
+    const serverSize = file?.originalSize || file?.size;
+    if (baseName && serverSize && localSets.baseNameSizes.has(baseName)) {
+      const existingSizes = localSets.baseNameSizes.get(baseName);
+      let sizeMatched = false;
+      for (const existingSize of existingSizes) {
+        const sizeDiff = Math.abs(serverSize - existingSize) / Math.max(serverSize, existingSize);
+        if (sizeDiff < 0.20) {
+          sizeMatched = true;
+          break;
+        }
+      }
+      if (sizeMatched) {
+        skipped++;
+        skipReasons.baseName = (skipReasons.baseName || 0) + 1;
+        if (i < 10) console.log(`[Sync] Skip ${file?.filename}: baseName+size`);
+        continue;
+      }
     }
     
     // Check by perceptual hash (cross-device dedup for images)
@@ -1299,8 +1393,14 @@ export const localRemoteRestoreCore = async ({
 
     try {
       const downloadUrl = `${SERVER_URL}/api/files/${encodeURIComponent(file.filename)}`;
-      // Sanitize filename for local storage - replace spaces and special chars
-      const safeFilename = file.filename.replace(/[^a-zA-Z0-9._-]/g, '_');
+      const originalFilename = String((file && (file.originalName || file.filename)) || 'file');
+      const parts = originalFilename.split('.');
+      const ext = parts.length > 1 ? `.${parts.pop()}` : '';
+      const base = parts.join('.') || 'file';
+      const safeBase = base.replace(/[\\/\u0000-\u001F]/g, '_');
+      const suffixSource = String(file.fileHash || file.perceptualHash || file.manifestId || idx || '');
+      const suffix = suffixSource ? `_${suffixSource}` : '';
+      const safeFilename = `${safeBase}${suffix}${ext}`;
       const localUri = `${FileSystem.cacheDirectory}${safeFilename}`;
       
       await FileSystem.deleteAsync(localUri, { idempotent: true });
@@ -1330,9 +1430,11 @@ export const localRemoteRestoreCore = async ({
           } else {
             computedHash = await computePerceptualHash(filePath);
             await quickYield(); // Yield after heavy hash computation
-            const hasMatch = computedHash && findPerceptualHashMatch(computedHash, localSets.perceptualHashes, SYNC_DHASH_THRESHOLD);
-            if (idx < 10) console.log(`[Sync] Image ${file.filename}: phash=${computedHash}, localPhashes=${localSets.perceptualHashes.size}, match=${hasMatch}`);
-            if (hasMatch) {
+            // Use exact match for session dedup (hashes added during this sync session)
+            // Use threshold match only for pre-existing local files
+            const hasExactMatch = computedHash && localSets.perceptualHashes.has(computedHash);
+            if (idx < 10) console.log(`[Sync] Image ${file.filename}: phash=${computedHash}, localPhashes=${localSets.perceptualHashes.size}, exactMatch=${hasExactMatch}`);
+            if (hasExactMatch) {
               isDuplicate = true;
             }
           }
@@ -1359,7 +1461,7 @@ export const localRemoteRestoreCore = async ({
               await quickYield(); // Yield after network request
               if (exifRes.status === 200 && exifRes.data?.exif) {
                 // Apply EXIF to file using native module
-                if (ExifExtractor && typeof ExifExtractor.writeExif === 'function') {
+                if (ExifExtractor?.writeExif) {
                   try {
                     const filePath = localUri.replace('file://', '');
                     await ExifExtractor.writeExif(filePath, exifRes.data.exif);

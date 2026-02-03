@@ -126,6 +126,7 @@
 		"allFilesKept": "Sve datoteke zadržane",
 		"cleanupDone": "Čišćenje završeno",
 		"filesMovedToDeleted": "Datoteke premještene u mapu PhotoLynkDeleted",
+		"filesMovedToRecentlyDeleted": "Datoteke premještene u Nedavno izbrisano",
 		"noDuplicatesFound": "0 duplikata pronađeno",
 		"noIdenticalFiles": "0 identičnih datoteka",
 		"noSimilarPhotos": "0 sličnih fotografija",
@@ -162,7 +163,7 @@
 		"loadingEncryptionKey": "Učitavanje šifrirnog ključa...",
 		"fetchingServerState": "Preuzimanje stanja poslužitelja...",
 		"preparingDeduplication": "Priprema deduplikacije...",
-		"noPhotosFound": "Nije pronađena nijedna fotografija za potvrdu",
+		"noPhotosFound": "Nema datoteka za Backup",
 		"backupPreparing": "Sigurnosna kopija: Priprema...",
 		"backupEncrypting": "Sigurnosna kopija: Šifriranje...",
 		"backupUploading": "Sigurnosna kopija: Učitavanje...",
@@ -178,7 +179,7 @@
 		"syncComplete": "Sinkronizacija: Završeno",
 		"syncFailed": "Sinkronizacija nije uspjela",
 		"syncLimitedAccess": "Sinkronizacija: ograničen pristup fotografijama",
-		"syncNoFiles": "Sinkronizacija: Nema fotografija i videozapisa za sinkronizaciju",
+		"syncNoFiles": "Nema datoteka za Sync",
 		"checkingSubscription": "Provjera pretplate...",
 		"nftPreparing": "NFT: Priprema...",
 		"securingSession": "Osiguravanje sesije...",
@@ -248,7 +249,10 @@
 		"idleWithMode": "Mirovanje • {{mode}} način rada",
 		"coolingDown": "Hlađenje (serija {{batch}})...",
 		"foundDuplicates": "Pronađene su identične fotografije/videozapisi {{count}} u grupama {{groups}}",
-		"deletionCancelledPartial": "Brisanje otkazano ili djelomično"
+		"deletionCancelledPartial": "Brisanje otkazano ili djelomično",
+		"scanningAnalyzingTotalPhotos": "Skeniranje: Analiza {{total}} fotografija",
+		"scanningAnalyzingProgressPhotos": "Skeniranje: Analiza {{current}} od {{total}} fotografija",
+		"switchingServer": "Promjena poslužitelja..."
 	},
 	"restore": {
 		"title": "Obnovi fotografije",

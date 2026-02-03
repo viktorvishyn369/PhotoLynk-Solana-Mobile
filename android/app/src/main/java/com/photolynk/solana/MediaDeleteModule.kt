@@ -23,17 +23,33 @@ class MediaDeleteModule(reactContext: ReactApplicationContext) : ReactContextBas
             if (requestCode != DELETE_REQUEST_CODE) return
 
             val p = pendingDeletePromise
+            val copiedFiles = pendingCopiedFiles
             pendingDeletePromise = null
+            pendingCopiedFiles = null
+            
             if (p == null) {
                 Log.w("MediaDelete", "No pending promise found")
                 return
             }
 
             if (resultCode == Activity.RESULT_OK) {
-                Log.d("MediaDelete", "User confirmed deletion")
+                Log.d("MediaDelete", "User confirmed deletion - keeping ${copiedFiles?.size ?: 0} backup copies")
                 p.resolve(true)
             } else {
-                Log.d("MediaDelete", "User cancelled or denied deletion")
+                Log.d("MediaDelete", "User cancelled or denied deletion - removing backup copies")
+                // User cancelled - delete the backup copies we made
+                if (copiedFiles != null && copiedFiles.isNotEmpty()) {
+                    for (file in copiedFiles) {
+                        try {
+                            if (file.exists()) {
+                                val deleted = file.delete()
+                                Log.d("MediaDelete", "Removed backup copy ${file.name}: $deleted")
+                            }
+                        } catch (e: Exception) {
+                            Log.w("MediaDelete", "Failed to remove backup copy ${file.name}: ${e.message}")
+                        }
+                    }
+                }
                 p.resolve(false)
             }
         }
@@ -66,7 +82,7 @@ class MediaDeleteModule(reactContext: ReactApplicationContext) : ReactContextBas
     }
 
     // Copy a file to the PhotoLynkDeleted folder
-    private fun copyToDeletedFolder(uri: Uri, deletedFolder: File): Boolean {
+    private fun copyToDeletedFolder(uri: Uri, deletedFolder: File): File? {
         try {
             val contentResolver = reactApplicationContext.contentResolver
             
@@ -106,10 +122,10 @@ class MediaDeleteModule(reactContext: ReactApplicationContext) : ReactContextBas
                 null
             )
             
-            return true
+            return destFile
         } catch (e: Exception) {
             Log.e("MediaDelete", "Failed to copy file: ${e.message}")
-            return false
+            return null
         }
     }
 
@@ -140,37 +156,49 @@ class MediaDeleteModule(reactContext: ReactApplicationContext) : ReactContextBas
                 }
             }
 
-            Log.d("MediaDelete", "Total URIs to delete: ${uris.size}")
+            Log.d("MediaDelete", "Total URIs to delete: ${uris.size} out of ${assetIds.size()} requested")
             
             if (uris.isEmpty()) {
-                Log.e("MediaDelete", "ERROR: No valid URIs found for any asset IDs!")
-                promise.reject("E_NOT_FOUND", "No valid media files found for the provided IDs")
+                Log.e("MediaDelete", "ERROR: No valid URIs found for any asset IDs! Files may have been already deleted or moved.")
+                promise.reject("E_NOT_FOUND", "No assets found for the provided IDs")
                 return
             }
-
-            // Step 1: Copy files to PhotoLynkDeleted folder (best effort)
-            val deletedFolder = getOrCreateDeletedFolder()
-            if (deletedFolder != null) {
-                Log.d("MediaDelete", "Copying ${uris.size} files to PhotoLynkDeleted folder...")
-                for (uri in uris) {
-                    try {
-                        copyToDeletedFolder(uri, deletedFolder)
-                    } catch (e: Exception) {
-                        Log.w("MediaDelete", "Failed to copy $uri: ${e.message}")
-                        // Continue anyway - best effort
-                    }
-                }
-            } else {
-                Log.w("MediaDelete", "Could not create PhotoLynkDeleted folder, proceeding with delete only")
+            
+            // Log if some files weren't found (partial match)
+            if (uris.size < assetIds.size()) {
+                Log.w("MediaDelete", "Only found ${uris.size} of ${assetIds.size()} files - some may have been already deleted")
             }
 
-            // Step 2: Delete the original files
+            // Delete the files (copy to PhotoLynkDeleted happens BEFORE confirmation on Android 11+)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                 // Android 11+ (API 30+): Use createDeleteRequest for scoped storage
                 if (pendingDeletePromise != null) {
                     promise.reject("E_BUSY", "A delete request is already in progress")
                     return
                 }
+                
+                // Copy files to PhotoLynkDeleted BEFORE showing confirmation dialog
+                // (because after user confirms, Android deletes the files immediately)
+                val copiedFiles = mutableListOf<File>()
+                val deletedFolder = getOrCreateDeletedFolder()
+                if (deletedFolder != null) {
+                    Log.d("MediaDelete", "Android 11+: Copying ${uris.size} files to PhotoLynkDeleted before confirmation...")
+                    for (uri in uris) {
+                        try {
+                            val copiedFile = copyToDeletedFolder(uri, deletedFolder)
+                            if (copiedFile != null) {
+                                copiedFiles.add(copiedFile)
+                            }
+                        } catch (e: Exception) {
+                            Log.w("MediaDelete", "Failed to copy $uri: ${e.message}")
+                        }
+                    }
+                    Log.d("MediaDelete", "Copied ${copiedFiles.size} files to PhotoLynkDeleted")
+                }
+                
+                // Store copied files so we can delete them if user cancels
+                pendingCopiedFiles = copiedFiles
+                
                 Log.d("MediaDelete", "Using createDeleteRequest for Android 11+")
                 val pendingIntent = MediaStore.createDeleteRequest(
                     reactApplicationContext.contentResolver,
@@ -184,7 +212,19 @@ class MediaDeleteModule(reactContext: ReactApplicationContext) : ReactContextBas
                 pendingDeletePromise = promise
             } else if (Build.VERSION.SDK_INT == Build.VERSION_CODES.Q) {
                 // Android 10 (API 29): Scoped storage but no createDeleteRequest
-                // Need to use MediaStore.setRequireOriginal or catch RecoverableSecurityException
+                // Copy to PhotoLynkDeleted BEFORE delete (no batch confirmation dialog)
+                val deletedFolder = getOrCreateDeletedFolder()
+                if (deletedFolder != null) {
+                    Log.d("MediaDelete", "Android 10: Copying ${uris.size} files to PhotoLynkDeleted before delete...")
+                    for (uri in uris) {
+                        try {
+                            copyToDeletedFolder(uri, deletedFolder)
+                        } catch (e: Exception) {
+                            Log.w("MediaDelete", "Failed to copy $uri: ${e.message}")
+                        }
+                    }
+                }
+                
                 Log.d("MediaDelete", "Android 10: Attempting direct delete with exception handling")
                 var deleted = 0
                 var needsPermission = false
@@ -213,6 +253,19 @@ class MediaDeleteModule(reactContext: ReactApplicationContext) : ReactContextBas
                 promise.resolve(deleted > 0)
             } else {
                 // Android 7-9 (API 24-28): Direct delete works
+                // Copy to PhotoLynkDeleted BEFORE delete (no confirmation dialog)
+                val deletedFolder = getOrCreateDeletedFolder()
+                if (deletedFolder != null) {
+                    Log.d("MediaDelete", "Android 7-9: Copying ${uris.size} files to PhotoLynkDeleted before delete...")
+                    for (uri in uris) {
+                        try {
+                            copyToDeletedFolder(uri, deletedFolder)
+                        } catch (e: Exception) {
+                            Log.w("MediaDelete", "Failed to copy $uri: ${e.message}")
+                        }
+                    }
+                }
+                
                 Log.d("MediaDelete", "Android 7-9: Direct delete")
                 var deleted = 0
                 for (uri in uris) {
@@ -239,29 +292,166 @@ class MediaDeleteModule(reactContext: ReactApplicationContext) : ReactContextBas
         // expo-media-library asset IDs on Android can be:
         // 1. Just a numeric ID like "1234"
         // 2. A content URI like "content://media/external/images/media/1234"
-        // 3. A path-based ID
+        // 3. A path-based ID like "/storage/emulated/0/DCIM/Camera/IMG_1234.jpg"
+        // 4. A prefixed ID like "ph://1234" or similar
+        
+        Log.d("MediaDelete", "findContentUri input: $assetId")
         
         // If it's already a content URI, parse it directly
         if (assetId.startsWith("content://")) {
-            return Uri.parse(assetId)
+            val uri = Uri.parse(assetId)
+            Log.d("MediaDelete", "Parsed as content URI: $uri")
+            return uri
         }
         
-        // Extract numeric ID - expo sometimes uses format like "1234" or includes path
-        val numericId = assetId.filter { it.isDigit() }.toLongOrNull()
+        // If it's a file path, try to find it by DATA column first
+        if (assetId.startsWith("/")) {
+            Log.d("MediaDelete", "Trying to find by file path: $assetId")
+            val uri = findByFilePath(assetId)
+            if (uri != null) {
+                Log.d("MediaDelete", "Found by file path: $uri")
+                return uri
+            }
+            // Also try by DISPLAY_NAME (filename only) as fallback for scoped storage
+            val fileName = assetId.substringAfterLast("/")
+            Log.d("MediaDelete", "Trying to find by filename: $fileName")
+            val uriByName = findByDisplayName(fileName)
+            if (uriByName != null) {
+                Log.d("MediaDelete", "Found by display name: $uriByName")
+                return uriByName
+            }
+        }
         
-        if (numericId != null) {
+        // Check if it's a pure numeric ID (expo-media-library format)
+        val pureNumericId = assetId.toLongOrNull()
+        if (pureNumericId != null && pureNumericId > 0) {
+            Log.d("MediaDelete", "Pure numeric ID: $pureNumericId")
             // Check if this ID exists in images
-            if (existsInCollection(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, numericId)) {
-                return ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, numericId)
+            if (existsInCollection(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, pureNumericId)) {
+                val uri = ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, pureNumericId)
+                Log.d("MediaDelete", "Found in images: $uri")
+                return uri
             }
             // Check if this ID exists in videos
-            if (existsInCollection(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, numericId)) {
-                return ContentUris.withAppendedId(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, numericId)
+            if (existsInCollection(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, pureNumericId)) {
+                val uri = ContentUris.withAppendedId(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, pureNumericId)
+                Log.d("MediaDelete", "Found in videos: $uri")
+                return uri
             }
-            // If not found but we have a numeric ID, try images as default
-            return ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, numericId)
+        }
+        
+        // Try extracting ID from content URI pattern embedded in string
+        // e.g., "content://media/external/images/media/1234" or just the trailing number
+        val contentUriMatch = Regex("content://media/external/(images|video)/media/(\\d+)").find(assetId)
+        if (contentUriMatch != null) {
+            val mediaType = contentUriMatch.groupValues[1]
+            val mediaId = contentUriMatch.groupValues[2].toLongOrNull()
+            if (mediaId != null && mediaId > 0) {
+                val baseUri = if (mediaType == "images") MediaStore.Images.Media.EXTERNAL_CONTENT_URI else MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+                val uri = ContentUris.withAppendedId(baseUri, mediaId)
+                Log.d("MediaDelete", "Extracted from content URI pattern: $uri")
+                return uri
+            }
+        }
+        
+        // Last resort: try to extract trailing numeric ID (but be careful with paths)
+        // Only use this if the ID doesn't look like a file path
+        if (!assetId.contains("/") && !assetId.contains(".")) {
+            val numericId = assetId.replace(Regex("[^0-9]"), "").toLongOrNull()
+            Log.d("MediaDelete", "Extracted numeric ID (last resort): $numericId from $assetId")
+            
+            if (numericId != null && numericId > 0) {
+                // Check if this ID exists in images
+                if (existsInCollection(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, numericId)) {
+                    val uri = ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, numericId)
+                    Log.d("MediaDelete", "Found in images: $uri")
+                    return uri
+                }
+                // Check if this ID exists in videos
+                if (existsInCollection(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, numericId)) {
+                    val uri = ContentUris.withAppendedId(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, numericId)
+                    Log.d("MediaDelete", "Found in videos: $uri")
+                    return uri
+                }
+                Log.w("MediaDelete", "Numeric ID $numericId not found in images or videos")
+            }
         }
 
+        Log.e("MediaDelete", "Could not find content URI for: $assetId")
+        return null
+    }
+    
+    private fun findByDisplayName(displayName: String): Uri? {
+        try {
+            // Try images first
+            var cursor = reactApplicationContext.contentResolver.query(
+                MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                arrayOf(MediaStore.MediaColumns._ID),
+                "${MediaStore.MediaColumns.DISPLAY_NAME} = ?",
+                arrayOf(displayName),
+                null
+            )
+            cursor?.use {
+                if (it.moveToFirst()) {
+                    val id = it.getLong(0)
+                    return ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id)
+                }
+            }
+            
+            // Try videos
+            cursor = reactApplicationContext.contentResolver.query(
+                MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
+                arrayOf(MediaStore.MediaColumns._ID),
+                "${MediaStore.MediaColumns.DISPLAY_NAME} = ?",
+                arrayOf(displayName),
+                null
+            )
+            cursor?.use {
+                if (it.moveToFirst()) {
+                    val id = it.getLong(0)
+                    return ContentUris.withAppendedId(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, id)
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("MediaDelete", "findByDisplayName error: ${e.message}")
+        }
+        return null
+    }
+    
+    private fun findByFilePath(filePath: String): Uri? {
+        try {
+            // Try images first
+            var cursor = reactApplicationContext.contentResolver.query(
+                MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                arrayOf(MediaStore.MediaColumns._ID),
+                "${MediaStore.MediaColumns.DATA} = ?",
+                arrayOf(filePath),
+                null
+            )
+            cursor?.use {
+                if (it.moveToFirst()) {
+                    val id = it.getLong(0)
+                    return ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id)
+                }
+            }
+            
+            // Try videos
+            cursor = reactApplicationContext.contentResolver.query(
+                MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
+                arrayOf(MediaStore.MediaColumns._ID),
+                "${MediaStore.MediaColumns.DATA} = ?",
+                arrayOf(filePath),
+                null
+            )
+            cursor?.use {
+                if (it.moveToFirst()) {
+                    val id = it.getLong(0)
+                    return ContentUris.withAppendedId(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, id)
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("MediaDelete", "findByFilePath error: ${e.message}")
+        }
         return null
     }
 
@@ -289,5 +479,6 @@ class MediaDeleteModule(reactContext: ReactApplicationContext) : ReactContextBas
     companion object {
         const val DELETE_REQUEST_CODE = 42069
         var pendingDeletePromise: Promise? = null
+        var pendingCopiedFiles: List<File>? = null
     }
 }

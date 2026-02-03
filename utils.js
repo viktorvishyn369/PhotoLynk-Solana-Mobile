@@ -126,9 +126,15 @@ export const formatBytes = (bytes, decimal = false) => {
 // Normalize filename for comparison
 export const normalizeFilenameForCompare = (name) => {
   if (!name || typeof name !== 'string') return null;
-  const s = name.split('?')[0];
-  const parts = s.split('/');
-  const base = parts.length ? parts[parts.length - 1] : s;
+  const raw = name.split('?')[0].split('#')[0];
+  const parts = raw.split('/');
+  let base = parts.length ? parts[parts.length - 1] : raw;
+  if (base && typeof base === 'string' && base.indexOf('%') !== -1) {
+    try { base = decodeURIComponent(base); } catch (e) {}
+  }
+  if (base && typeof base === 'string' && typeof base.normalize === 'function') {
+    try { base = base.normalize('NFC'); } catch (e) {}
+  }
   const trimmed = base.trim();
   if (!trimmed) return null;
   return trimmed.toLowerCase();

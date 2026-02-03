@@ -151,9 +151,14 @@ export const fetchAllServerFilesPaged = async (serverUrl, config, onFetchProgres
       onFetchProgress(allFiles.length, estimatedTotal || allFiles.length);
     }
 
-    if (!files || files.length < PAGE_LIMIT) break;
     offset += files.length;
-    if (typeof estimatedTotal === 'number' && offset >= estimatedTotal) break;
+    if (typeof estimatedTotal === 'number') {
+      if (allFiles.length >= estimatedTotal) break;
+      if (!files || files.length === 0) break;
+      continue;
+    }
+
+    if (!files || files.length < PAGE_LIMIT) break;
   }
 
   return allFiles;

@@ -127,6 +127,7 @@
 		"allFilesKept": "Tüm dosyalar saklandı",
 		"cleanupDone": "Temizlik tamamlandı",
 		"filesMovedToDeleted": "Dosyalar PhotoLynkDeleted klasörüne taşındı",
+		"filesMovedToRecentlyDeleted": "Dosyalar Son Silinenler'e taşındı",
 		"noDuplicatesFound": "0 kopya bulundu",
 		"noIdenticalFiles": "0 özdeş dosya",
 		"noSimilarPhotos": "0 benzer fotoğraf",
@@ -163,7 +164,7 @@
 		"loadingEncryptionKey": "Şifreleme anahtarı yükleniyor...",
 		"fetchingServerState": "Sunucu durumu getiriliyor...",
 		"preparingDeduplication": "Veri tekilleştirme hazırlanıyor...",
-		"noPhotosFound": "Yedeklenecek fotoğraf bulunamadı",
+		"noPhotosFound": "Backup için dosya yok",
 		"backupPreparing": "Yedekleme: Hazırlanıyor",
 		"backupEncrypting": "Yedekleme: Şifreleme...",
 		"backupUploading": "Yedekleme: Yükleniyor...",
@@ -179,7 +180,7 @@
 		"syncComplete": "Senkronize et: Tamamlandı",
 		"syncFailed": "Senkronizasyon başarısız",
 		"syncLimitedAccess": "Senkronizasyon: Sınırlı fotoğraf erişimi",
-		"syncNoFiles": "Senkronize et: Senkronize edilecek fotoğraf ve video yok",
+		"syncNoFiles": "Sync için dosya yok",
 		"checkingSubscription": "Aboneliği kontrol ediyorum...",
 		"nftPreparing": "NFT: Hazırlanıyor...",
 		"securingSession": "Oturum güvenliğini sağlama...",
@@ -249,7 +250,10 @@
 		"idleWithMode": "Boşta - {{mode}} Modu",
 		"coolingDown": "Soğutma (parti {{batch}})...",
 		"foundDuplicates": "{{count}} aynı fotoğraf & video {{groups}} grupta bulundu",
-		"deletionCancelledPartial": "Silme işlemi iptal edildi veya kısmi"
+		"deletionCancelledPartial": "Silme işlemi iptal edildi veya kısmi",
+		"scanningAnalyzingTotalPhotos": "Tarama: {{total}} fotoğraf analiz ediliyor",
+		"scanningAnalyzingProgressPhotos": "Tarama: {{current}}/{{total}} fotoğraf analiz ediliyor",
+		"switchingServer": "Sunucu değiştiriliyor..."
 	},
 	"restore": {
 		"title": "Fotoğrafları Geri Yükle",

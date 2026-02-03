@@ -127,6 +127,7 @@
 		"allFilesKept": "Todos os ficheiros guardados",
 		"cleanupDone": "Limpeza concluída",
 		"filesMovedToDeleted": "Ficheiros movidos para a pasta PhotoLynkDeleted",
+		"filesMovedToRecentlyDeleted": "Ficheiros movidos para Apagados recentemente",
 		"noDuplicatesFound": "0 duplicados encontrados",
 		"noIdenticalFiles": "0 ficheiros idênticos",
 		"noSimilarPhotos": "0 fotografias semelhantes",
@@ -163,7 +164,7 @@
 		"loadingEncryptionKey": "A carregar a chave de encriptação...",
 		"fetchingServerState": "A obter o estado do servidor...",
 		"preparingDeduplication": "Preparar a desduplicação...",
-		"noPhotosFound": "Não foram encontradas fotografias para cópia de segurança",
+		"noPhotosFound": "Nenhum ficheiro para Backup",
 		"backupPreparing": "Cópia de segurança: Preparar",
 		"backupEncrypting": "Cópia de segurança: Encriptar...",
 		"backupUploading": "Cópia de segurança: Carregar...",
@@ -179,7 +180,7 @@
 		"syncComplete": "Sincronizar: Completo",
 		"syncFailed": "A sincronização falhou",
 		"syncLimitedAccess": "Sincronização: Acesso limitado a fotografias",
-		"syncNoFiles": "Sincronizar: Sem fotografias e vídeos para sincronizar",
+		"syncNoFiles": "Nenhum ficheiro para Sync",
 		"checkingSubscription": "Verificar a subscrição...",
 		"nftPreparing": "NFT: Preparar...",
 		"securingSession": "Proteger a sessão...",
@@ -249,7 +250,10 @@
 		"idleWithMode": "Modo inativo - {{mode}}",
 		"coolingDown": "Arrefecimento (lote {{batch}})...",
 		"foundDuplicates": "Encontrou {{count}} fotos & vídeos idênticos em {{groups}} grupo(s)",
-		"deletionCancelledPartial": "Supressão cancelada ou parcial"
+		"deletionCancelledPartial": "Supressão cancelada ou parcial",
+		"scanningAnalyzingTotalPhotos": "Digitalização: Análise de {{total}} fotos",
+		"scanningAnalyzingProgressPhotos": "Digitalização: Análise de {{current}} de {{total}} fotos",
+		"switchingServer": "Mudando servidor..."
 	},
 	"restore": {
 		"title": "Restaurar fotografias",

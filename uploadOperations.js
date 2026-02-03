@@ -126,6 +126,9 @@ export const localRemoteBackupCore = async ({
     for (const f of allServerFiles) {
       const normalized = normalizeFilenameForCompare(f && f.filename ? f.filename : null);
       if (normalized) serverFiles.add(normalized);
+
+      const normalizedOriginal = normalizeFilenameForCompare(f && f.originalName ? f.originalName : null);
+      if (normalizedOriginal) serverFiles.add(normalizedOriginal);
       if (f.fileHash) serverFileHashes.add(f.fileHash);
       if (f.perceptualHash) serverPerceptualHashes.add(f.perceptualHash);
       // Collect platform-specific hashes
@@ -154,6 +157,19 @@ export const localRemoteBackupCore = async ({
       console.log(`📂 Album "${photoSyncAlbum.title}" has ${excludedIds.size} files (will exclude)`);
     }
 
+    // Android: exclude PhotoLynkDeleted album (our local "trash") from backup
+    if (Platform.OS === 'android') {
+      try {
+        const deletedAlbum = albums.find(a => a && a.title === 'PhotoLynkDeleted');
+        if (deletedAlbum) {
+          const deletedIds = await buildLocalAssetIdSetPaged({ album: deletedAlbum });
+          const before = excludedIds.size;
+          for (const id of deletedIds) excludedIds.add(id);
+          console.log(`📂 Album "${deletedAlbum.title}" has ${deletedIds.size} files (excluded). Total excluded now: ${excludedIds.size} (was ${before})`);
+        }
+      } catch (e) {}
+    }
+
     // 3. Scan local assets (paged) and decide which are missing on the server
     let after = null;
     let totalCount = null;
@@ -169,7 +185,8 @@ export const localRemoteBackupCore = async ({
       });
 
       if (totalCount === null && page && typeof page.totalCount === 'number') {
-        totalCount = page.totalCount;
+        // Subtract excluded IDs from total so status shows correct count from start
+        totalCount = Math.max(0, page.totalCount - excludedIds.size);
       }
 
       const pageAssets = page && Array.isArray(page.assets) ? page.assets : [];
@@ -237,7 +254,15 @@ export const localRemoteBackupCore = async ({
     console.log(`Local: ${checkedCount}, Server: ${serverFiles.size}, To upload: ${toUpload.length}`);
 
     if (toUpload.length === 0) {
-      return { alreadyBackedUp: true, checkedCount };
+      let serverTotal = allServerFiles.length;
+      try {
+        for (let i = 0; i < 2; i++) {
+          const latest = await fetchAllServerFilesPaged(SERVER_URL, config, null, false);
+          if (Array.isArray(latest)) serverTotal = Math.max(serverTotal, latest.length);
+          await sleep(250);
+        }
+      } catch (e) {}
+      return { alreadyBackedUp: true, checkedCount, serverTotal };
     }
 
     // Brief pause before starting uploads
@@ -255,9 +280,11 @@ export const localRemoteBackupCore = async ({
     const failedFiles = [];
     let processedCount = 0;
 
-    // Concurrency: Fast Mode Android=10 / iOS=8; Slow Mode Android=5 / iOS=4
+    // Concurrency per platform recommendations:
+    // iOS: Apple httpMaximumConnectionsPerHost default=4, safe max=6
+    // Android: OkHttp maxRequestsPerHost default=5, safe max=10
     const maxParallelUploads = fastMode
-      ? (Platform.OS === 'android' ? 10 : 8)
+      ? (Platform.OS === 'android' ? 10 : 6)
       : (Platform.OS === 'android' ? 5 : 4);
     const runUpload = createConcurrencyLimiter(maxParallelUploads);
 
@@ -310,9 +337,8 @@ export const localRemoteBackupCore = async ({
               if (fileHash) setCachedHash(asset, 'file', fileHash);
             }
             if (fileHash) {
-              // Add to session FIRST to prevent race condition with parallel uploads
+              // Check if already in session (exact match for same device)
               const alreadyInSession = sessionFileHashes.has(fileHash);
-              sessionFileHashes.add(fileHash);
               
               // Check against server hashes first (cross-device dedup)
               if (serverFileHashes.has(fileHash)) {
@@ -331,6 +357,11 @@ export const localRemoteBackupCore = async ({
                   }
                 }
               }
+              
+              // Only add to session if we're NOT skipping (will upload)
+              if (!skipByHash) {
+                sessionFileHashes.add(fileHash);
+              }
             }
           } else {
             // Try cache first for perceptual hash
@@ -340,12 +371,10 @@ export const localRemoteBackupCore = async ({
               if (computedPhash) setCachedHash(asset, 'perceptual', computedPhash);
             }
             if (computedPhash) {
-              // Add to session FIRST to prevent race condition with parallel uploads
-              // Check if already in session before adding
-              const alreadyInSession = findPerceptualHashMatch(computedPhash, sessionPerceptualHashes, BACKUP_DHASH_THRESHOLD);
-              sessionPerceptualHashes.add(computedPhash);
+              // Check if already in session (exact match for same device)
+              const alreadyInSession = sessionPerceptualHashes.has(computedPhash);
               
-              // Check against server hashes first (cross-device dedup)
+              // Check against server hashes first (cross-device dedup with threshold)
               if (findPerceptualHashMatch(computedPhash, serverPerceptualHashes, BACKUP_DHASH_THRESHOLD)) {
                 skipByHash = true;
                 skipReason = 'server perceptualHash';
@@ -361,6 +390,12 @@ export const localRemoteBackupCore = async ({
                     break;
                   }
                 }
+              }
+              
+              // Only add to session if we're NOT skipping (will upload)
+              // This prevents race conditions where parallel uploads all skip each other
+              if (!skipByHash) {
+                sessionPerceptualHashes.add(computedPhash);
               }
             }
           }
@@ -384,7 +419,7 @@ export const localRemoteBackupCore = async ({
         const uploadHeaders = {
           ...config.headers,
           'Content-Type': mime,
-          'X-Filename': actualFilename,
+          'X-Filename': encodeURIComponent(String(actualFilename || '')),
         };
         // Send client's perceptual hash for server-side dedup (critical for HEIC where sharp fails)
         if (computedPhash) {
@@ -453,7 +488,7 @@ export const localRemoteBackupCore = async ({
               headers: {
                 ...config.headers,
                 'Content-Type': mime,
-                'X-Filename': actualFilename,
+                'X-Filename': encodeURIComponent(String(actualFilename || '')),
               }
             });
             if (retryRes && retryRes.status >= 200 && retryRes.status < 300) {
@@ -486,8 +521,16 @@ export const localRemoteBackupCore = async ({
     await Promise.all(uploadTasks);
 
     // Show detailed completion status
-    // serverFilesOnServer = files that existed before + newly uploaded (excluding server-rejected dups)
-    const serverFilesOnServer = allServerFiles.length + successCount;
+    // Re-fetch after uploads so the completion popup matches the real server count.
+    // We avoid arithmetic with duplicateCount because the server may dedupe by hash even when
+    // filenames differ or our client-side filename set missed an existing server item.
+    let serverFilesOnServer = allServerFiles.length;
+    try {
+      const latestServerFiles = await fetchAllServerFilesPaged(SERVER_URL, config, null, false);
+      if (Array.isArray(latestServerFiles)) serverFilesOnServer = latestServerFiles.length;
+    } catch (e) {
+      serverFilesOnServer = allServerFiles.length + successCount;
+    }
     console.log('\n📊 ===== BACKUP SUMMARY =====');
     console.log(`Total on device: ${totalCount || checkedCount}`);
     console.log(`Album excluded: ${excludedIds.size}`);
@@ -590,6 +633,9 @@ export const localRemoteBackupSelectedCore = async ({
     for (const f of allServerFiles) {
       const normalized = normalizeFilenameForCompare(f && f.filename ? f.filename : null);
       if (normalized) serverFiles.add(normalized);
+
+      const normalizedOriginal = normalizeFilenameForCompare(f && f.originalName ? f.originalName : null);
+      if (normalizedOriginal) serverFiles.add(normalizedOriginal);
       if (f.fileHash) serverFileHashes.add(f.fileHash);
       if (f.perceptualHash) serverPerceptualHashes.add(f.perceptualHash);
       // Collect platform-specific hashes
@@ -607,6 +653,17 @@ export const localRemoteBackupSelectedCore = async ({
     let excludedIds = new Set();
     if (photoSyncAlbum) {
       excludedIds = await buildLocalAssetIdSetPaged({ album: photoSyncAlbum });
+    }
+
+    // Android: exclude PhotoLynkDeleted album (our local "trash") from backup
+    if (Platform.OS === 'android') {
+      try {
+        const deletedAlbum = albums.find(a => a && a.title === 'PhotoLynkDeleted');
+        if (deletedAlbum) {
+          const deletedIds = await buildLocalAssetIdSetPaged({ album: deletedAlbum });
+          for (const id of deletedIds) excludedIds.add(id);
+        }
+      } catch (e) {}
     }
 
     const toUpload = [];
@@ -630,12 +687,21 @@ export const localRemoteBackupSelectedCore = async ({
       const analyzeProgress = 0.05 + ((i + 1) / list.length) * 0.15;
       throttledStatus(onStatus, t('status.analyzing', { current: i + 1, total: list.length, filename: formatFilenameForStatus(actualFilename) }));
       throttledProgress(onProgress, analyzeProgress);
+      
       if (serverFiles.has(actualFilename)) continue;
       toUpload.push(asset);
     }
 
     if (toUpload.length === 0) {
-      return { alreadyBackedUp: true, total: list.length, skipped: list.length };
+      let serverTotal = allServerFiles.length;
+      try {
+        for (let i = 0; i < 2; i++) {
+          const latest = await fetchAllServerFilesPaged(SERVER_URL, config, null, false);
+          if (Array.isArray(latest)) serverTotal = Math.max(serverTotal, latest.length);
+          await sleep(250);
+        }
+      } catch (e) {}
+      return { alreadyBackedUp: true, total: list.length, skipped: list.length, serverTotal };
     }
 
     // Brief pause before starting uploads
@@ -698,9 +764,8 @@ export const localRemoteBackupSelectedCore = async ({
               if (fileHash) setCachedHash(asset, 'file', fileHash);
             }
             if (fileHash) {
-              // Add to session FIRST to prevent race condition with parallel uploads
+              // Check if already in session (exact match for same device)
               const alreadyInSession = sessionFileHashes.has(fileHash);
-              sessionFileHashes.add(fileHash);
               
               // Check against server hashes first (cross-device dedup)
               if (serverFileHashes.has(fileHash)) {
@@ -716,6 +781,11 @@ export const localRemoteBackupSelectedCore = async ({
                   }
                 }
               }
+              
+              // Only add to session if we're NOT skipping (will upload)
+              if (!skipByHash) {
+                sessionFileHashes.add(fileHash);
+              }
             }
           } else {
             // Try cache first for perceptual hash
@@ -725,11 +795,10 @@ export const localRemoteBackupSelectedCore = async ({
               if (computedPhash) setCachedHash(asset, 'perceptual', computedPhash);
             }
             if (computedPhash) {
-              // Add to session FIRST to prevent race condition with parallel uploads
-              const alreadyInSession = findPerceptualHashMatch(computedPhash, sessionPerceptualHashes, BACKUP_DHASH_THRESHOLD);
-              sessionPerceptualHashes.add(computedPhash);
+              // Check if already in session (exact match for same device)
+              const alreadyInSession = sessionPerceptualHashes.has(computedPhash);
               
-              // Check against server hashes first (cross-device dedup)
+              // Check against server hashes first (cross-device dedup with threshold)
               if (findPerceptualHashMatch(computedPhash, serverPerceptualHashes, BACKUP_DHASH_THRESHOLD)) {
                 skipByHash = true;
               } else if (alreadyInSession) {
@@ -743,6 +812,11 @@ export const localRemoteBackupSelectedCore = async ({
                   }
                 }
               }
+              
+              // Only add to session if we're NOT skipping (will upload)
+              if (!skipByHash) {
+                sessionPerceptualHashes.add(computedPhash);
+              }
             }
           }
         } catch (hashErr) {
@@ -753,7 +827,7 @@ export const localRemoteBackupSelectedCore = async ({
           hashDedupCount++;
           continue;
         }
-
+        
         const mime = getMimeFromFilename(actualFilename, asset.mediaType);
         const fileUri = filePath.startsWith('file://') ? filePath : `file://${filePath}`;
 
@@ -765,7 +839,7 @@ export const localRemoteBackupSelectedCore = async ({
         const uploadHeaders = {
           ...config.headers,
           'Content-Type': mime,
-          'X-Filename': actualFilename,
+          'X-Filename': encodeURIComponent(String(actualFilename || '')),
         };
         // Send client's perceptual hash for server-side dedup (critical for HEIC where sharp fails)
         if (computedPhash) {
@@ -795,7 +869,14 @@ export const localRemoteBackupSelectedCore = async ({
         if (parsed?.fileHash) serverFileHashes.add(parsed.fileHash);
         if (parsed?.perceptualHash) serverPerceptualHashes.add(parsed.perceptualHash);
 
-        successCount++;
+        // Check if server rejected as duplicate
+        if (parsed && parsed.duplicate) {
+          console.log(`⊘ Skipped (duplicate): ${actualFilename}`);
+          // Don't count as success - it's a duplicate
+        } else {
+          successCount++;
+          console.log(`✓ Uploaded: ${actualFilename}`);
+        }
       } catch (e) {
         // If connection failed and app was backgrounded, wait and retry once
         if (e.message?.includes('Failed to connect') && appStateRef?.current !== 'active') {
@@ -811,7 +892,7 @@ export const localRemoteBackupSelectedCore = async ({
               headers: {
                 ...config.headers,
                 'Content-Type': mime,
-                'X-Filename': actualFilename,
+                'X-Filename': encodeURIComponent(String(actualFilename || '')),
               }
             });
             if (retryRes && retryRes.status >= 200 && retryRes.status < 300) {
@@ -830,8 +911,14 @@ export const localRemoteBackupSelectedCore = async ({
     }
 
     const skippedCount = list.length - toUpload.length + hashDedupCount;
-    // serverTotal = files on server before + newly uploaded
-    const serverTotal = allServerFiles.length + successCount;
+    // Re-fetch after uploads so the completion popup matches the real server count.
+    let serverTotal = allServerFiles.length;
+    try {
+      const latestServerFiles = await fetchAllServerFilesPaged(SERVER_URL, config, null, false);
+      if (Array.isArray(latestServerFiles)) serverTotal = latestServerFiles.length;
+    } catch (e) {
+      serverTotal = allServerFiles.length + successCount;
+    }
     
     // Flush hash cache to disk
     await flushHashCache();

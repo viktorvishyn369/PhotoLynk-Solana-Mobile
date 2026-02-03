@@ -1,6 +1,7 @@
 package com.photolynk.solana
 
 import android.net.Uri
+import android.os.Build
 import androidx.exifinterface.media.ExifInterface
 import com.facebook.react.bridge.*
 import java.io.File
@@ -49,10 +50,18 @@ class ExifExtractorModule(reactContext: ReactApplicationContext) : ReactContextB
                 }
                 
                 // Extract Make (manufacturer) - normalize to lowercase
-                val make = exif.getAttribute(ExifInterface.TAG_MAKE)?.trim()?.lowercase(Locale.ROOT)
+                var make = exif.getAttribute(ExifInterface.TAG_MAKE)?.trim()?.lowercase(Locale.ROOT)
                 
                 // Extract Model - normalize to lowercase
-                val model = exif.getAttribute(ExifInterface.TAG_MODEL)?.trim()?.lowercase(Locale.ROOT)
+                var model = exif.getAttribute(ExifInterface.TAG_MODEL)?.trim()?.lowercase(Locale.ROOT)
+                
+                // Fallback to device info for formats without EXIF (PNG screenshots, etc.)
+                if (make.isNullOrEmpty()) {
+                    make = Build.MANUFACTURER.lowercase(Locale.ROOT)
+                }
+                if (model.isNullOrEmpty()) {
+                    model = Build.MODEL.lowercase(Locale.ROOT)
+                }
                 
                 result.putString("captureTime", captureTime)
                 result.putString("make", make)

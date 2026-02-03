@@ -126,6 +126,7 @@
 		"allFilesKept": "Všechny soubory zachovány",
 		"cleanupDone": "Úklid dokončen",
 		"filesMovedToDeleted": "Soubory přesunuty do složky PhotoLynkDeleted",
+		"filesMovedToRecentlyDeleted": "Soubory přesunuty do Nedávno smazané",
 		"noDuplicatesFound": "0 duplikátů nalezeno",
 		"noIdenticalFiles": "0 identických souborů",
 		"noSimilarPhotos": "0 podobných fotografií",
@@ -162,7 +163,7 @@
 		"loadingEncryptionKey": "Načítání šifrovacího klíče...",
 		"fetchingServerState": "Získání stavu serveru...",
 		"preparingDeduplication": "Příprava deduplikace...",
-		"noPhotosFound": "Nebyly nalezeny žádné fotografie k zálohování",
+		"noPhotosFound": "Žádné soubory pro Backup",
 		"backupPreparing": "Zálohování: Příprava...",
 		"backupEncrypting": "Zálohování: Šifrování...",
 		"backupUploading": "Zálohování: Nahrávání...",
@@ -178,7 +179,7 @@
 		"syncComplete": "Synchronizace: Kompletní",
 		"syncFailed": "Synchronizace se nezdařila",
 		"syncLimitedAccess": "Synchronizace: Omezený přístup k fotografiím",
-		"syncNoFiles": "Synchronizace: Žádné fotografie a videa k synchronizaci",
+		"syncNoFiles": "Žádné soubory pro Sync",
 		"checkingSubscription": "Kontrola předplatného...",
 		"nftPreparing": "NFT: Příprava...",
 		"securingSession": "Zajištění relace...",
@@ -248,7 +249,10 @@
 		"idleWithMode": "Režim nečinnosti - {{mode}}",
 		"coolingDown": "Chlazení (šarže {{batch}})...",
 		"foundDuplicates": "Nalezeny shodné fotografie/videa {{count}} ve skupině (skupinách) {{groups}}",
-		"deletionCancelledPartial": "Zrušení výmazu nebo částečný výmaz"
+		"deletionCancelledPartial": "Zrušení výmazu nebo částečný výmaz",
+		"scanningAnalyzingTotalPhotos": "Skenování: Analýza {{total}} fotografií",
+		"scanningAnalyzingProgressPhotos": "Skenování: Analýza {{current}} z {{total}} fotografií",
+		"switchingServer": "Přepínání serveru..."
 	},
 	"restore": {
 		"title": "Obnovení fotografií",

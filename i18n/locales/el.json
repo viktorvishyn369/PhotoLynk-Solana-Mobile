@@ -126,6 +126,7 @@
 		"allFilesKept": "Όλα τα αρχεία διατηρήθηκαν",
 		"cleanupDone": "Ο καθαρισμός ολοκληρώθηκε",
 		"filesMovedToDeleted": "Τα αρχεία μετακινήθηκαν στον φάκελο PhotoLynkDeleted",
+		"filesMovedToRecentlyDeleted": "Τα αρχεία μεταφέρθηκαν στα Πρόσφατα διαγραμμένα",
 		"noDuplicatesFound": "0 διπλότυπα βρέθηκαν",
 		"noIdenticalFiles": "0 πανομοιότυπα αρχεία",
 		"noSimilarPhotos": "0 παρόμοιες φωτογραφίες",
@@ -162,7 +163,7 @@
 		"loadingEncryptionKey": "Φόρτωση κλειδιού κρυπτογράφησης...",
 		"fetchingServerState": "Λήψη κατάστασης διακομιστή...",
 		"preparingDeduplication": "Προετοιμασία του αντιγραφής...",
-		"noPhotosFound": "Δεν βρέθηκαν φωτογραφίες για δημιουργία αντιγράφων ασφαλείας",
+		"noPhotosFound": "Δεν υπάρχουν αρχεία για Backup",
 		"backupPreparing": "Δημιουργία αντιγράφων ασφαλείας: ...",
 		"backupEncrypting": "Δημιουργία αντιγράφων ασφαλείας: Κρυπτογράφηση...",
 		"backupUploading": "Δημιουργία αντιγράφων ασφαλείας: Ανέβασμα...",
@@ -178,7 +179,7 @@
 		"syncComplete": "Συγχρονισμός: Πλήρης",
 		"syncFailed": "Ο συγχρονισμός απέτυχε",
 		"syncLimitedAccess": "Συγχρονισμός: Περιορισμένη πρόσβαση σε φωτογραφίες",
-		"syncNoFiles": "Συγχρονισμός: Δεν υπάρχουν φωτογραφίες & βίντεο για συγχρονισμό",
+		"syncNoFiles": "Δεν υπάρχουν αρχεία για Sync",
 		"checkingSubscription": "Έλεγχος συνδρομής...",
 		"nftPreparing": "NFT: ...",
 		"securingSession": "Διασφάλιση συνεδρίας...",
@@ -248,7 +249,10 @@
 		"idleWithMode": "Αδράνεια - Λειτουργία {{mode}}",
 		"coolingDown": "Ψύξη (παρτίδα {{batch}})...",
 		"foundDuplicates": "Βρέθηκαν {{count}} πανομοιότυπες φωτογραφίες/βίντεο στην ομάδα {{groups}}",
-		"deletionCancelledPartial": "Ακυρωμένη ή μερική διαγραφή"
+		"deletionCancelledPartial": "Ακυρωμένη ή μερική διαγραφή",
+		"scanningAnalyzingTotalPhotos": "Σάρωση: Ανάλυση {{total}} φωτογραφιών",
+		"scanningAnalyzingProgressPhotos": "Σάρωση: Ανάλυση {{current}} από {{total}} φωτογραφίες",
+		"switchingServer": "Αλλαγή διακομιστή..."
 	},
 	"restore": {
 		"title": "Επαναφορά φωτογραφιών",

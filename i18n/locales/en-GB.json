@@ -126,6 +126,7 @@
 		"allFilesKept": "All files kept",
 		"cleanupDone": "Cleanup done",
 		"filesMovedToDeleted": "Files moved to PhotoLynkDeleted folder",
+		"filesMovedToRecentlyDeleted": "Files moved to Recently Deleted",
 		"noDuplicatesFound": "0 duplicates found",
 		"noIdenticalFiles": "0 identical files",
 		"noSimilarPhotos": "0 similar photos",
@@ -162,7 +163,7 @@
 		"loadingEncryptionKey": "Loading encryption key...",
 		"fetchingServerState": "Fetching server state...",
 		"preparingDeduplication": "Preparing deduplication...",
-		"noPhotosFound": "No photos found to backup",
+		"noPhotosFound": "No files to Backup",
 		"backupPreparing": "Backup: Preparing...",
 		"backupEncrypting": "Backup: Encrypting...",
 		"backupUploading": "Backup: Uploading...",
@@ -178,7 +179,7 @@
 		"syncComplete": "Sync: Complete",
 		"syncFailed": "Sync failed",
 		"syncLimitedAccess": "Sync: Limited photo access",
-		"syncNoFiles": "Sync: No photos & videos to sync",
+		"syncNoFiles": "No files to Sync",
 		"checkingSubscription": "Checking subscription...",
 		"nftPreparing": "NFT: Preparing...",
 		"securingSession": "Securing session...",
@@ -248,7 +249,10 @@
 		"idleWithMode": "Idle • {{mode}} Mode",
 		"coolingDown": "Cooling down (batch {{batch}})...",
 		"foundDuplicates": "Found {{count}} identical photos/videos in {{groups}} group(s)",
-		"deletionCancelledPartial": "Deletion cancelled or partial"
+		"deletionCancelledPartial": "Deletion cancelled or partial",
+		"scanningAnalyzingTotalPhotos": "Scanning: Analysing {{total}} photos",
+		"scanningAnalyzingProgressPhotos": "Scanning: Analysing {{current}} of {{total}} photos",
+		"switchingServer": "Switching server..."
 	},
 	"restore": {
 		"title": "Restore Photos",

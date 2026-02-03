@@ -126,6 +126,7 @@
 		"allFilesKept": "Toate fișierele păstrate",
 		"cleanupDone": "Curățare finalizată",
 		"filesMovedToDeleted": "Fișierele au fost mutate în folderul PhotoLynkDeleted",
+		"filesMovedToRecentlyDeleted": "Fișierele au fost mutate în Șterse recent",
 		"noDuplicatesFound": "0 duplicate găsite",
 		"noIdenticalFiles": "0 fișiere identice",
 		"noSimilarPhotos": "0 fotografii similare",
@@ -162,7 +163,7 @@
 		"loadingEncryptionKey": "Încărcarea cheii de criptare...",
 		"fetchingServerState": "Obținerea stării serverului...",
 		"preparingDeduplication": "Pregătirea deduplicării...",
-		"noPhotosFound": "Nu s-au găsit fotografii pentru backup",
+		"noPhotosFound": "Nu există fișiere pentru Backup",
 		"backupPreparing": "Backup: Pregătirea...",
 		"backupEncrypting": "Backup: Criptarea...",
 		"backupUploading": "Backup: Încărcarea...",
@@ -178,7 +179,7 @@
 		"syncComplete": "Sincronizare: Completat",
 		"syncFailed": "Sincronizarea a eșuat",
 		"syncLimitedAccess": "Sincronizare: Acces limitat la fotografii",
-		"syncNoFiles": "Sincronizare: Nu există fotografii și videoclipuri de sincronizat",
+		"syncNoFiles": "Nu există fișiere pentru Sync",
 		"checkingSubscription": "Verificarea abonamentului...",
 		"nftPreparing": "NFT: Pregătirea...",
 		"securingSession": "Securizarea sesiunii...",
@@ -248,7 +249,10 @@
 		"idleWithMode": "Mod inactiv - {{mode}}",
 		"coolingDown": "Răcirea (lot {{batch}})...",
 		"foundDuplicates": "S-au găsit fotografii/video identice {{count}} în grupul (grupurile) {{groups}}",
-		"deletionCancelledPartial": "Ștergere anulată sau parțială"
+		"deletionCancelledPartial": "Ștergere anulată sau parțială",
+		"scanningAnalyzingTotalPhotos": "Scanare: Analizare {{total}} fotografii",
+		"scanningAnalyzingProgressPhotos": "Scanare: Analizare {{current}} din {{total}} fotografii",
+		"switchingServer": "Schimbare server..."
 	},
 	"restore": {
 		"title": "Restaurarea fotografiilor",

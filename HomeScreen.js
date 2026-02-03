@@ -121,6 +121,8 @@ export const HomeScreen = ({
   const minDim = Math.min(windowWidth, windowHeight);
   const isTabletDevice = minDim >= 600; // 7"+ tablets
   const shouldEnableScroll = true; // Always enable scroll to handle expanding status messages
+  // Force content to be taller than screen in landscape to enable scrolling
+  const contentMinHeight = isTabletDevice && isLandscape ? windowHeight + 100 : undefined;
 
   const serverLabel = serverType === 'stealthcloud' ? 'StealthCloud' : serverType === 'remote' ? 'Remote Server' : 'Local Server';
   const serverIcon = serverType === 'stealthcloud' ? 'cloud' : serverType === 'remote' ? 'globe' : 'wifi';
@@ -180,7 +182,7 @@ export const HomeScreen = ({
 
       <ScrollView 
         style={styles.mainContent}
-        contentContainerStyle={shouldEnableScroll ? styles.mainContentScrollable : styles.mainContentFixed}
+        contentContainerStyle={[styles.mainContentScrollable, contentMinHeight ? { minHeight: contentMinHeight } : null]}
         scrollEnabled={shouldEnableScroll}
         showsVerticalScrollIndicator={false}
         bounces={shouldEnableScroll}
@@ -376,7 +378,7 @@ export const HomeScreen = ({
             ) : null}
             {completionMessage && !completionMessage.startsWith('0 ') && !completionMessage.startsWith('0개') && !completionMessage.startsWith('0 ف') && (completionMessage.includes('deleted') || completionMessage.includes('slettet') || completionMessage.includes('eliminad') || completionMessage.includes('dihapus') || completionMessage.includes('удален') || completionMessage.includes('smazán') || completionMessage.includes('excluíd') || completionMessage.includes('삭제') || completionMessage.includes('șters') || completionMessage.includes('हटा') || completionMessage.includes('supprimé') || completionMessage.includes('διαγράφ') || completionMessage.includes('kustuta') || completionMessage.includes('изтрит') || completionMessage.includes('izbris') || completionMessage.includes('cancella') || completionMessage.includes('eliminad') || completionMessage.includes('raderad') || completionMessage.includes('izdzēst') || completionMessage.includes('حذف') || completionMessage.includes(t('results.cleanupDone'))) ? (
               <Text style={[styles.completionDismissHint, { marginTop: scaleSpacing(8), marginBottom: scaleSpacing(4), fontWeight: '600' }]}>
-                {t('results.filesMovedToDeleted')}
+                {Platform.OS === 'ios' ? t('results.filesMovedToRecentlyDeleted') : t('results.filesMovedToDeleted')}
               </Text>
             ) : null}
             <Text style={styles.completionDismissHint}>{t('home.tapToDismiss')}</Text>
@@ -439,7 +441,6 @@ const styles = StyleSheet.create({
   },
   mainContentScrollable: {
     flexGrow: 1,
-    paddingBottom: 20,
   },
   
   // Hero Status Section
@@ -520,7 +521,7 @@ const styles = StyleSheet.create({
 
   // Actions Section
   actionsSection: {
-    flexShrink: 1,
+    flexShrink: 0, // Don't shrink - allow scroll instead
     paddingHorizontal: scaleSpacing(16),
     gap: scaleSpacing(10),
     paddingBottom: Platform.OS === 'android' ? ANDROID_NAV_BAR_HEIGHT + scaleSpacing(16) : scaleSpacing(16),

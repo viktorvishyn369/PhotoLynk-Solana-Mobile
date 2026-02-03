@@ -126,6 +126,7 @@
 		"allFilesKept": "Kaikki tiedostot säilytetty",
 		"cleanupDone": "Siivous valmis",
 		"filesMovedToDeleted": "Tiedostot siirretty PhotoLynkDeleted-kansioon",
+		"filesMovedToRecentlyDeleted": "Tiedostot siirretty Äskettäin poistetut",
 		"noDuplicatesFound": "0 kaksoiskappaletta löytyi",
 		"noIdenticalFiles": "0 identtistä tiedostoa",
 		"noSimilarPhotos": "0 samanlaista valokuvaa",
@@ -162,7 +163,7 @@
 		"loadingEncryptionKey": "Salausavaimen lataaminen...",
 		"fetchingServerState": "Palvelimen tilan hakeminen...",
 		"preparingDeduplication": "Deduplikoinnin valmistelu...",
-		"noPhotosFound": "Varmuuskopioitavia valokuvia ei löytynyt",
+		"noPhotosFound": "Ei tiedostoja Backupiin",
 		"backupPreparing": "Varmuuskopiointi: Valmistelu",
 		"backupEncrypting": "Varmuuskopiointi: Salaus...",
 		"backupUploading": "Varmuuskopiointi: Varmuuskopiointi: Uploading...",
@@ -178,7 +179,7 @@
 		"syncComplete": "Synkronoi: Complete",
 		"syncFailed": "Synkronointi epäonnistui",
 		"syncLimitedAccess": "Synkronoi: Rajoitettu pääsy valokuviin",
-		"syncNoFiles": "Synkronoi: Ei synkronoitavia valokuvia ja videoita",
+		"syncNoFiles": "Ei tiedostoja Synciin",
 		"checkingSubscription": "Tarkistan tilauksen...",
 		"nftPreparing": "NFT: Valmistautuminen...",
 		"securingSession": "Istunnon varmistaminen...",
@@ -248,7 +249,10 @@
 		"idleWithMode": "Tyhjäkäynti - {{mode}}-tila",
 		"coolingDown": "Jäähdytys (erä {{batch}})...",
 		"foundDuplicates": "Löytyi {{count}} identtistä kuvaa & videota {{groups}} ryhmässä",
-		"deletionCancelledPartial": "Poisto peruutettu tai osittainen"
+		"deletionCancelledPartial": "Poisto peruutettu tai osittainen",
+		"scanningAnalyzingTotalPhotos": "Skannaus: Analysoidaan {{total}} kuvaa",
+		"scanningAnalyzingProgressPhotos": "Skannaus: Analysoidaan {{current}}/{{total}} kuvaa",
+		"switchingServer": "Vaihdetaan palvelinta..."
 	},
 	"restore": {
 		"title": "Palauta valokuvat",

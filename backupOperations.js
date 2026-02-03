@@ -59,6 +59,14 @@ import {
 
 import { extractFullExif } from './exifExtractor';
 
+import {
+  loadHashCache,
+  getCachedHash,
+  setCachedHash,
+  flushHashCache,
+  abortPreAnalysis,
+} from './hashCache';
+
 // ============================================================================
 // CONSTANTS & CONFIGURATION
 // ============================================================================
@@ -106,6 +114,37 @@ const collectAllAssetsWithCloudDownload = async ({
   const seenIds = new Set();
   let after = null;
   
+  // Get PhotoLynkDeleted album asset IDs to exclude from backup (Android only - iOS uses Recently Deleted)
+  let photoLynkDeletedAssetIds = new Set();
+  if (Platform.OS === 'android') {
+    try {
+      const albums = await MediaLibrary.getAlbumsAsync({ includeSmartAlbums: false });
+      const deletedAlbum = albums.find(a => a.title === 'PhotoLynkDeleted');
+      if (deletedAlbum) {
+        let deletedAfter = null;
+        while (true) {
+          const deletedPage = await MediaLibrary.getAssetsAsync({
+            first: PAGE_SIZE,
+            after: deletedAfter || undefined,
+            album: deletedAlbum.id,
+            mediaType: mediaTypes,
+          });
+          if (deletedPage?.assets) {
+            for (const asset of deletedPage.assets) {
+              photoLynkDeletedAssetIds.add(asset.id);
+            }
+          }
+          deletedAfter = deletedPage?.endCursor;
+          if (!deletedPage?.hasNextPage) break;
+          if (!deletedPage?.assets?.length) break;
+        }
+        console.log('[Backup] Excluding', photoLynkDeletedAssetIds.size, 'assets from PhotoLynkDeleted');
+      }
+    } catch (e) {
+      console.log('[Backup] Could not get PhotoLynkDeleted album:', e?.message);
+    }
+  }
+  
   // Get total count first
   let totalCount = 0;
   try {
@@ -113,6 +152,10 @@ const collectAllAssetsWithCloudDownload = async ({
     totalCount = countPage?.totalCount || 0;
   } catch (e) {
     totalCount = 1000;
+  }
+
+  if (Platform.OS === 'android' && photoLynkDeletedAssetIds && photoLynkDeletedAssetIds.size > 0 && totalCount > 0) {
+    totalCount = Math.max(0, totalCount - photoLynkDeletedAssetIds.size);
   }
 
   updateStatus(onStatus, t('status.scanningPhotos', { current: 0, total: totalCount }), true);
@@ -131,10 +174,17 @@ const collectAllAssetsWithCloudDownload = async ({
 
     const assets = page?.assets || [];
     for (const asset of assets) {
+      // Skip assets in PhotoLynkDeleted album (Android)
+      if (photoLynkDeletedAssetIds.has(asset.id)) continue;
       if (!seenIds.has(asset.id)) {
         seenIds.add(asset.id);
         allAssets.push(asset);
       }
+    }
+
+    // If MediaLibrary totalCount estimate was low, bump it so UI never shows X of (X-1)
+    if (allAssets.length > totalCount) {
+      totalCount = allAssets.length;
     }
 
     // Don't update progress during scanning - keep progress bar hidden
@@ -155,6 +205,10 @@ const collectAllAssetsWithCloudDownload = async ({
       if (abortRef?.current) return { assets: allAssets, aborted: true };
 
       const album = albums[i];
+      
+      // Skip PhotoLynkDeleted album entirely (Android)
+      if (album.title === 'PhotoLynkDeleted') continue;
+      
       try {
         let albumAfter = null;
         while (true) {
@@ -167,6 +221,8 @@ const collectAllAssetsWithCloudDownload = async ({
           
           const albumAssets = albumPage?.assets || [];
           for (const asset of albumAssets) {
+            // Skip assets in PhotoLynkDeleted album (Android)
+            if (photoLynkDeletedAssetIds.has(asset.id)) continue;
             if (!seenIds.has(asset.id)) {
               seenIds.add(asset.id);
               allAssets.push(asset);
@@ -552,34 +608,47 @@ const getAssetFileInfo = async (asset) => {
 };
 
 /**
- * Compute hashes for an asset
+ * Compute hashes for an asset (uses cache for faster subsequent runs)
  */
 const computeHashes = async (filePath, asset, assetInfo, isImage) => {
   let fileHash = null;
   let perceptualHash = null;
 
   if (isImage) {
-    // Yield before each heavy operation
-    await quickYield();
-    try {
-      perceptualHash = await computePerceptualHash(filePath, asset, assetInfo);
-    } catch (e) {
-      console.warn('computePerceptualHash failed:', asset.id, e?.message);
+    // Try cache first for perceptual hash
+    perceptualHash = getCachedHash(asset, 'perceptual');
+    if (!perceptualHash) {
+      await quickYield();
+      try {
+        perceptualHash = await computePerceptualHash(filePath, asset, assetInfo);
+        if (perceptualHash) setCachedHash(asset, 'perceptual', perceptualHash);
+      } catch (e) {
+        console.warn('computePerceptualHash failed:', asset.id, e?.message);
+      }
     }
-    // Yield between operations
-    await quickYield();
-    try {
-      fileHash = await computeExactFileHash(filePath);
-    } catch (e) {
-      console.warn('computeExactFileHash failed:', asset.id, e?.message);
+    
+    // Try cache first for file hash
+    fileHash = getCachedHash(asset, 'file');
+    if (!fileHash) {
+      await quickYield();
+      try {
+        fileHash = await computeExactFileHash(filePath);
+        if (fileHash) setCachedHash(asset, 'file', fileHash);
+      } catch (e) {
+        console.warn('computeExactFileHash failed:', asset.id, e?.message);
+      }
     }
   } else {
-    // Video - use file hash only
-    await quickYield();
-    try {
-      fileHash = await computeExactFileHash(filePath);
-    } catch (e) {
-      console.warn('computeExactFileHash failed:', asset.id, e?.message);
+    // Video - use file hash only, try cache first
+    fileHash = getCachedHash(asset, 'file');
+    if (!fileHash) {
+      await quickYield();
+      try {
+        fileHash = await computeExactFileHash(filePath);
+        if (fileHash) setCachedHash(asset, 'file', fileHash);
+      } catch (e) {
+        console.warn('computeExactFileHash failed:', asset.id, e?.message);
+      }
     }
   }
 
@@ -785,38 +854,35 @@ const encryptAndUpload = async ({
     let tempVideoFrameUri = null;
 
     if (isVideo) {
-      // Try multiple URI formats - VideoThumbnails can be picky about URI format
-      const uriCandidates = [
-        filePath && filePath.startsWith('/') ? `file://${filePath}` : null,
-        filePath,
-        tmpUri,
-        assetInfo?.localUri,
-        assetInfo?.uri,
-        asset?.uri,
-      ].filter(Boolean);
-      
-      console.log(`[Backup] Video thumbnail: trying ${uriCandidates.length} URI candidates for ${filename}`);
-      
-      for (const videoUri of uriCandidates) {
-        if (thumbSourceUri) break;
-        for (const time of [0, 500, 1000, 2000]) {
-          try {
-            const frame = await VideoThumbnails.getThumbnailAsync(videoUri, { time });
-            if (frame?.uri) {
-              thumbSourceUri = frame.uri;
-              tempVideoFrameUri = frame.uri;
-              console.log(`[Backup] Video thumbnail: got frame at time=${time}ms from ${videoUri?.substring(0, 50)}...`);
-              break;
-            }
-          } catch (e) {
-            // Try next time/URI
+      // iOS: Must copy video to app sandbox first, then generate thumbnail from copy
+      try {
+        const freshInfo = await MediaLibrary.getAssetInfoAsync(asset.id, { shouldDownloadFromNetwork: true });
+        let sourceUri = freshInfo?.localUri || freshInfo?.uri;
+        // Strip iOS metadata fragment (e.g. #YnBsaXN0...)
+        if (sourceUri && sourceUri.includes('#')) {
+          sourceUri = sourceUri.split('#')[0];
+        }
+        if (sourceUri && Platform.OS === 'ios') {
+          const ext = (filename || '').match(/\.[^.]+$/)?.[0] || '.mp4';
+          const safeId = (asset?.id || String(Date.now())).replace(/[^a-zA-Z0-9-]/g, '_');
+          const cacheUri = `${FileSystem.cacheDirectory}vidthumb_${safeId}${ext}`;
+          await FileSystem.deleteAsync(cacheUri, { idempotent: true });
+          await FileSystem.copyAsync({ from: sourceUri, to: cacheUri });
+          const frame = await VideoThumbnails.getThumbnailAsync(cacheUri, { time: 0 });
+          if (frame?.uri) {
+            thumbSourceUri = frame.uri;
+            tempVideoFrameUri = frame.uri;
+          }
+          await FileSystem.deleteAsync(cacheUri, { idempotent: true });
+        } else if (sourceUri) {
+          // Android: direct access works
+          const frame = await VideoThumbnails.getThumbnailAsync(sourceUri, { time: 0 });
+          if (frame?.uri) {
+            thumbSourceUri = frame.uri;
+            tempVideoFrameUri = frame.uri;
           }
         }
-      }
-      
-      if (!thumbSourceUri) {
-        console.log(`[Backup] Video thumbnail: all attempts failed for ${filename}`);
-      }
+      } catch (e) {}
     } else if (isPhoto) {
       thumbSourceUri = (filePath && filePath.startsWith('/')) ? `file://${filePath}` : (filePath || tmpUri);
     }
@@ -961,14 +1027,14 @@ const encryptAndUpload = async ({
         let fullExif = null;
         if (Platform.OS === 'ios') {
           fullExif = extractFullExif(assetInfo, asset);
-          console.log('[EXIF] iOS extraction for', filename, '- captureTime:', fullExif?.captureTime, 'make:', fullExif?.make);
+          console.log('[EXIF] iOS extraction for', filename, '- captureTime:', fullExif?.captureTime, 'make:', fullExif?.make, 'model:', fullExif?.model);
         } else {
           // Android: use native ExifExtractor for full EXIF (now returns all fields)
           const { NativeModules } = require('react-native');
           const ExifExtractor = NativeModules.ExifExtractor;
           if (ExifExtractor && typeof ExifExtractor.extractExif === 'function') {
             const nativeExif = await ExifExtractor.extractExif(filePath);
-            console.log('[EXIF] Android native extraction for', filename, '- captureTime:', nativeExif?.captureTime, 'make:', nativeExif?.make);
+            console.log('[EXIF] Android native extraction for', filename, '- captureTime:', nativeExif?.captureTime, 'make:', nativeExif?.make, 'model:', nativeExif?.model);
             if (nativeExif) {
               fullExif = {
                 captureTime: nativeExif.captureTime || null,
@@ -1065,6 +1131,12 @@ export const stealthCloudBackupCore = async ({
 }) => {
   resetProgress();
   setFastMode(!!fastMode); // Enable fast mode optimizations (skip yields)
+
+  // Avoid concurrent hashing work with background pre-analysis
+  abortPreAnalysis();
+  
+  // Load hash cache for faster dedup (avoids re-hashing files)
+  await loadHashCache();
   
   // ========== PHASE 1: Permissions (instant) ==========
   onStatus(t('status.requestingPhotosPermission'));
@@ -1280,6 +1352,9 @@ export const stealthCloudBackupCore = async ({
   updateProgress(onProgress, 1.0, true);
   updateStatus(onStatus, t('status.backupCompleteStats', { uploaded, skipped, failed }), true);
 
+  // Flush hash cache to disk
+  await flushHashCache();
+
   // serverTotal = files on server before + newly uploaded
   const serverTotal = serverManifests.length + uploaded;
   return { uploaded, skipped, failed, serverTotal };
@@ -1309,6 +1384,13 @@ export const stealthCloudBackupSelectedCore = async ({
   }
 
   resetProgress();
+
+  // Avoid concurrent hashing work with background pre-analysis
+  abortPreAnalysis();
+
+  // Load hash cache for faster dedup (avoids re-hashing files)
+  await loadHashCache();
+  
   onProgress(0);
   onStatus(t('status.backupPreparing'));
 
@@ -1445,6 +1527,10 @@ export const stealthCloudBackupSelectedCore = async ({
   }
 
   updateProgress(onProgress, 1.0, true);
+  
+  // Flush hash cache to disk
+  await flushHashCache();
+  
   // serverTotal = files on server before + newly uploaded
   const serverTotal = serverManifests.length + uploaded;
   return { uploaded, skipped, failed, serverTotal };

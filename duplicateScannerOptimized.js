@@ -25,6 +25,16 @@ import {
   extractBaseFilename,
   normalizeDateForCompare,
 } from './duplicateScanner';
+import {
+  loadHashCache,
+  getCachedHash,
+  setCachedHash,
+  getAllCachedHashes,
+  setAllCachedHashes,
+  getCacheStatus,
+  flushHashCache,
+  abortPreAnalysis,
+} from './hashCache';
 const { PixelHash, MediaDelete } = NativeModules;
 
 // ============================================================================
@@ -153,7 +163,7 @@ const isImageAsset = (info, asset) => {
   const mt = (info && info.mediaType) || asset.mediaType;
   if (mt === 'photo' || mt === 'image') return true;
   const name = (info && info.filename) || asset.filename || '';
-  return /\.(jpe?g|png|heic|heif|webp)$/i.test(name);
+  return /\.(jpe?g|png|heic|heif|webp|gif|bmp|tiff?|raw|cr2|nef|arw|dng|orf|rw2|pef|srw|raf|psd|psb|exr|hdr|avif)$/i.test(name);
 };
 
 const isVideoAsset = (info, asset) => {
@@ -268,6 +278,26 @@ const getHashTarget = async ({ asset, info, resolveReadableFilePath }) => {
   let tmpUri = null;
   const rawUri = (info && (info.localUri || info.uri)) || asset.uri || null;
 
+  const asFileUri = (p) => {
+    if (!p || typeof p !== 'string') return null;
+    if (p.startsWith('file://')) return p;
+    if (p.startsWith('/')) return `file://${p}`;
+    return p;
+  };
+
+  const hasNonEmptyFile = async (p) => {
+    try {
+      const uri = asFileUri(p);
+      if (!uri) return false;
+      const inf = await FileSystem.getInfoAsync(uri, { size: true });
+      if (!inf?.exists) return false;
+      if (typeof inf?.size === 'number' && inf.size <= 0) return false;
+      return true;
+    } catch (e) {
+      return true;
+    }
+  };
+
   try {
     if (rawUri && typeof rawUri === 'string') {
       if (rawUri.startsWith('file://') || rawUri.startsWith('/')) {
@@ -317,7 +347,7 @@ const getHashTarget = async ({ asset, info, resolveReadableFilePath }) => {
     // Fallback: try resolveReadableFilePath directly
     if (!hashTarget && resolveReadableFilePath && typeof resolveReadableFilePath === 'function') {
       try {
-        const resolved = await resolveReadableFilePath(asset, info);
+        const resolved = await resolveReadableFilePath({ assetId: asset.id, assetInfo: info });
         if (resolved && resolved.filePath) {
           hashTarget = resolved.filePath;
           tmpCopied = !!resolved.tmpCopied;
@@ -331,6 +361,28 @@ const getHashTarget = async ({ asset, info, resolveReadableFilePath }) => {
     // Silent fail
   }
 
+  if (hashTarget) {
+    const ok = await hasNonEmptyFile(hashTarget);
+    if (!ok && resolveReadableFilePath && typeof resolveReadableFilePath === 'function') {
+      try {
+        const resolved = await resolveReadableFilePath({ assetId: asset.id, assetInfo: info });
+        if (resolved && resolved.filePath) {
+          hashTarget = resolved.filePath;
+          tmpCopied = !!resolved.tmpCopied;
+          tmpUri = resolved.tmpUri || null;
+        }
+      } catch (e) {
+        // Silent fail
+      }
+    }
+    const ok2 = await hasNonEmptyFile(hashTarget);
+    if (!ok2) {
+      hashTarget = null;
+      tmpCopied = false;
+      tmpUri = null;
+    }
+  }
+
   return { hashTarget, tmpCopied, tmpUri, rawUri };
 };
 
@@ -340,7 +392,8 @@ const getHashTarget = async ({ asset, info, resolveReadableFilePath }) => {
 
 /**
  * Collect assets with pagination and proper yielding
- * Excludes PhotoLynkDeleted album to avoid re-detecting moved duplicates
+ * Excludes PhotoLynkDeleted album (Android only) to avoid re-detecting moved duplicates
+ * Matches backup collection logic exactly for consistent file counts
  */
 const collectAssetsPaged = async ({
   includeVideos = true,
@@ -348,6 +401,7 @@ const collectAssetsPaged = async ({
   onProgress,
   progressStart = 0,
   progressEnd = 0.1,
+  analyzingTotalStatusKey = 'status.scanningAnalyzingTotal',
   abortRef,
   statusPrefix = 'Comparing',
 }) => {
@@ -356,48 +410,42 @@ const collectAssetsPaged = async ({
   const seenIds = new Set();
   let after = null;
   
-  // Get PhotoLynkDeleted album ID first so we can exclude its assets
+  // Get PhotoLynkDeleted album asset IDs to exclude (Android only - iOS uses Recently Deleted which is auto-excluded)
   let photoLynkDeletedAssetIds = new Set();
-  try {
-    const albums = await MediaLibrary.getAlbumsAsync({ includeSmartAlbums: false });
-    const deletedAlbum = albums.find(a => a.title === 'PhotoLynkDeleted');
-    if (deletedAlbum) {
-      // Get all assets in PhotoLynkDeleted to exclude them
-      let deletedAfter = null;
-      while (true) {
-        const deletedPage = await MediaLibrary.getAssetsAsync({
-          first: PAGE_SIZE,
-          after: deletedAfter || undefined,
-          album: deletedAlbum.id,
-          mediaType: mediaTypes,
-        });
-        if (deletedPage?.assets) {
-          for (const asset of deletedPage.assets) {
-            photoLynkDeletedAssetIds.add(asset.id);
+  if (Platform.OS === 'android') {
+    try {
+      const albums = await MediaLibrary.getAlbumsAsync({ includeSmartAlbums: false });
+      const deletedAlbum = albums.find(a => a.title === 'PhotoLynkDeleted');
+      if (deletedAlbum) {
+        let deletedAfter = null;
+        while (true) {
+          const deletedPage = await MediaLibrary.getAssetsAsync({
+            first: PAGE_SIZE,
+            after: deletedAfter || undefined,
+            album: deletedAlbum.id,
+            mediaType: mediaTypes,
+          });
+          if (deletedPage?.assets) {
+            for (const asset of deletedPage.assets) {
+              photoLynkDeletedAssetIds.add(asset.id);
+            }
           }
+          deletedAfter = deletedPage?.endCursor;
+          if (!deletedPage?.hasNextPage) break;
+          if (!deletedPage?.assets?.length) break;
         }
-        deletedAfter = deletedPage?.endCursor;
-        if (!deletedPage?.hasNextPage) break;
-        if (!deletedPage?.assets?.length) break;
+        console.log('[DupScanner] Excluding', photoLynkDeletedAssetIds.size, 'assets from PhotoLynkDeleted');
       }
-      console.log('[DupScanner] Excluding', photoLynkDeletedAssetIds.size, 'assets from PhotoLynkDeleted');
+    } catch (e) {
+      console.log('[DupScanner] Could not get PhotoLynkDeleted album:', e?.message);
     }
-  } catch (e) {
-    console.log('[DupScanner] Could not get PhotoLynkDeleted album:', e?.message);
   }
   
-  // Get total count first
-  let totalCount = 0;
-  try {
-    const countPage = await MediaLibrary.getAssetsAsync({ first: 1, mediaType: mediaTypes });
-    totalCount = countPage?.totalCount || 0;
-  } catch (e) {
-    totalCount = 1000;
-  }
-
-  updateStatus(onStatus, t('status.scanningCollectingProgress', { current: 0, total: totalCount }), true);
+  // Show scanning status
+  updateStatus(onStatus, t('status.scanningCollecting'), true);
   updateProgress(onProgress, progressStart, true);
 
+  // Phase 1: Collect from main library (paged) - matches backup exactly
   while (true) {
     if (abortRef?.current) return { assets: allAssets, aborted: true };
 
@@ -405,33 +453,29 @@ const collectAssetsPaged = async ({
       first: PAGE_SIZE,
       after: after || undefined,
       mediaType: mediaTypes,
+      sortBy: Platform.OS === 'ios' ? [MediaLibrary.SortBy.creationTime] : undefined,
     });
 
     const assets = page?.assets || [];
     for (const asset of assets) {
-      // Skip assets in PhotoLynkDeleted album
-      if (photoLynkDeletedAssetIds.has(asset.id)) {
-        continue;
-      }
+      // Skip assets in PhotoLynkDeleted album (Android)
+      if (photoLynkDeletedAssetIds.has(asset.id)) continue;
       if (!seenIds.has(asset.id)) {
         seenIds.add(asset.id);
         allAssets.push(asset);
       }
     }
 
-    // Update progress
-    const progress = progressStart + (allAssets.length / Math.max(totalCount, 1)) * (progressEnd - progressStart);
-    updateProgress(onProgress, Math.min(progress, progressEnd));
-    updateStatus(onStatus, t('status.scanningCollectingProgress', { current: allAssets.length, total: totalCount }));
-
-    await yieldToUi();
+    // Update status with actual collected count
+    updateStatus(onStatus, t(analyzingTotalStatusKey, { total: allAssets.length }));
 
     after = page?.endCursor;
     if (!page?.hasNextPage) break;
     if (assets.length === 0) break;
+    await yieldToUi();
   }
 
-  // Also scan albums for Screenshots, Downloads, etc.
+  // Phase 2: Scan ALL albums to catch Screenshots, Downloads, WhatsApp, user folders, etc.
   try {
     const albums = await MediaLibrary.getAlbumsAsync({ includeSmartAlbums: true });
     for (let i = 0; i < albums.length; i++) {
@@ -439,44 +483,50 @@ const collectAssetsPaged = async ({
 
       const album = albums[i];
       
-      // Skip PhotoLynkDeleted album to avoid scanning deleted duplicates
-      if (album.title === 'PhotoLynkDeleted') {
-        continue;
-      }
+      // Skip PhotoLynkDeleted album entirely (Android)
+      if (album.title === 'PhotoLynkDeleted') continue;
       
       try {
-        const albumAssets = await MediaLibrary.getAssetsAsync({
-          first: PAGE_SIZE * 2,
-          album: album.id,
-          mediaType: mediaTypes,
-        });
-        if (albumAssets?.assets) {
-          for (const asset of albumAssets.assets) {
-            // Skip assets in PhotoLynkDeleted album
-            if (photoLynkDeletedAssetIds.has(asset.id)) {
-              continue;
-            }
+        let albumAfter = null;
+        while (true) {
+          const albumPage = await MediaLibrary.getAssetsAsync({
+            first: PAGE_SIZE,
+            after: albumAfter || undefined,
+            album: album.id,
+            mediaType: mediaTypes,
+          });
+          
+          const albumAssets = albumPage?.assets || [];
+          for (const asset of albumAssets) {
+            // Skip assets in PhotoLynkDeleted album (Android)
+            if (photoLynkDeletedAssetIds.has(asset.id)) continue;
             if (!seenIds.has(asset.id)) {
               seenIds.add(asset.id);
               allAssets.push(asset);
             }
           }
+          
+          albumAfter = albumPage?.endCursor;
+          if (!albumPage?.hasNextPage || albumAssets.length === 0) break;
         }
       } catch (e) {
         // Skip failed albums
       }
 
-      // Yield every few albums
+      // Yield every few albums and update status
       if (i % 5 === 0) {
         await yieldToUi();
-        updateStatus(onStatus, t('status.scanningAlbumsProgress', { count: allAssets.length }));
+        updateStatus(onStatus, t(analyzingTotalStatusKey, { total: allAssets.length }));
       }
     }
   } catch (e) {
     console.log('[DupScanner] Album scan error:', e?.message);
   }
 
+  // Final status with actual total
+  updateStatus(onStatus, t(analyzingTotalStatusKey, { total: allAssets.length }));
   updateProgress(onProgress, progressEnd, true);
+  console.log('[DupScanner] Total assets collected:', allAssets.length);
   return { assets: allAssets, aborted: false };
 };
 
@@ -502,6 +552,12 @@ export const scanExactDuplicates = async ({
 }) => {
   console.log('[DupScanner] Starting optimized exact duplicate scan');
   
+  // Abort any running background pre-analysis to avoid race conditions
+  abortPreAnalysis();
+  
+  // Load hash cache for faster subsequent runs
+  await loadHashCache();
+  
   const hasPixelHash = PixelHash && typeof PixelHash.hashImagePixels === 'function';
   if (!hasPixelHash) {
     console.warn('[DupScanner] PixelHash not available - videos only');
@@ -513,14 +569,15 @@ export const scanExactDuplicates = async ({
 
   // ========== PHASE 1: Collect Assets (0-10%) ==========
   updateStatus(onStatus, t('status.scanningCollecting'), true);
-  updateProgress(onProgress, 0, true);
+  updateProgress(onProgress, 0.01, true);
 
   const { assets: allAssets, aborted: collectAborted } = await collectAssetsPaged({
     includeVideos,
     onStatus,
     onProgress,
-    progressStart: 0,
+    progressStart: 0.01,
     progressEnd: 0.10,
+    analyzingTotalStatusKey: 'status.scanningAnalyzingTotalPhotos',
     abortRef,
     statusPrefix: 'Scanning',
   });
@@ -538,10 +595,13 @@ export const scanExactDuplicates = async ({
   }
 
   // ========== PHASE 2: Hash Files (10-90%) ==========
-  updateStatus(onStatus, t('status.scanningAnalyzingTotal', { total: totalAssets }), true);
+  updateStatus(onStatus, t('status.scanningAnalyzingTotalPhotos', { total: totalAssets }), true);
   updateProgress(onProgress, 0.10, true);
 
-  const allHashedItems = []; // Collect all items with hashes for Union-Find clustering
+  // Memory-optimized: Store only minimal data needed for grouping
+  // Full asset/info objects are fetched only for final duplicate groups
+  const allHashedItems = []; // Minimal items: { id, fileHashHex, rawDHash, isVideo, exifKeys, baseName, originalSize, dateStr, filename, creationTime }
+  const assetLookup = new Map(); // id -> { asset, info } - only populated for items in duplicate groups later
   let hashedCount = 0;
   let hashSkipped = 0;
   let hashFailed = 0;
@@ -629,39 +689,53 @@ export const scanExactDuplicates = async ({
       let fileHashHex = null;
       let dHashHex = null;
 
+      // Check cache first for faster subsequent runs
+      const cachedFileHash = getCachedHash(asset, 'file');
+      const cachedDHash = getCachedHash(asset, 'perceptual');
+
       if (isVideo) {
         // Videos: use exact file hash (SHA-256) only
-        fileHashHex = await computeExactFileHash(hashTarget);
-        if (fileHashHex) {
-          fileHashHex = 'video:' + fileHashHex;
+        if (cachedFileHash) {
+          fileHashHex = 'video:' + cachedFileHash;
           videoCount++;
-          // Debug log for first few videos
-          if (videoCount <= 3) {
-            console.log('[DupScanner] Video hash computed:', {
-              filename: info?.filename || asset.filename,
-              hashStart: fileHashHex.substring(0, 24) + '...',
-            });
+        } else {
+          fileHashHex = await computeExactFileHash(hashTarget);
+          if (fileHashHex) {
+            setCachedHash(asset, 'file', fileHashHex); // Cache for next run
+            fileHashHex = 'video:' + fileHashHex;
+            videoCount++;
           }
         }
       } else {
         // Images: use perceptual dHash only (catches visually identical photos)
         // dHash is resistant to compression, re-encoding, and minor edits
         if (hasPixelHash) {
-          try {
-            const dHash = await PixelHash.hashImagePixels(hashTarget);
-            if (dHash) {
-              dHashHex = 'dhash:' + dHash;
-              photoCount++;
-              // Debug log for first few photos
-              if (photoCount <= 3) {
-                console.log('[DupScanner] Image dHash computed:', {
-                  filename: info?.filename || asset.filename,
-                  dHash: dHashHex,
-                });
+          if (cachedDHash) {
+            dHashHex = 'dhash:' + cachedDHash;
+            photoCount++;
+          } else {
+            try {
+              const dHash = await PixelHash.hashImagePixels(hashTarget);
+              if (dHash) {
+                setCachedHash(asset, 'perceptual', dHash); // Cache for next run
+                dHashHex = 'dhash:' + dHash;
+                photoCount++;
               }
+            } catch (e) {
+              // dHash failed
             }
-          } catch (e) {
-            // dHash failed
+          }
+        }
+
+        if (!dHashHex) {
+          if (cachedFileHash) {
+            fileHashHex = 'file:' + cachedFileHash;
+          } else {
+            const fh = await computeExactFileHash(hashTarget);
+            if (fh) {
+              setCachedHash(asset, 'file', fh);
+              fileHashHex = 'file:' + fh;
+            }
           }
         }
       }
@@ -692,19 +766,31 @@ export const scanExactDuplicates = async ({
         const creationTime = info?.creationTime || asset.creationTime || 0;
         const dateStr = creationTime ? normalizeDateForCompare(new Date(creationTime * 1000)) : null;
         
+        // Memory-optimized: Store only minimal data needed for grouping
+        // Don't store full asset/info objects - they consume too much memory with 1000s of files
+        const itemId = asset.id;
+        
         allHashedItems.push({
-          asset,
-          info,
+          id: itemId,
           fileHashHex,
           rawFileHash,
           rawDHash,
           isVideo: fileHashHex && fileHashHex.startsWith('video:'),
-          // Server-style dedup fields
           exifKeys,
           baseName,
           originalSize,
           dateStr,
           filename,
+          creationTime,
+        });
+        
+        // Store minimal asset reference for later (only id and uri needed for review)
+        assetLookup.set(itemId, {
+          id: itemId,
+          uri: info?.localUri || info?.uri || asset.uri || '',
+          filename,
+          creationTime,
+          fileSize: originalSize,
         });
       }
     } catch (e) {
@@ -761,7 +847,7 @@ export const scanExactDuplicates = async ({
   for (const group of Object.values(fileHashGroups)) {
     if (group.length > 1) {
       for (let i = 1; i < group.length; i++) {
-        union(group[0].asset.id, group[i].asset.id);
+        union(group[0].id, group[i].id);
       }
     }
   }
@@ -796,7 +882,7 @@ export const scanExactDuplicates = async ({
   for (const group of Object.values(exifFullGroups)) {
     if (group.length > 1) {
       for (let i = 1; i < group.length; i++) {
-        union(group[0].asset.id, group[i].asset.id);
+        union(group[0].id, group[i].id);
         exifMatches++;
       }
     }
@@ -806,7 +892,7 @@ export const scanExactDuplicates = async ({
   for (const group of Object.values(exifTimeModelGroups)) {
     if (group.length > 1) {
       for (let i = 1; i < group.length; i++) {
-        union(group[0].asset.id, group[i].asset.id);
+        union(group[0].id, group[i].id);
         exifMatches++;
       }
     }
@@ -837,7 +923,7 @@ export const scanExactDuplicates = async ({
           const sizeB = group[j].originalSize;
           const diff = Math.abs(sizeA - sizeB) / Math.max(sizeA, sizeB);
           if (diff < 0.20) {
-            union(group[i].asset.id, group[j].asset.id);
+            union(group[i].id, group[j].id);
             filenameMatches++;
           }
         }
@@ -858,7 +944,7 @@ export const scanExactDuplicates = async ({
   for (const group of Object.values(baseNameDateGroups)) {
     if (group.length > 1) {
       for (let i = 1; i < group.length; i++) {
-        union(group[0].asset.id, group[i].asset.id);
+        union(group[0].id, group[i].id);
         filenameMatches++;
       }
     }
@@ -868,53 +954,71 @@ export const scanExactDuplicates = async ({
 
   await quickYield();
 
+  // Memory cleanup: clear intermediate grouping objects
+  // These can be large with many files and are no longer needed
+  Object.keys(fileHashGroups).forEach(k => delete fileHashGroups[k]);
+  Object.keys(exifFullGroups).forEach(k => delete exifFullGroups[k]);
+  Object.keys(exifTimeModelGroups).forEach(k => delete exifTimeModelGroups[k]);
+  Object.keys(exifTimeMakeGroups).forEach(k => delete exifTimeMakeGroups[k]);
+  Object.keys(baseNameSizeGroups).forEach(k => delete baseNameSizeGroups[k]);
+  Object.keys(baseNameDateGroups).forEach(k => delete baseNameDateGroups[k]);
+
   // Fuzzy dHash comparison (O(n²) but only for images with dHash)
-  const itemsWithDHash = allHashedItems.filter(item => item.rawDHash && !item.isVideo);
+  // Limit to prevent memory/CPU exhaustion with very large libraries
+  const MAX_DHASH_COMPARE = 3000;
+  let itemsWithDHash = allHashedItems.filter(item => item.rawDHash && !item.isVideo);
+  
+  if (itemsWithDHash.length > MAX_DHASH_COMPARE) {
+    console.log(`[DupScanner] Limiting dHash comparison from ${itemsWithDHash.length} to ${MAX_DHASH_COMPARE} items`);
+    // Sort by creation time and take most recent
+    itemsWithDHash.sort((a, b) => (b.creationTime || 0) - (a.creationTime || 0));
+    itemsWithDHash = itemsWithDHash.slice(0, MAX_DHASH_COMPARE);
+  }
+  
   console.log('[DupScanner] Items with dHash for comparison:', itemsWithDHash.length, 'out of', allHashedItems.length, 'total');
   let comparisons = 0;
   let matchesFound = 0;
-  let nearMisses = { dist1: 0, dist2: 0, dist3: 0, dist4: 0, dist5: 0 };
   
-  for (let i = 0; i < itemsWithDHash.length; i++) {
-    for (let j = i + 1; j < itemsWithDHash.length; j++) {
-      const dist = hammingDistance64(itemsWithDHash[i].rawDHash, itemsWithDHash[j].rawDHash);
-      // Track near-misses for debugging
-      if (dist === 1) nearMisses.dist1++;
-      else if (dist === 2) nearMisses.dist2++;
-      else if (dist === 3) nearMisses.dist3++;
-      else if (dist === 4) nearMisses.dist4++;
-      else if (dist === 5) nearMisses.dist5++;
-      
-      if (dist <= CROSS_PLATFORM_DHASH_THRESHOLD) {
-        union(itemsWithDHash[i].asset.id, itemsWithDHash[j].asset.id);
-        matchesFound++;
-        if (matchesFound <= 5) {
-          console.log('[DupScanner] Match found:', itemsWithDHash[i].info?.filename, 'vs', itemsWithDHash[j].info?.filename, 'dist:', dist);
+  // Process in batches to avoid memory pressure
+  const BATCH_SIZE = 500;
+  for (let batchStart = 0; batchStart < itemsWithDHash.length; batchStart += BATCH_SIZE) {
+    if (abortRef?.current) break;
+    
+    const batchEnd = Math.min(batchStart + BATCH_SIZE, itemsWithDHash.length);
+    
+    for (let i = batchStart; i < batchEnd; i++) {
+      for (let j = i + 1; j < itemsWithDHash.length; j++) {
+        const dist = hammingDistance64(itemsWithDHash[i].rawDHash, itemsWithDHash[j].rawDHash);
+        
+        if (dist <= CROSS_PLATFORM_DHASH_THRESHOLD) {
+          union(itemsWithDHash[i].id, itemsWithDHash[j].id);
+          matchesFound++;
+          if (matchesFound <= 5) {
+            console.log('[DupScanner] Match found:', itemsWithDHash[i].filename, 'vs', itemsWithDHash[j].filename, 'dist:', dist);
+          }
+        }
+        comparisons++;
+        
+        // Yield less frequently for better performance
+        if (comparisons % 5000 === 0) {
+          await quickYield();
         }
       }
-      comparisons++;
-      if (comparisons % YIELD_EVERY_N_COMPARISONS === 0) {
-        await quickYield();
-      }
-      // Thermal cooldown every 5000 comparisons
-      if (comparisons % 5000 === 0) {
-        await thermalCooldown();
-      }
     }
+    
+    // Yield and update progress between batches
+    await yieldToUi();
+    const batchProgress = 0.90 + (batchEnd / itemsWithDHash.length) * 0.05;
+    updateProgress(onProgress, batchProgress);
   }
 
   console.log('[DupScanner] Comparisons:', comparisons, 'Matches found:', matchesFound, 'Threshold:', CROSS_PLATFORM_DHASH_THRESHOLD);
-  console.log('[DupScanner] Near-misses:', nearMisses);
 
   // Build groups from Union-Find
   const groupMap = new Map();
-  const itemMap = new Map();
-  for (const item of allHashedItems) {
-    itemMap.set(item.asset.id, item);
-  }
   
   for (const item of allHashedItems) {
-    const root = find(item.asset.id);
+    const root = find(item.id);
     if (!groupMap.has(root)) groupMap.set(root, []);
     groupMap.get(root).push(item);
   }
@@ -925,17 +1029,34 @@ export const scanExactDuplicates = async ({
     if (group.length > 1) {
       // Sort by creation time (oldest first)
       group.sort((a, b) => {
-        const aTime = a.info?.creationTime || a.asset.creationTime || 0;
-        const bTime = b.info?.creationTime || b.asset.creationTime || 0;
+        const aTime = a.creationTime || 0;
+        const bTime = b.creationTime || 0;
         return aTime - bTime;
       });
-      duplicateGroups.push(group);
+      
+      // Enrich with asset lookup data for review UI
+      // assetLookup contains: { id, uri, filename, creationTime, fileSize }
+      const enrichedGroup = group.map(item => {
+        const lookup = assetLookup.get(item.id);
+        return {
+          asset: { id: item.id, uri: lookup?.uri || '' },
+          info: {
+            filename: lookup?.filename || item.filename,
+            creationTime: lookup?.creationTime || item.creationTime,
+            fileSize: lookup?.fileSize || item.originalSize,
+            uri: lookup?.uri || '',
+            localUri: lookup?.uri || '',
+          },
+          creationTime: item.creationTime,
+        };
+      });
+      duplicateGroups.push(enrichedGroup);
       
       // Debug: log first few duplicate groups found
       if (duplicateGroups.length <= 3) {
         console.log('[DupScanner] Duplicate group found:', {
           count: group.length,
-          files: group.map(g => g.info?.filename || g.asset.filename).join(', '),
+          files: group.map(g => g.filename).join(', '),
         });
       }
     }
@@ -946,12 +1067,22 @@ export const scanExactDuplicates = async ({
   updateProgress(onProgress, 0.95, true);
   await yieldToUi();
   
+  // Memory cleanup: clear large arrays/maps before UI renders
+  // This frees significant memory with large photo libraries
+  allHashedItems.length = 0;
+  assetLookup.clear();
+  groupMap.clear();
+  parent.clear();
+  rank.clear();
+  itemsWithDHash.length = 0;
+  
   // Small delay before final result for smooth UX
   await new Promise(r => setTimeout(r, 200));
   
   updateStatus(onStatus, duplicateGroups.length > 0 ? t('status.scanningFoundDuplicates', { count: duplicateGroups.length }) : t('status.scanningNoDuplicates'), true);
   updateProgress(onProgress, 1, true);
 
+  const dHashCount = comparisons > 0 ? Math.ceil(Math.sqrt(comparisons * 2)) : 0; // Approximate from comparisons
   console.log('[DupScanner] Exact scan complete:', {
     totalAssets,
     hashedCount,
@@ -959,10 +1090,13 @@ export const scanExactDuplicates = async ({
     videoCount,
     hashSkipped,
     hashFailed,
-    itemsWithDHash: itemsWithDHash.length,
+    dHashCompared: dHashCount,
     comparisons,
     duplicateGroups: duplicateGroups.length,
   });
+
+  // Flush cache to disk
+  await flushHashCache();
 
   return {
     duplicateGroups,
@@ -1003,6 +1137,12 @@ export const scanSimilarPhotos = async ({
 }) => {
   console.log('[DupScanner] Starting optimized similar photos scan');
 
+  // Abort any running background pre-analysis to avoid race conditions
+  abortPreAnalysis();
+
+  // Load hash cache for faster subsequent runs
+  await loadHashCache();
+
   const hasPixelHash = PixelHash && typeof PixelHash.hashImagePixels === 'function';
   if (!hasPixelHash) {
     console.warn('[DupScanner] PixelHash not available - videos only');
@@ -1015,14 +1155,15 @@ export const scanSimilarPhotos = async ({
   // ========== PHASE 1: Collect Assets (0-10%) ==========
   if (onCollecting) onCollecting();
   updateStatus(onStatus, t('status.scanningCollecting'), true);
-  updateProgress(onProgress, 0, true);
+  updateProgress(onProgress, 0.01, true);
 
   const { assets: allAssets, aborted: collectAborted } = await collectAssetsPaged({
     includeVideos,
     onStatus,
     onProgress,
-    progressStart: 0,
+    progressStart: 0.01,
     progressEnd: 0.10,
+    analyzingTotalStatusKey: 'status.scanningAnalyzingTotalPhotos',
     abortRef,
     statusPrefix: 'Scanning',
   });
@@ -1052,7 +1193,7 @@ export const scanSimilarPhotos = async ({
   }
 
   // ========== PHASE 2: Hash Files (10-60%) ==========
-  updateStatus(onStatus, t('status.scanningAnalyzingTotal', { total: totalAssets }), true);
+  updateStatus(onStatus, t('status.scanningAnalyzingTotalPhotos', { total: totalAssets }), true);
   updateProgress(onProgress, 0.10, true);
 
   const items = [];
@@ -1071,7 +1212,7 @@ export const scanSimilarPhotos = async ({
     if (i % 5 === 0) {
       const fileProgress = 0.10 + (i / totalAssets) * 0.50;
       updateProgress(onProgress, fileProgress);
-      updateStatus(onStatus, t('status.scanningAnalyzingProgress', { current: i + 1, total: totalAssets }));
+      updateStatus(onStatus, t('status.scanningAnalyzingProgressPhotos', { current: i + 1, total: totalAssets }));
       if (i % 25 === 0) await yieldToUi();
     }
 
@@ -1101,19 +1242,26 @@ export const scanSimilarPhotos = async ({
 
       if (hashTarget) {
         try {
-          if (isVideo) {
+          // Check cache first for faster subsequent runs
+          const cachedHash = isVideo ? getCachedHash(asset, 'file') : getCachedHash(asset, 'perceptual');
+          
+          if (cachedHash) {
+            hash = isVideo ? 'video:' + cachedHash : 'image:' + cachedHash;
+            hashed++;
+          } else if (isVideo) {
             hash = await computeExactFileHash(hashTarget);
             if (hash) {
+              setCachedHash(asset, 'file', hash); // Cache for next run
               hash = 'video:' + hash;
               hashed++;
             }
           } else if (hasPixelHash) {
             hash = await PixelHash.hashImagePixels(hashTarget);
             if (hash) {
+              setCachedHash(asset, 'perceptual', hash); // Cache for next run
               hash = 'image:' + hash;
               hashed++;
             }
-            // Skip edge/corner hash for similar scan - not needed, saves time
           }
         } catch (e) {
           hashFailed++;
@@ -1367,6 +1515,9 @@ export const scanSimilarPhotos = async ({
 
   console.log('[DupScanner] Similar scan complete:', finalGroups.length, 'groups');
 
+  // Flush cache to disk
+  await flushHashCache();
+
   return { groups: finalGroups, aborted: false };
 };
 
@@ -1409,19 +1560,71 @@ export const buildNoResultsNote = (stats) => {
   return noteParts.length > 0 ? `\n${noteParts.join('\n')}` : '';
 };
 
-export const deleteAssets = async (ids) => {
+export const deleteAssets = async (ids, onProgress) => {
   if (!ids || ids.length === 0) {
     return { success: true, deleted: 0 };
   }
 
+  // Batch deletions to avoid crashes with large numbers of files
+  // iOS and Android can timeout/crash when deleting 100+ files at once
+  const BATCH_SIZE = 20;
+  let totalDeleted = 0;
+  let hasError = false;
+
   try {
-    if (Platform.OS === 'android' && MediaDelete && typeof MediaDelete.deleteAssets === 'function') {
-      const result = await MediaDelete.deleteAssets(ids);
-      return { success: result === true, deleted: result === true ? ids.length : 0 };
-    } else {
-      const result = await MediaLibrary.deleteAssetsAsync(ids);
-      return { success: result === true || typeof result === 'undefined', deleted: ids.length };
+    for (let i = 0; i < ids.length; i += BATCH_SIZE) {
+      const batch = ids.slice(i, i + BATCH_SIZE);
+      const batchNum = Math.floor(i / BATCH_SIZE) + 1;
+      const totalBatches = Math.ceil(ids.length / BATCH_SIZE);
+      
+      console.log(`[DupScanner] Deleting batch ${batchNum}/${totalBatches} (${batch.length} items)`);
+      
+      // Report progress if callback provided
+      if (onProgress) {
+        onProgress(i / ids.length, totalDeleted, ids.length);
+      }
+
+      try {
+        // Use native MediaDelete module on both iOS and Android for proper deletion
+        // iOS: moves to Recently Deleted (30-day recovery)
+        // Android: moves to PhotoLynkDeleted album
+        if (MediaDelete && typeof MediaDelete.deleteAssets === 'function') {
+          const result = await MediaDelete.deleteAssets(batch);
+          // iOS returns count of deleted assets, Android returns boolean
+          if (typeof result === 'number') {
+            totalDeleted += result;
+          } else if (result === true) {
+            totalDeleted += batch.length;
+          }
+        } else {
+          // Fallback to MediaLibrary (less reliable on iOS)
+          const result = await MediaLibrary.deleteAssetsAsync(batch);
+          if (result === true || typeof result === 'undefined') {
+            totalDeleted += batch.length;
+          }
+        }
+      } catch (batchError) {
+        console.log(`[DupScanner] Batch ${batchNum} error:`, batchError?.message);
+        hasError = true;
+        // Continue with next batch instead of failing completely
+      }
+
+      // Small delay between batches to prevent overwhelming the system
+      if (i + BATCH_SIZE < ids.length) {
+        await new Promise(r => setTimeout(r, 100));
+      }
     }
+
+    // Final progress update
+    if (onProgress) {
+      onProgress(1, totalDeleted, ids.length);
+    }
+
+    return { 
+      success: totalDeleted > 0, 
+      deleted: totalDeleted,
+      partial: hasError && totalDeleted > 0,
+    };
   } catch (e) {
     console.log('[DupScanner] Delete error:', e?.message);
     throw e;

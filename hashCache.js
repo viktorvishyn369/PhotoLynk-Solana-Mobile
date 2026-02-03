@@ -1,15 +1,25 @@
 /**
  * hashCache.js
  * 
- * Persistent cache for computed file hashes to avoid re-hashing on every backup.
+ * Persistent cache for computed file hashes to avoid re-hashing on every scan.
  * Uses expo-file-system to store cache in app's document directory.
  * Cache key: asset.id + modificationTime to detect changed files.
+ * 
+ * Supports:
+ * - File hash (MD5/SHA256) for identical duplicate detection
+ * - Perceptual hash (pHash) for similar photo detection
+ * - Edge hash for similar photo detection
+ * - Corner hash for similar photo detection
+ * 
+ * Background pre-analysis runs on app start to prepare hashes silently.
  */
 
 import * as FileSystem from 'expo-file-system';
+import * as MediaLibrary from 'expo-media-library';
+import { Platform } from 'react-native';
 
-const CACHE_FILE = `${FileSystem.documentDirectory}hash_cache.json`;
-const CACHE_VERSION = 1;
+const CACHE_FILE = `${FileSystem.documentDirectory}hash_cache_v2.json`;
+const CACHE_VERSION = 2;
 
 // In-memory cache loaded from disk
 let memoryCache = null;
@@ -108,7 +118,7 @@ const getCacheKey = (asset) => {
 /**
  * Get cached hash for an asset
  * @param {Object} asset - MediaLibrary asset
- * @param {string} hashType - 'perceptual' or 'file'
+ * @param {string} hashType - 'perceptual', 'edge', 'corner', or 'file'
  * @returns {string|null} Cached hash or null if not cached
  */
 export const getCachedHash = (asset, hashType = 'perceptual') => {
@@ -119,13 +129,31 @@ export const getCachedHash = (asset, hashType = 'perceptual') => {
   const entry = memoryCache[key];
   if (!entry) return null;
   
-  return hashType === 'perceptual' ? entry.phash : entry.fhash;
+  switch (hashType) {
+    case 'perceptual': return entry.phash || null;
+    case 'edge': return entry.ehash || null;
+    case 'corner': return entry.chash || null;
+    case 'file': return entry.fhash || null;
+    default: return null;
+  }
+};
+
+/**
+ * Get all cached hashes for an asset at once
+ * @param {Object} asset - MediaLibrary asset
+ * @returns {Object|null} { phash, ehash, chash, fhash } or null
+ */
+export const getAllCachedHashes = (asset) => {
+  if (!memoryCache || !asset) return null;
+  const key = getCacheKey(asset);
+  if (!key) return null;
+  return memoryCache[key] || null;
 };
 
 /**
  * Store computed hash in cache
  * @param {Object} asset - MediaLibrary asset
- * @param {string} hashType - 'perceptual' or 'file'
+ * @param {string} hashType - 'perceptual', 'edge', 'corner', or 'file'
  * @param {string} hash - The computed hash value
  */
 export const setCachedHash = (asset, hashType, hash) => {
@@ -141,11 +169,37 @@ export const setCachedHash = (asset, hashType, hash) => {
     memoryCache[key] = {};
   }
   
-  if (hashType === 'perceptual') {
-    memoryCache[key].phash = hash;
-  } else {
-    memoryCache[key].fhash = hash;
+  switch (hashType) {
+    case 'perceptual': memoryCache[key].phash = hash; break;
+    case 'edge': memoryCache[key].ehash = hash; break;
+    case 'corner': memoryCache[key].chash = hash; break;
+    case 'file': memoryCache[key].fhash = hash; break;
   }
+  
+  scheduleSave();
+};
+
+/**
+ * Store multiple hashes for an asset at once
+ * @param {Object} asset - MediaLibrary asset
+ * @param {Object} hashes - { phash, ehash, chash, fhash }
+ */
+export const setAllCachedHashes = (asset, hashes) => {
+  if (!asset || !hashes) return;
+  
+  if (!memoryCache) memoryCache = {};
+  
+  const key = getCacheKey(asset);
+  if (!key) return;
+  
+  if (!memoryCache[key]) {
+    memoryCache[key] = {};
+  }
+  
+  if (hashes.phash) memoryCache[key].phash = hashes.phash;
+  if (hashes.ehash) memoryCache[key].ehash = hashes.ehash;
+  if (hashes.chash) memoryCache[key].chash = hashes.chash;
+  if (hashes.fhash) memoryCache[key].fhash = hashes.fhash;
   
   scheduleSave();
 };
@@ -182,5 +236,304 @@ export const clearHashCache = async () => {
     console.log('[HashCache] Cache cleared');
   } catch (e) {
     console.warn('[HashCache] Failed to delete cache file:', e?.message);
+  }
+};
+
+/**
+ * Prune cache entries for files that no longer exist
+ * Call this periodically to prevent memory bloat from deleted files
+ * @param {Set} currentAssetIds - Set of asset IDs currently on device
+ * @returns {number} Number of entries removed
+ */
+export const pruneHashCache = (currentAssetIds) => {
+  if (!memoryCache || !currentAssetIds) return 0;
+  
+  let removed = 0;
+  const keysToRemove = [];
+  
+  for (const key of Object.keys(memoryCache)) {
+    // Key format: assetId_modificationTime
+    const assetId = key.split('_')[0];
+    if (!currentAssetIds.has(assetId)) {
+      keysToRemove.push(key);
+    }
+  }
+  
+  for (const key of keysToRemove) {
+    delete memoryCache[key];
+    removed++;
+  }
+  
+  if (removed > 0) {
+    console.log(`[HashCache] Pruned ${removed} stale entries`);
+    scheduleSave();
+  }
+  
+  return removed;
+};
+
+// ============================================================================
+// BACKGROUND PRE-ANALYSIS
+// ============================================================================
+
+let preAnalysisRunning = false;
+let preAnalysisAbort = false;
+
+/**
+ * Check if pre-analysis is currently running
+ */
+export const isPreAnalysisRunning = () => preAnalysisRunning;
+
+/**
+ * Abort any running pre-analysis
+ */
+export const abortPreAnalysis = () => {
+  preAnalysisAbort = true;
+};
+
+/**
+ * Get list of asset IDs that need hashing (not in cache)
+ * @param {Array} assets - Array of MediaLibrary assets
+ * @param {string} hashType - 'file' for identical, 'perceptual' for similar
+ * @returns {Array} Assets that need hashing
+ */
+export const getUncachedAssets = (assets, hashType = 'file') => {
+  if (!memoryCache || !assets) return assets;
+  
+  return assets.filter(asset => {
+    const cached = getCachedHash(asset, hashType);
+    return !cached;
+  });
+};
+
+/**
+ * Check how many assets are already cached
+ * @param {Array} assets - Array of MediaLibrary assets
+ * @param {string} hashType - 'file' for identical, 'perceptual' for similar
+ * @returns {Object} { cached, uncached, total }
+ */
+export const getCacheStatus = (assets, hashType = 'file') => {
+  if (!assets) return { cached: 0, uncached: 0, total: 0 };
+  if (!memoryCache) return { cached: 0, uncached: assets.length, total: assets.length };
+  
+  let cached = 0;
+  for (const asset of assets) {
+    if (getCachedHash(asset, hashType)) cached++;
+  }
+  
+  return {
+    cached,
+    uncached: assets.length - cached,
+    total: assets.length,
+  };
+};
+
+/**
+ * Run background pre-analysis to hash files silently
+ * Call this on app start when user is logged in
+ * 
+ * @param {Object} params
+ * @param {Function} params.resolveReadableFilePath - Function to get readable file path
+ * @param {Function} params.computeFileHash - Function to compute file hash (for identical)
+ * @param {Function} params.computePerceptualHashes - Function to compute perceptual hashes (for similar)
+ * @param {number} params.batchSize - Files to process per batch (default 5 for low memory)
+ * @param {number} params.delayBetweenBatches - MS delay between batches (default 100 for low CPU)
+ * @param {boolean} params.includeVideos - Include videos in pre-analysis (default true)
+ * @param {Function} params.onProgress - Optional progress callback ({ processed, total, cached })
+ */
+export const runBackgroundPreAnalysis = async ({
+  resolveReadableFilePath,
+  computeFileHash,
+  computePerceptualHashes,
+  batchSize = 5,
+  delayBetweenBatches = 100,
+  includeVideos = true,
+  onProgress,
+}) => {
+  if (preAnalysisRunning) {
+    console.log('[HashCache] Pre-analysis already running');
+    return { alreadyRunning: true };
+  }
+  
+  preAnalysisRunning = true;
+  preAnalysisAbort = false;
+  
+  console.log('[HashCache] Starting background pre-analysis...');
+  
+  try {
+    // Ensure cache is loaded
+    await loadHashCache();
+    
+    // Check permissions
+    const permission = await MediaLibrary.getPermissionsAsync();
+    if (permission.status !== 'granted') {
+      console.log('[HashCache] No media permission for pre-analysis');
+      preAnalysisRunning = false;
+      return { noPermission: true };
+    }
+    
+    // Collect assets (paginated, low memory)
+    const mediaTypes = includeVideos ? ['photo', 'video'] : ['photo'];
+    const allAssets = [];
+    let after = null;
+    const PAGE_SIZE = 100; // Small pages for low memory
+    
+    while (!preAnalysisAbort) {
+      const page = await MediaLibrary.getAssetsAsync({
+        first: PAGE_SIZE,
+        after: after || undefined,
+        mediaType: mediaTypes,
+      });
+      
+      if (page?.assets) {
+        allAssets.push(...page.assets);
+      }
+      
+      after = page?.endCursor;
+      if (!page?.hasNextPage) break;
+      
+      // Yield to prevent blocking
+      await new Promise(r => setTimeout(r, 10));
+    }
+    
+    if (preAnalysisAbort) {
+      console.log('[HashCache] Pre-analysis aborted during collection');
+      preAnalysisRunning = false;
+      return { aborted: true };
+    }
+    
+    console.log(`[HashCache] Collected ${allAssets.length} assets for pre-analysis`);
+
+    try {
+      const currentAssetIds = new Set(allAssets.map(a => String(a?.id)).filter(Boolean));
+      pruneHashCache(currentAssetIds);
+    } catch (e) {
+      // ignore
+    }
+    
+    // Check what's already cached
+    const status = getCacheStatus(allAssets, 'file');
+    console.log(`[HashCache] Cache status: ${status.cached} cached, ${status.uncached} need hashing`);
+    
+    if (status.uncached === 0) {
+      console.log('[HashCache] All files already cached, pre-analysis complete');
+      preAnalysisRunning = false;
+      return { complete: true, cached: status.cached, processed: 0 };
+    }
+    
+    // Get uncached assets
+    const uncachedAssets = getUncachedAssets(allAssets, 'file');
+    let processed = 0;
+    let errors = 0;
+    
+    // Process in small batches for low memory/CPU
+    for (let i = 0; i < uncachedAssets.length; i += batchSize) {
+      if (preAnalysisAbort) {
+        console.log('[HashCache] Pre-analysis aborted');
+        break;
+      }
+      
+      const batch = uncachedAssets.slice(i, i + batchSize);
+      
+      for (const asset of batch) {
+        if (preAnalysisAbort) break;
+        
+        try {
+          // Get asset info
+          const info = await MediaLibrary.getAssetInfoAsync(asset.id);
+          if (!info) {
+            if (errors < 3) console.log('[HashCache] Pre-analysis: no info for asset', asset?.id);
+            errors++;
+            continue;
+          }
+          
+          // Get readable file path
+          const resolveResult = await resolveReadableFilePath({ assetId: asset.id, assetInfo: info });
+          const filePath = resolveResult?.filePath;
+          if (!filePath) {
+            if (errors < 3) console.log('[HashCache] Pre-analysis: no filePath for', info?.filename);
+            errors++;
+            continue;
+          }
+          
+          let hashSuccess = false;
+          
+          // Compute file hash (for identical duplicates)
+          if (computeFileHash) {
+            try {
+              const fileHash = await computeFileHash(filePath);
+              if (fileHash) {
+                setCachedHash(asset, 'file', fileHash);
+                hashSuccess = true;
+              } else if (errors < 3) {
+                console.log('[HashCache] Pre-analysis: fileHash null for', info?.filename);
+              }
+            } catch (hashErr) {
+              if (errors < 3) console.log('[HashCache] Pre-analysis: fileHash error', info?.filename, hashErr?.message);
+            }
+          }
+          
+          // Compute perceptual hashes (for similar photos) - only for images
+          const isImage = info.mediaType === 'photo' || 
+            (info.filename && /\.(jpg|jpeg|png|heic|heif|webp|gif|bmp)$/i.test(info.filename));
+          
+          if (computePerceptualHashes && isImage) {
+            try {
+              const hashes = await computePerceptualHashes(filePath, asset, info);
+              if (hashes) {
+                if (hashes.phash) { setCachedHash(asset, 'perceptual', hashes.phash); hashSuccess = true; }
+                if (hashes.ehash) { setCachedHash(asset, 'edge', hashes.ehash); hashSuccess = true; }
+                if (hashes.chash) { setCachedHash(asset, 'corner', hashes.chash); hashSuccess = true; }
+              } else if (errors < 3) {
+                console.log('[HashCache] Pre-analysis: perceptualHash null for', info?.filename);
+              }
+            } catch (phashErr) {
+              if (errors < 3) console.log('[HashCache] Pre-analysis: perceptualHash error', info?.filename, phashErr?.message);
+            }
+          }
+          
+          if (hashSuccess) {
+            processed++;
+          } else {
+            errors++;
+          }
+        } catch (e) {
+          if (errors < 3) console.log('[HashCache] Pre-analysis: exception', e?.message);
+          errors++;
+        }
+      }
+      
+      // Report progress
+      if (onProgress) {
+        onProgress({
+          processed,
+          total: uncachedAssets.length,
+          cached: status.cached,
+          errors,
+        });
+      }
+      
+      // Delay between batches for low CPU usage
+      await new Promise(r => setTimeout(r, delayBetweenBatches));
+    }
+    
+    // Force save at end
+    await flushHashCache();
+    
+    console.log(`[HashCache] Pre-analysis complete: ${processed} processed, ${errors} errors`);
+    preAnalysisRunning = false;
+    
+    return {
+      complete: true,
+      processed,
+      cached: status.cached,
+      errors,
+      aborted: preAnalysisAbort,
+    };
+    
+  } catch (e) {
+    console.error('[HashCache] Pre-analysis error:', e?.message);
+    preAnalysisRunning = false;
+    return { error: e?.message };
   }
 };

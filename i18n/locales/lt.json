@@ -126,6 +126,7 @@
 		"allFilesKept": "Visi failai išsaugoti",
 		"cleanupDone": "Valymas baigtas",
 		"filesMovedToDeleted": "Failai perkelti į PhotoLynkDeleted aplanką",
+		"filesMovedToRecentlyDeleted": "Failai perkelti į Neseniai ištrinti aplanką",
 		"noDuplicatesFound": "0 dublikatų rasta",
 		"noIdenticalFiles": "0 identišk failų",
 		"noSimilarPhotos": "0 panašių nuotraukų",
@@ -162,7 +163,7 @@
 		"loadingEncryptionKey": "Įkeliamas šifravimo raktas...",
 		"fetchingServerState": "Serverio būsenos gavimas...",
 		"preparingDeduplication": "Pasirengimas deduplikacijai...",
-		"noPhotosFound": "Atsarginės kopijos nerastos",
+		"noPhotosFound": "Nėra failų Backup",
 		"backupPreparing": "Atsarginė kopija: Paruošimas",
 		"backupEncrypting": "Atsarginė kopija: Šifravimas...",
 		"backupUploading": "Atsarginė kopija: Įkėlimas...",
@@ -178,7 +179,7 @@
 		"syncComplete": "Sinchronizavimas: Pilnas",
 		"syncFailed": "Sinchronizavimas nepavyko",
 		"syncLimitedAccess": "Sinchronizavimas: Ribota prieiga prie nuotraukų",
-		"syncNoFiles": "Sinchronizavimas: Nuotraukos ir vaizdo įrašai nesinchronizuojami",
+		"syncNoFiles": "Nėra failų Sync",
 		"checkingSubscription": "Prenumeratos tikrinimas...",
 		"nftPreparing": "NFT: Pasirengimas...",
 		"securingSession": "Sesijos užtikrinimas...",
@@ -248,7 +249,10 @@
 		"idleWithMode": "Tuščiosios eigos - {{mode}} režimas",
 		"coolingDown": "Aušinimas (partija {{batch}})...",
 		"foundDuplicates": "Rasta {{count}} identiškų nuotraukų ir vaizdo įrašų {{groups}} grupėje",
-		"deletionCancelledPartial": "Panaikintas arba dalinis ištrynimas"
+		"deletionCancelledPartial": "Panaikintas arba dalinis ištrynimas",
+		"scanningAnalyzingTotalPhotos": "Nuskaitymas: Analizuojama {{total}} nuotraukų",
+		"scanningAnalyzingProgressPhotos": "Nuskaitymas: Analizuojama {{current}} iš {{total}} nuotraukų",
+		"switchingServer": "Keičiamas serveris..."
 	},
 	"restore": {
 		"title": "Nuotraukų atkūrimas",

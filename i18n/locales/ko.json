@@ -127,6 +127,7 @@
 		"allFilesKept": "모든 파일 보관",
 		"cleanupDone": "정리 완료",
 		"filesMovedToDeleted": "파일이 PhotoLynkDeleted 폴더로 이동되었습니다",
+		"filesMovedToRecentlyDeleted": "파일이 최근 삭제된 항목으로 이동되었습니다",
 		"noDuplicatesFound": "중복 항목 0개 발견",
 		"noIdenticalFiles": "0개의 동일한 파일",
 		"noSimilarPhotos": "0개의 유사한 사진",
@@ -163,7 +164,7 @@
 		"loadingEncryptionKey": "암호화 키 로드 중...",
 		"fetchingServerState": "서버 상태 가져오기...",
 		"preparingDeduplication": "중복 제거 준비 중...",
-		"noPhotosFound": "백업할 사진을 찾을 수 없습니다.",
+		"noPhotosFound": "Backup할 파일이 없습니다",
 		"backupPreparing": "백업: 준비",
 		"backupEncrypting": "백업: 백업: 암호화...",
 		"backupUploading": "백업: 업로드 중...",
@@ -179,7 +180,7 @@
 		"syncComplete": "동기화: 완료",
 		"syncFailed": "동기화 실패",
 		"syncLimitedAccess": "동기화: 제한된 사진 액세스",
-		"syncNoFiles": "동기화: 동기화할 사진 및 동영상 없음",
+		"syncNoFiles": "Sync할 파일이 없습니다",
 		"checkingSubscription": "구독 확인 중...",
 		"nftPreparing": "NFT: 준비 중...",
 		"securingSession": "세션 보안...",
@@ -249,7 +250,10 @@
 		"idleWithMode": "유휴 - {{mode}} 모드",
 		"coolingDown": "냉각 (배치 {{batch}})...",
 		"foundDuplicates": "{{groups}} 그룹에서 {{count}} 개의 동일한 사진 및 동영상 발견",
-		"deletionCancelledPartial": "삭제 취소 또는 부분 삭제"
+		"deletionCancelledPartial": "삭제 취소 또는 부분 삭제",
+		"scanningAnalyzingTotalPhotos": "스캔: {{total}}개 사진 분석 중",
+		"scanningAnalyzingProgressPhotos": "스캔: {{current}}/{{total}}개 사진 분석 중",
+		"switchingServer": "서버 전환 중..."
 	},
 	"restore": {
 		"title": "사진 복원",

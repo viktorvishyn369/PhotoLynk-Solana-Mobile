@@ -62,6 +62,23 @@ class ExifExtractorModule: NSObject {
           }
         }
         
+        // iOS Camera app doesn't embed Make/Model in HEIC files (privacy feature)
+        // Fallback to device info for photos taken on this device
+        if make == nil {
+          make = "apple"
+        }
+        if model == nil {
+          // Get device model identifier (e.g., "iPhone15,2" for iPhone 14 Pro)
+          var systemInfo = utsname()
+          uname(&systemInfo)
+          let modelCode = withUnsafePointer(to: &systemInfo.machine) {
+            $0.withMemoryRebound(to: CChar.self, capacity: 1) {
+              String(validatingUTF8: $0)
+            }
+          }
+          model = modelCode?.lowercased() ?? UIDevice.current.model.lowercased()
+        }
+        
         let result: [String: Any] = [
           "captureTime": captureTime ?? NSNull(),
           "make": make ?? NSNull(),

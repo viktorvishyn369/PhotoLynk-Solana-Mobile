@@ -127,6 +127,7 @@
 		"allFilesKept": "Wszystkie pliki zachowane",
 		"cleanupDone": "Czyszczenie zakończone",
 		"filesMovedToDeleted": "Pliki przeniesione do folderu PhotoLynkDeleted",
+		"filesMovedToRecentlyDeleted": "Pliki przeniesione do Ostatnio usunięte",
 		"noDuplicatesFound": "0 duplikatów znalezionych",
 		"noIdenticalFiles": "0 identycznych plików",
 		"noSimilarPhotos": "0 podobnych zdjęć",
@@ -163,7 +164,7 @@
 		"loadingEncryptionKey": "Ładowanie klucza szyfrowania...",
 		"fetchingServerState": "Pobieranie stanu serwera...",
 		"preparingDeduplication": "Przygotowanie deduplikacji...",
-		"noPhotosFound": "Nie znaleziono zdjęć do utworzenia kopii zapasowej",
+		"noPhotosFound": "Brak plików do Backup",
 		"backupPreparing": "Kopia zapasowa: Przygotowanie",
 		"backupEncrypting": "Kopia zapasowa: Szyfrowanie...",
 		"backupUploading": "Kopia zapasowa: Uploading...",
@@ -179,7 +180,7 @@
 		"syncComplete": "Synchronizacja: Zakończona",
 		"syncFailed": "Synchronizacja nie powiodła się",
 		"syncLimitedAccess": "Synchronizacja: Ograniczony dostęp do zdjęć",
-		"syncNoFiles": "Synchronizacja: Brak zdjęć i filmów do synchronizacji",
+		"syncNoFiles": "Brak plików do Sync",
 		"checkingSubscription": "Sprawdzanie subskrypcji...",
 		"nftPreparing": "NFT: Przygotowanie...",
 		"securingSession": "Zabezpieczanie sesji...",
@@ -249,7 +250,10 @@
 		"idleWithMode": "Bezczynność - tryb {{mode}}",
 		"coolingDown": "Chłodzenie (partia {{batch}})...",
 		"foundDuplicates": "Znaleziono {{count}} identycznych zdjęć & filmów w {{groups}} grupach",
-		"deletionCancelledPartial": "Usunięcie anulowane lub częściowe"
+		"deletionCancelledPartial": "Usunięcie anulowane lub częściowe",
+		"scanningAnalyzingTotalPhotos": "Skanowanie: Analiza {{total}} zdjęć",
+		"scanningAnalyzingProgressPhotos": "Skanowanie: Analiza {{current}} z {{total}} zdjęć",
+		"switchingServer": "Przełączanie serwera..."
 	},
 	"restore": {
 		"title": "Przywracanie zdjęć",

@@ -127,6 +127,7 @@
 		"allFilesKept": "Tous les fichiers conservés",
 		"cleanupDone": "Nettoyage terminé",
 		"filesMovedToDeleted": "Fichiers déplacés vers le dossier PhotoLynkDeleted",
+		"filesMovedToRecentlyDeleted": "Fichiers déplacés vers Supprimés récemment",
 		"noDuplicatesFound": "0 doublon trouvé",
 		"noIdenticalFiles": "0 fichiers identiques",
 		"noSimilarPhotos": "0 photos similaires",
@@ -163,7 +164,7 @@
 		"loadingEncryptionKey": "Chargement de la clé de cryptage...",
 		"fetchingServerState": "Récupération de l'état du serveur...",
 		"preparingDeduplication": "Préparation de la déduplication...",
-		"noPhotosFound": "Aucune photo trouvée pour la sauvegarde",
+		"noPhotosFound": "Aucun fichier à sauvegarder",
 		"backupPreparing": "Sauvegarde : Préparation",
 		"backupEncrypting": "Sauvegarde : Encrypting...",
 		"backupUploading": "Sauvegarde : Téléchargement...",
@@ -179,7 +180,7 @@
 		"syncComplete": "Sync : Complet",
 		"syncFailed": "Échec de la synchronisation",
 		"syncLimitedAccess": "Sync : Accès limité aux photos",
-		"syncNoFiles": "Synchroniser : Pas de photos ni de vidéos à synchroniser",
+		"syncNoFiles": "Aucun fichier à synchroniser",
 		"checkingSubscription": "Vérification de l'abonnement...",
 		"nftPreparing": "NFT : Préparer...",
 		"securingSession": "Sécuriser la session...",
@@ -249,7 +250,10 @@
 		"idleWithMode": "Mode veille - {{mode}}",
 		"coolingDown": "Refroidissement (lot {{batch}})...",
 		"foundDuplicates": "{{count}} photos & vidéos identiques trouvées dans {{groups}} groupe(s)",
-		"deletionCancelledPartial": "Suppression annulée ou partielle"
+		"deletionCancelledPartial": "Suppression annulée ou partielle",
+		"scanningAnalyzingTotalPhotos": "Numérisation: Analyse de {{total}} photos",
+		"scanningAnalyzingProgressPhotos": "Numérisation: Analyse de {{current}} sur {{total}} photos",
+		"switchingServer": "Changement de serveur..."
 	},
 	"restore": {
 		"title": "Restaurer les photos",
@@ -413,13 +417,13 @@
 		"lowCost": "Faible coût"
 	},
 	"similarPhotos": {
-		"title": "Similar Photos",
-		"setInfo": "Set {{set}}/{{total}}",
+		"title": "Photos similaires",
+		"setInfo": "Groupe {{set}}/{{total}}",
 		"photoInfo": "Photo {{photo}}/{{total}}",
-		"markedForDeletion": "MARKED FOR DELETION",
-		"markForDeletion": "Mark for Deletion",
-		"keepThisPhoto": "Keep This Photo",
-		"delete": "Delete",
+		"markedForDeletion": "MARQUÉ POUR SUPPRESSION",
+		"markForDeletion": "Marquer pour suppression",
+		"keepThisPhoto": "Garder cette photo",
+		"delete": "Supprimer",
 		"keepAllNext": "Tout garder → Suivant",
 		"keepAllDone": "Tout garder et terminer"
 	},

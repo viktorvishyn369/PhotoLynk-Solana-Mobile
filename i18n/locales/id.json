@@ -126,6 +126,7 @@
 		"allFilesKept": "Semua file disimpan",
 		"cleanupDone": "Pembersihan selesai",
 		"filesMovedToDeleted": "File dipindahkan ke folder PhotoLynkDeleted",
+		"filesMovedToRecentlyDeleted": "File dipindahkan ke Baru Dihapus",
 		"noDuplicatesFound": "0 duplikat ditemukan",
 		"noIdenticalFiles": "0 file identik",
 		"noSimilarPhotos": "0 foto serupa",
@@ -162,7 +163,7 @@
 		"loadingEncryptionKey": "Memuat kunci enkripsi...",
 		"fetchingServerState": "Mengambil status server...",
 		"preparingDeduplication": "Mempersiapkan deduplikasi...",
-		"noPhotosFound": "Tidak ada foto yang ditemukan untuk dicadangkan",
+		"noPhotosFound": "Tidak ada file untuk Backup",
 		"backupPreparing": "Backup: Mempersiapkan...",
 		"backupEncrypting": "Backup: Mengenkripsi...",
 		"backupUploading": "Backup: Mengunggah...",
@@ -178,7 +179,7 @@
 		"syncComplete": "Sinkronisasi: Lengkap",
 		"syncFailed": "Sinkronisasi gagal",
 		"syncLimitedAccess": "Sinkronisasi: Akses foto terbatas",
-		"syncNoFiles": "Sinkronisasi: Tidak ada foto & video untuk disinkronkan",
+		"syncNoFiles": "Tidak ada file untuk Sync",
 		"checkingSubscription": "Memeriksa langganan...",
 		"nftPreparing": "NFT: Mempersiapkan...",
 		"securingSession": "Sesi pengamanan...",
@@ -248,7 +249,10 @@
 		"idleWithMode": "Idle - Mode {{mode}}",
 		"coolingDown": "Pendinginan (batch {{batch}})...",
 		"foundDuplicates": "Ditemukan foto/video identik {{count}} dalam grup {{groups}}",
-		"deletionCancelledPartial": "Penghapusan dibatalkan atau sebagian"
+		"deletionCancelledPartial": "Penghapusan dibatalkan atau sebagian",
+		"scanningAnalyzingTotalPhotos": "Memindai: Menganalisis {{total}} foto",
+		"scanningAnalyzingProgressPhotos": "Memindai: Menganalisis {{current}} dari {{total}} foto",
+		"switchingServer": "Mengganti server..."
 	},
 	"restore": {
 		"title": "Mengembalikan Foto",

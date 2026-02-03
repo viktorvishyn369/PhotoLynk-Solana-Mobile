@@ -535,7 +535,7 @@ const isImageAsset = (info, asset) => {
   const mt = (info && info.mediaType) || asset.mediaType;
   if (mt === 'photo' || mt === 'image') return true;
   const name = (info && info.filename) || asset.filename || '';
-  return /\.(jpe?g|png|heic|heif|webp)$/i.test(name);
+  return /\.(jpe?g|png|heic|heif|webp|gif|bmp|tiff?|raw|cr2|nef|arw|dng|orf|rw2|pef|srw|raf|psd|psb|exr|hdr|avif)$/i.test(name);
 };
 
 /**
@@ -571,6 +571,10 @@ export const collectAllPhotoAssets = async (options = {}) => {
     estimatedTotal = countPage?.totalCount || 1000;
   } catch (e) {
     estimatedTotal = 1000;
+  }
+
+  if (Platform.OS === 'android' && estimatedTotal > 0) {
+    estimatedTotal = Math.max(0, estimatedTotal - 1);
   }
   
   // Show initial progress
@@ -1051,6 +1055,10 @@ export const scanSimilarPhotos = async ({ resolveReadableFilePath, onProgress, o
     estimatedTotal = Math.min(countPage?.totalCount || MAX_SCAN, MAX_SCAN);
   } catch (e) {
     // Use MAX_SCAN as fallback
+  }
+
+  if (Platform.OS === 'android' && estimatedTotal > 0) {
+    estimatedTotal = Math.max(0, estimatedTotal - 1);
   }
   
   // Show initial collecting progress
