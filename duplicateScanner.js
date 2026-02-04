@@ -11,7 +11,7 @@ import * as FileSystem from 'expo-file-system';
 import { sha256 } from 'js-sha256';
 import naclUtil from 'tweetnacl-util';
 
-const { PixelHash, MediaDelete } = NativeModules;
+const { PixelHash, MediaDelete, ExifExtractor } = NativeModules;
 
 // ============================================================================
 // SIMILAR PHOTOS - Simplified perceptual hashing (like image-hash library)
@@ -211,6 +211,65 @@ const extractExifForDedup = (assetInfo, asset) => {
 };
 
 /**
+ * Extract EXIF data using native module for reliable extraction.
+ * expo-media-library's assetInfo.exif is incomplete on iOS - missing Make/Model fields
+ * This function uses the native ExifExtractor module for reliable extraction
+ * @param {string} filePath - Path to the image file
+ * @param {Object} assetInfo - expo-media-library AssetInfo (fallback)
+ * @param {Object} asset - expo-media-library Asset (fallback for creationTime)
+ * @returns {Promise<{captureTime: string|null, make: string|null, model: string|null}>}
+ */
+const extractExifForDedupNative = async (filePath, assetInfo, asset) => {
+  const result = {
+    captureTime: null,
+    make: null,
+    model: null,
+  };
+
+  // Try native ExifExtractor first (more reliable on iOS)
+  if (ExifExtractor && typeof ExifExtractor.extractExif === 'function' && filePath) {
+    try {
+      const nativeExif = await ExifExtractor.extractExif(filePath);
+      if (nativeExif) {
+        if (nativeExif.captureTime) {
+          // Normalize to ISO format
+          let ct = nativeExif.captureTime;
+          if (/^\d{4}:\d{2}:\d{2}/.test(ct)) {
+            ct = ct.replace(/^(\d{4}):(\d{2}):(\d{2})/, '$1-$2-$3').replace(' ', 'T');
+          }
+          if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/.test(ct)) {
+            result.captureTime = ct.slice(0, 19);
+          }
+        }
+        if (nativeExif.make && typeof nativeExif.make === 'string') {
+          result.make = nativeExif.make.trim().toLowerCase();
+        }
+        if (nativeExif.model && typeof nativeExif.model === 'string') {
+          result.model = nativeExif.model.trim().toLowerCase();
+        }
+      }
+    } catch (e) {
+      console.warn('Native EXIF extraction failed:', e?.message);
+    }
+  }
+
+  // Fallback to assetInfo.exif if native extraction didn't get everything
+  if (!result.captureTime || !result.make || !result.model) {
+    const fallback = extractExifForDedup(assetInfo, asset);
+    if (!result.captureTime && fallback.captureTime) result.captureTime = fallback.captureTime;
+    if (!result.make && fallback.make) result.make = fallback.make;
+    if (!result.model && fallback.model) result.model = fallback.model;
+  }
+
+  // Final fallback for captureTime from asset.creationTime
+  if (!result.captureTime && asset?.creationTime) {
+    result.captureTime = normalizeFullTimestamp(asset.creationTime);
+  }
+
+  return result;
+};
+
+/**
  * Generate EXIF-based deduplication key for matching across platforms.
  * Priority: captureTime+make+model > captureTime+model > captureTime+make > captureTime only
  * @param {Object} exifData - { captureTime, make, model } from extractExifForDedup
@@ -292,7 +351,7 @@ const CORNER_MATCH_THRESHOLD = 2;
  * @param {number} threshold - Max Hamming distance for match (default 5)
  * @returns {boolean} True if a close match exists
  */
-export { extractBaseFilename, normalizeDateForCompare, normalizeFullTimestamp, extractExifForDedup, generateExifDedupKeys, CROSS_PLATFORM_DHASH_THRESHOLD };
+export { extractBaseFilename, normalizeDateForCompare, normalizeFullTimestamp, extractExifForDedup, extractExifForDedupNative, generateExifDedupKeys, CROSS_PLATFORM_DHASH_THRESHOLD };
 
 export const findPerceptualHashMatch = (hash, hashSet, threshold = CROSS_PLATFORM_DHASH_THRESHOLD) => {
   if (!hash || hash.length !== 16 || !hashSet || hashSet.size === 0) return false;

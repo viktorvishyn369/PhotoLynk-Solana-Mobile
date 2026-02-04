@@ -54,6 +54,7 @@ import {
   normalizeDateForCompare,
   normalizeFullTimestamp,
   extractExifForDedup,
+  extractExifForDedupNative,
   CROSS_PLATFORM_DHASH_THRESHOLD,
 } from './duplicateScanner';
 
@@ -1004,29 +1005,8 @@ const encryptAndUpload = async ({
   }
 
   // Build and encrypt manifest
-  // Extract EXIF data - iOS uses assetInfo.exif, Android needs native module
-  let exifData = { captureTime: null, make: null, model: null };
-  try {
-    if (Platform.OS === 'ios') {
-      exifData = extractExifForDedup(assetInfo, asset);
-    } else {
-      // Android: use native ExifExtractor module
-      const { NativeModules } = require('react-native');
-      const ExifExtractor = NativeModules.ExifExtractor;
-      if (ExifExtractor && typeof ExifExtractor.extractExif === 'function') {
-        const result = await ExifExtractor.extractExif(filePath);
-        if (result) {
-          exifData = {
-            captureTime: result.captureTime || null,
-            make: result.make ? result.make.trim().toLowerCase() : null,
-            model: result.model ? result.model.trim().toLowerCase() : null,
-          };
-        }
-      }
-    }
-  } catch (e) {
-    console.warn('[Backup] EXIF extraction failed (non-critical):', filename, e?.message);
-  }
+  // Use native ExifExtractor for reliable iOS EXIF extraction (assetInfo.exif is incomplete on iOS)
+  const exifData = await extractExifForDedupNative(filePath, assetInfo, asset);
   const manifest = {
     v: 1,
     assetId: asset.id,
