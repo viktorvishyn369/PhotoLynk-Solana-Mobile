@@ -419,45 +419,8 @@ export const autoUploadStealthCloudUploadOneAsset = async ({
       return { uploaded: 0, skipped: 1, failed: 0, manifestId };
     }
   }
-
-  // EXIF-based deduplication for cross-platform HEIC matching
-  // Extract real EXIF data from the file and compare with manifest EXIF data
-  const isHEIC = filename && /\.(heic|heif)$/i.test(filename);
-  if (isHEIC && (alreadyExifFull || alreadyExifTimeModel || alreadyExifTimeMake)) {
-    try {
-      const { extractExifFromHEIC } = require('./exifExtractor');
-      const exifData = await extractExifFromHEIC(filePath);
-      if (exifData && exifData.captureTime) {
-        const ct = exifData.captureTime;
-        const mk = exifData.make;
-        const md = exifData.model;
-        // Check EXIF matches in priority order (highest confidence first)
-        if (ct && mk && md && alreadyExifFull && alreadyExifFull.has(`${ct}|${mk}|${md}`)) {
-          console.log(`AutoUpload: Skipping ${filename} - EXIF full match (time+make+model)`);
-          if (staged && staged.tmpCopied && staged.tmpUri) {
-            try { await FileSystem.deleteAsync(staged.tmpUri, { idempotent: true }); } catch (e) {}
-          }
-          return { uploaded: 0, skipped: 1, failed: 0, manifestId };
-        }
-        if (ct && md && alreadyExifTimeModel && alreadyExifTimeModel.has(`${ct}|${md}`)) {
-          console.log(`AutoUpload: Skipping ${filename} - EXIF time+model match`);
-          if (staged && staged.tmpCopied && staged.tmpUri) {
-            try { await FileSystem.deleteAsync(staged.tmpUri, { idempotent: true }); } catch (e) {}
-          }
-          return { uploaded: 0, skipped: 1, failed: 0, manifestId };
-        }
-        if (ct && mk && alreadyExifTimeMake && alreadyExifTimeMake.has(`${ct}|${mk}`)) {
-          console.log(`AutoUpload: Skipping ${filename} - EXIF time+make match`);
-          if (staged && staged.tmpCopied && staged.tmpUri) {
-            try { await FileSystem.deleteAsync(staged.tmpUri, { idempotent: true }); } catch (e) {}
-          }
-          return { uploaded: 0, skipped: 1, failed: 0, manifestId };
-        }
-      }
-    } catch (e) {
-      console.warn('AutoUpload: EXIF extraction failed for', filename, e?.message);
-    }
-  }
+  
+  // NOTE: EXIF-based dedup removed - causes false positives when photos taken in same second with same make/model
   
   // Fallback 1: base filename + size match (within 20% tolerance for re-compression)
   if (baseFilename && alreadyBaseNameSizes && alreadyBaseNameSizes.has(baseFilename)) {
