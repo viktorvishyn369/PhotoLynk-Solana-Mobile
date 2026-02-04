@@ -1287,32 +1287,32 @@ export const scanSimilarPhotos = async ({
       let threshold;
       if (bothHaveExif) {
         // Both have reliable EXIF timestamps - use full time-based thresholds
-        if (dt <= 5000) {
-          // Within 5 seconds - burst shots
-          threshold = 24;
-        } else if (dt <= 30000) {
-          // Within 30 seconds
+        if (dt <= 30000) {
+          // Within 30 seconds - burst shots
           threshold = 18;
-        } else if (dt <= 60000) {
-          // Within 1 minute
-          threshold = 12;
+        } else if (dt <= 1800000) {
+          // Within 30 minutes
+          threshold = 14;
+        } else if (dt <= 14400000) {
+          // Within 4 hours
+          threshold = 10;
         } else {
-          // More than 1 minute apart
+          // More than 4 hours apart
           threshold = 6;
         }
       } else {
-        // No EXIF - use system timestamp with stricter fallback thresholds
-        if (dt <= 5000) {
-          // Within 5 seconds
-          threshold = 12;
-        } else if (dt <= 30000) {
+        // No EXIF - use system timestamp with same timings but existing stricter thresholds
+        if (dt <= 30000) {
           // Within 30 seconds
+          threshold = 12;
+        } else if (dt <= 1800000) {
+          // Within 30 minutes
           threshold = 9;
-        } else if (dt <= 60000) {
-          // Within 1 minute
+        } else if (dt <= 14400000) {
+          // Within 4 hours
           threshold = 6;
         } else {
-          // More than 1 minute apart
+          // More than 4 hours apart
           threshold = 3;
         }
       }
