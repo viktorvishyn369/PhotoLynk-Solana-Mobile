@@ -1276,25 +1276,62 @@ export const scanSimilarPhotos = async ({
       const bHash = b.hash.startsWith('image:') ? b.hash.substring(6) : b.hash;
 
       const dist = hammingDistance64(aHash, bHash);
-
-      // Time-based dHash threshold - photographers take burst shots in quick succession
-      const dhashThreshold = 1; // exact-level matching requested
       
-      // Check if similar by dHash only - edge/corner fallback removed (caused false positives)
-      let isSimilar = dist <= dhashThreshold;
+      // Calculate time difference for threshold selection
+      const dt = Math.abs((a.createdTs || 0) - (b.createdTs || 0));
+      
+      // Determine threshold based on time proximity (scaled for 64-bit dHash)
+      // More lenient for burst shots, stricter for photos taken far apart
+      const bothHaveExif = a.hasExifTime && b.hasExifTime;
+      
+      let threshold;
+      if (bothHaveExif) {
+        // Both have reliable EXIF timestamps - use full time-based thresholds
+        if (dt <= 5000) {
+          // Within 5 seconds - burst shots
+          threshold = 24;
+        } else if (dt <= 30000) {
+          // Within 30 seconds
+          threshold = 18;
+        } else if (dt <= 60000) {
+          // Within 1 minute
+          threshold = 12;
+        } else {
+          // More than 1 minute apart
+          threshold = 6;
+        }
+      } else {
+        // No EXIF - use system timestamp with stricter fallback thresholds
+        if (dt <= 5000) {
+          // Within 5 seconds
+          threshold = 12;
+        } else if (dt <= 30000) {
+          // Within 30 seconds
+          threshold = 9;
+        } else if (dt <= 60000) {
+          // Within 1 minute
+          threshold = 6;
+        } else {
+          // More than 1 minute apart
+          threshold = 3;
+        }
+      }
+      
+      // Check if similar by dHash with time-based threshold
+      let isSimilar = dist <= threshold;
 
       if (!isSimilar) continue;
 
       // Debug log matches to verify thresholds are working
       if (similarPairs.length < 5) {
-        console.log(`[DupScanner] MATCH: ${a.filename} vs ${b.filename} dist=${dist}`);
+        console.log(`[DupScanner] MATCH: ${a.filename} vs ${b.filename} dist=${dist} threshold=${threshold} bothExif=${bothHaveExif} dt=${Math.round(dt/1000)}s`);
       }
 
       const key = [a.asset.id, b.asset.id].sort().join('|');
       if (seen.has(key)) continue;
       seen.add(key);
 
-      similarPairs.push({ a, b, dist });
+      similarPairs.push({ a, b, dist, dt });
     }
 
     // Thermal cooldown every 200 outer iterations
@@ -1363,8 +1400,9 @@ export const scanSimilarPhotos = async ({
     const aId = pair.a.asset.id;
     const bId = pair.b.asset.id;
     
-    // Skip if both already used in a group
-    if (usedIds.has(aId) && usedIds.has(bId)) continue;
+    // Skip if either item is already used in a group
+    // This prevents items from being in multiple groups
+    if (usedIds.has(aId) || usedIds.has(bId)) continue;
     
     // Start a new group with this pair
     const group = [aId, bId];

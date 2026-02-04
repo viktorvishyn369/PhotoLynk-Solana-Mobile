@@ -56,9 +56,9 @@ import {
 
 import { getCachedHash, setCachedHash, loadHashCache, flushHashCache, abortPreAnalysis } from './hashCache';
 
-// Sync-specific dHash threshold (6 bits = ~9% tolerance for cross-platform decoder differences)
-// This is more lenient than backup dedup (0 bits) to handle HEIC/JPEG conversion differences
-const SYNC_DHASH_THRESHOLD = 6;
+// Sync dHash threshold - same as backup for consistency (1 bit = ~1.5% tolerance)
+// Strict matching to avoid false positives
+const SYNC_DHASH_THRESHOLD = 1;
 
 import {
   chooseStealthCloudMaxParallelChunkUploads,

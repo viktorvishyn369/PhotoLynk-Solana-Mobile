@@ -1537,6 +1537,36 @@ export const stealthCloudBackupSelectedCore = async ({
   updateProgress(onProgress, 0.10, true);
   const dedupSets = buildDedupSetsFromMeta(serverManifests);
   
+  // Debug: count manifests with/without metadata
+  let withMeta = 0, withoutMeta = 0;
+  const manifestsWithoutMeta = [];
+  for (const m of serverManifests) {
+    if (m.filename || m.fileHash || m.perceptualHash) {
+      withMeta++;
+    } else {
+      withoutMeta++;
+      manifestsWithoutMeta.push(m);
+    }
+  }
+  console.log(`[Backup Selected] Server: ${serverManifests.length} files (${withMeta} with meta, ${withoutMeta} without)`);
+  
+  // Backfill metadata for old manifests that are missing it
+  if (manifestsWithoutMeta.length > 0) {
+    console.log(`[Backup Selected] Backfilling metadata for ${manifestsWithoutMeta.length} manifests without metadata...`);
+    const backfilled = await backfillManifestMetadata(SERVER_URL, config, masterKey, manifestsWithoutMeta, onStatus);
+    if (backfilled > 0) {
+      // Re-fetch manifests to get updated metadata
+      try {
+        serverManifests = await fetchManifestsWithMeta(SERVER_URL, config);
+        const newDedupSets = buildDedupSetsFromMeta(serverManifests);
+        Object.assign(dedupSets, newDedupSets);
+        console.log(`[Backup Selected] After backfill: manifestIds=${dedupSets.manifestIds.size}, filenames=${dedupSets.filenames.size}, pHashes=${dedupSets.perceptualHashes.size}`);
+      } catch (e) {
+        console.warn('[Backup Selected] Failed to re-fetch after backfill:', e?.message);
+      }
+    }
+  }
+  
   const sessionHashes = {
     sessionFileHashes: new Set(),
     sessionPerceptualHashes: new Set(),
