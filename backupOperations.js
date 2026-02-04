@@ -543,48 +543,16 @@ const buildDedupSetsFromMeta = (manifests) => {
 
 /**
  * Quick dedup check using pre-built sets (no network, instant)
+ * Only uses reliable checks: manifestId (filename+size hash)
+ * Hash-based dedup (dHash 1-bit, fileHash) is done separately after computing hashes
  */
 const checkDedupQuick = (manifestId, filename, originalSize, creationTime, dedupSets) => {
-  const { manifestIds, filenames, baseNameSizes, baseNameDates, baseNameTimestamps } = dedupSets;
+  const { manifestIds } = dedupSets;
 
-  // Check 1: ManifestId (most reliable - hash of filename+size)
+  // Only check ManifestId (hash of filename+size) - most reliable quick check
+  // All other dedup is done via dHash 1-bit and exact fileHash after computing hashes
   if (manifestIds.has(manifestId)) {
     return { skip: true, reason: 'manifestId' };
-  }
-
-  // Check 2: Exact filename
-  const normalizedFilename = filename ? normalizeFilenameForCompare(filename) : null;
-  if (normalizedFilename && filenames.has(normalizedFilename)) {
-    return { skip: true, reason: 'filename' };
-  }
-
-  const baseName = filename ? extractBaseFilename(filename) : null;
-  if (!baseName) return { skip: false };
-
-  // Check 3: Full timestamp match (HEIC priority)
-  const fullTs = creationTime ? normalizeFullTimestamp(creationTime) : null;
-  if (fullTs && baseNameTimestamps.has(baseName)) {
-    if (baseNameTimestamps.get(baseName).has(fullTs)) {
-      return { skip: true, reason: 'timestamp' };
-    }
-  }
-
-  // Check 4: Base filename + size (within 20% tolerance)
-  if (originalSize && baseNameSizes.has(baseName)) {
-    for (const existingSize of baseNameSizes.get(baseName)) {
-      const diff = Math.abs(originalSize - existingSize) / Math.max(originalSize, existingSize);
-      if (diff < 0.20) {
-        return { skip: true, reason: 'size' };
-      }
-    }
-  }
-
-  // Check 5: Base filename + date
-  const dateStr = creationTime ? normalizeDateForCompare(creationTime) : null;
-  if (dateStr && baseNameDates.has(baseName)) {
-    if (baseNameDates.get(baseName).has(dateStr)) {
-      return { skip: true, reason: 'date' };
-    }
   }
 
   return { skip: false };
@@ -1585,6 +1553,7 @@ export const stealthCloudBackupSelectedCore = async ({
       const quickCheck = checkDedupQuick(manifestId, filename, originalSize, creationTime, dedupSets);
       if (quickCheck.skip) {
         skipped++;
+        console.log(`[Backup Selected] Skip ${filename}: quick dedup (${quickCheck.reason})`);
         if (tmpCopied && tmpUri) await FileSystem.deleteAsync(tmpUri, { idempotent: true });
         continue;
       }
@@ -1601,6 +1570,7 @@ export const stealthCloudBackupSelectedCore = async ({
       const hashCheck = checkDedupByHash(fileHash, perceptualHash, dedupSets, sessionHashes);
       if (hashCheck.skip) {
         skipped++;
+        console.log(`[Backup Selected] Skip ${filename}: hash dedup (${hashCheck.reason})`);
         if (tmpCopied && tmpUri) await FileSystem.deleteAsync(tmpUri, { idempotent: true });
         continue;
       }
