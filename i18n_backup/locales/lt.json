@@ -206,7 +206,7 @@
 		"connectingToServer": "Jungiamasi prie serverio...",
 		"connectionFailed": "Ryšys nepavyko",
 		"connectionSuccess": "Sėkmingai prisijungta",
-		"syncHashing": "Sinchronizavimas: {{current}} iš {{total}}: {{filename}}",
+		"syncPreparing": "Sinchronizavimas: {{current}} iš {{total}}: {{filename}}",
 		"processing": "{{current}} iš {{total}} apdorojimas...",
 		"syncScanning": "Sinchronizavimas: {{current}} nuskaitymas {{total}} vietinių failų...",
 		"syncScanningAlbums": "Sync: {{count}} nuotraukų ir vaizdo įrašų skenavimas",

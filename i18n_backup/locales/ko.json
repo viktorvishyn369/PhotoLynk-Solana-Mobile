@@ -207,7 +207,7 @@
 		"connectingToServer": "서버에 연결 중...",
 		"connectionFailed": "연결 실패",
 		"connectionSuccess": "성공적으로 연결됨",
-		"syncHashing": "동기화: {{current}}의 해싱 {{total}}: {{filename}}",
+		"syncPreparing": "동기화: {{current}}의 해싱 {{total}}: {{filename}}",
 		"hashing": "{{current}}의 {{total}} 해싱: {{filename}}",
 		"scanningPhotos": "{{total}} 사진 및 비디오의 {{current}} 스캔하기",
 		"scanningAlbums": "사진 및 동영상 스캔",

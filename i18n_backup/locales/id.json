@@ -206,7 +206,7 @@
 		"connectingToServer": "Menghubungkan ke server...",
 		"connectionFailed": "Koneksi gagal",
 		"connectionSuccess": "Berhasil tersambung",
-		"syncHashing": "Sinkronisasi: Meng-hash {{current}} dari {{total}}: {{filename}}",
+		"syncPreparing": "Sinkronisasi: Meng-hash {{current}} dari {{total}}: {{filename}}",
 		"hashing": "Meng-hash {{current}} dari {{total}}: {{filename}}",
 		"scanningPhotos": "Memindai foto & video {{current}} dari {{total}}",
 		"scanningAlbums": "Memindai album...",

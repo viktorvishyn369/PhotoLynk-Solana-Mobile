@@ -207,7 +207,7 @@
 		"connectingToServer": "الاتصال بالخادم...",
 		"connectionFailed": "فشل الاتصال",
 		"connectionSuccess": "تم الاتصال بنجاح",
-		"syncHashing": "المزامنة تجزئة {{current}} من {{total}}: {{filename}}",
+		"syncPreparing": "المزامنة تجزئة {{current}} من {{total}}: {{filename}}",
 		"hashing": "تجزئة {{current}} من {{total}}: {{filename}}",
 		"scanningPhotos": "مسح ضوئي لصور ومقاطع فيديو {{current}} من {{total}}",
 		"scanningAlbums": "مسح الصور ومقاطع الفيديو",

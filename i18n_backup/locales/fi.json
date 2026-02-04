@@ -206,7 +206,7 @@
 		"connectingToServer": "Yhteyden muodostaminen palvelimeen...",
 		"connectionFailed": "Yhteys epäonnistui",
 		"connectionSuccess": "Yhdistetty onnistuneesti",
-		"syncHashing": "Synkronoi: {{filename}}",
+		"syncPreparing": "Synkronoi: {{filename}}",
 		"hashing": "Tiivistetään {{current}} / {{total}}: {{filename}}",
 		"scanningPhotos": "Skannataan kuvia ja videoita {{current}} / {{total}}",
 		"scanningAlbums": "Skannataan kuvia & videoita",

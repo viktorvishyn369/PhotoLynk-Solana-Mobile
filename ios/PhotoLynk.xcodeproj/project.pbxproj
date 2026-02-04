@@ -16,12 +16,12 @@
 		BAC8AD7D90D84F3E8A212845 /* noop-file.swift in Sources */ = {isa = PBXBuildFile; fileRef = B63C631FAAC5479BA1A83D39 /* noop-file.swift */; };
 		BB2F792D24A3F905000567C9 /* Expo.plist in Resources */ = {isa = PBXBuildFile; fileRef = BB2F792C24A3F905000567C9 /* Expo.plist */; };
 		C5BFC82DE1A3EF5CF9358039 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = B2224EBCE5A03406E3D4DB82 /* PrivacyInfo.xcprivacy */; };
+		EXIFEXT001 /* ExifExtractorModule.swift in Sources */ = {isa = PBXBuildFile; fileRef = EXIFEXT002 /* ExifExtractorModule.swift */; };
+		EXIFEXT003 /* ExifExtractorModule.m in Sources */ = {isa = PBXBuildFile; fileRef = EXIFEXT004 /* ExifExtractorModule.m */; };
 		MEDIADEL001 /* MediaDeleteModule.swift in Sources */ = {isa = PBXBuildFile; fileRef = MEDIADEL002 /* MediaDeleteModule.swift */; };
 		MEDIADEL003 /* MediaDelete.m in Sources */ = {isa = PBXBuildFile; fileRef = MEDIADEL004 /* MediaDelete.m */; };
 		PIXELHASH001 /* PixelHashModule.swift in Sources */ = {isa = PBXBuildFile; fileRef = PIXELHASH002 /* PixelHashModule.swift */; };
 		PIXELHASH003 /* PixelHash.m in Sources */ = {isa = PBXBuildFile; fileRef = PIXELHASH004 /* PixelHash.m */; };
-		EXIFEXT001 /* ExifExtractorModule.swift in Sources */ = {isa = PBXBuildFile; fileRef = EXIFEXT002 /* ExifExtractorModule.swift */; };
-		EXIFEXT003 /* ExifExtractorModule.m in Sources */ = {isa = PBXBuildFile; fileRef = EXIFEXT004 /* ExifExtractorModule.m */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -40,13 +40,13 @@
 		B63C631FAAC5479BA1A83D39 /* noop-file.swift */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = 4; includeInIndex = 0; lastKnownFileType = sourcecode.swift; name = "noop-file.swift"; path = "PhotoLynk/noop-file.swift"; sourceTree = "<group>"; };
 		BB2F792C24A3F905000567C9 /* Expo.plist */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; path = Expo.plist; sourceTree = "<group>"; };
 		ED297162215061F000B7C4FE /* JavaScriptCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = JavaScriptCore.framework; path = System/Library/Frameworks/JavaScriptCore.framework; sourceTree = SDKROOT; };
+		EXIFEXT002 /* ExifExtractorModule.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; name = ExifExtractorModule.swift; path = PhotoLynk/ExifExtractorModule.swift; sourceTree = "<group>"; };
+		EXIFEXT004 /* ExifExtractorModule.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; name = ExifExtractorModule.m; path = PhotoLynk/ExifExtractorModule.m; sourceTree = "<group>"; };
 		FAC715A2D49A985799AEE119 /* ExpoModulesProvider.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ExpoModulesProvider.swift; path = "Pods/Target Support Files/Pods-PhotoLynk/ExpoModulesProvider.swift"; sourceTree = "<group>"; };
 		MEDIADEL002 /* MediaDeleteModule.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; name = MediaDeleteModule.swift; path = PhotoLynk/MediaDeleteModule.swift; sourceTree = "<group>"; };
 		MEDIADEL004 /* MediaDelete.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; name = MediaDelete.m; path = PhotoLynk/MediaDelete.m; sourceTree = "<group>"; };
 		PIXELHASH002 /* PixelHashModule.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; name = PixelHashModule.swift; path = PhotoLynk/PixelHashModule.swift; sourceTree = "<group>"; };
 		PIXELHASH004 /* PixelHash.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; name = PixelHash.m; path = PhotoLynk/PixelHash.m; sourceTree = "<group>"; };
-		EXIFEXT002 /* ExifExtractorModule.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; name = ExifExtractorModule.swift; path = PhotoLynk/ExifExtractorModule.swift; sourceTree = "<group>"; };
-		EXIFEXT004 /* ExifExtractorModule.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; name = ExifExtractorModule.m; path = PhotoLynk/ExifExtractorModule.m; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */

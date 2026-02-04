@@ -206,7 +206,7 @@
 		"connectingToServer": "Σύνδεση στο διακομιστή...",
 		"connectionFailed": "Η σύνδεση απέτυχε",
 		"connectionSuccess": "Συνδέθηκε με επιτυχία",
-		"syncHashing": "Συγχρονισμός: Hashing {{current}} από {{total}}: {{filename}}",
+		"syncPreparing": "Συγχρονισμός: Preparing {{current}} από {{total}}: {{filename}}",
 		"hashing": "Κρυπτογράφηση {{current}} του {{total}}: {{filename}}",
 		"scanningPhotos": "Σάρωση {{current}} των φωτογραφιών και βίντεο {{total}}",
 		"scanningAlbums": "Σάρωση άλμπουμ...",

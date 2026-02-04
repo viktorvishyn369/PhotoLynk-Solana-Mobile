@@ -172,7 +172,7 @@
 		"backupFailed": "백업 실패",
 		"backupProgress": "백업: {{current}}의 {{total}}",
 		"allFilesBackedUp": "이미 백업된 모든 {{count}} 파일",
-		"syncPreparing": "동기화: 준비",
+		"syncPreparing": "동기화: {{current}}의 해싱 {{total}}: {{filename}}",
 		"syncFoundFiles": "동기화: {{count}} 서버 파일을 찾았습니다...",
 		"syncScanningLocal": "동기화: 로컬 사진 스캔...",
 		"syncDownloading": "동기화: 다운로드 중...",
@@ -220,8 +220,7 @@
 		"connectingToServer": "서버에 연결 중...",
 		"connectionFailed": "연결 실패",
 		"connectionSuccess": "성공적으로 연결됨",
-		"syncHashing": "동기화: {{current}}의 해싱 {{total}}: {{filename}}",
-		"hashing": "{{current}}의 {{total}} 해싱: {{filename}}",
+		"hashing": "준비 중 {{current}} / {{total}}: {{filename}}",
 		"scanningPhotos": "{{total}} 사진 및 비디오의 {{current}} 스캔하기",
 		"scanningAlbums": "사진 및 동영상 스캔",
 		"scanningAlbumsFound": "스캔: {{count}} 사진 및 동영상 발견",
@@ -253,7 +252,8 @@
 		"deletionCancelledPartial": "삭제 취소 또는 부분 삭제",
 		"scanningAnalyzingTotalPhotos": "스캔: {{total}}개 사진 분석 중",
 		"scanningAnalyzingProgressPhotos": "스캔: {{current}}/{{total}}개 사진 분석 중",
-		"switchingServer": "서버 전환 중..."
+		"switchingServer": "서버 전환 중...",
+		"syncHashing": "동기화: 준비 중 {{current}} / {{total}}: {{filename}}"
 	},
 	"restore": {
 		"title": "사진 복원",

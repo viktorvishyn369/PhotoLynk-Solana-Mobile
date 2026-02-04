@@ -1278,22 +1278,7 @@ export const scanSimilarPhotos = async ({
       const dist = hammingDistance64(aHash, bHash);
 
       // Time-based dHash threshold - photographers take burst shots in quick succession
-      const dt = Math.abs((b.createdTs || 0) - (a.createdTs || 0));
-      const bothHaveExif = a.hasExifTime && b.hasExifTime;
-      let dhashThreshold;
-      if (bothHaveExif) {
-        // With EXIF timestamps
-        if (dt < 30000) dhashThreshold = 16;        // <30 seconds - burst shots
-        else if (dt < 60000) dhashThreshold = 14;   // <1 minute
-        else if (dt < 3600000) dhashThreshold = 10; // <1 hour
-        else dhashThreshold = 6;                     // >1 hour apart
-      } else {
-        // Without EXIF - stricter thresholds (file timestamps less reliable)
-        if (dt < 30000) dhashThreshold = 11;        // <30 seconds
-        else if (dt < 60000) dhashThreshold = 9;    // <1 minute
-        else if (dt < 3600000) dhashThreshold = 7;  // <1 hour
-        else dhashThreshold = 5;                     // >1 hour apart
-      }
+      const dhashThreshold = 1; // exact-level matching requested
       
       // Check if similar by dHash only - edge/corner fallback removed (caused false positives)
       let isSimilar = dist <= dhashThreshold;

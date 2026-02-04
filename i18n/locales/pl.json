@@ -172,7 +172,7 @@
 		"backupFailed": "Kopia zapasowa nie powiodła się",
 		"backupProgress": "Kopia zapasowa: {{current}} lub {{total}}",
 		"allFilesBackedUp": "Wszystkie pliki {{count}} już zarchiwizowane",
-		"syncPreparing": "Synchronizacja: Przygotowanie",
+		"syncPreparing": "Synchronizacja: Preparing {{current}} z {{total}}: {{filename}}",
 		"syncFoundFiles": "Synchronizacja: Znaleziono pliki serwera {{count}}...",
 		"syncScanningLocal": "Synchronizacja: Skanowanie lokalnych zdjęć...",
 		"syncDownloading": "Synchronizacja: Pobieranie...",
@@ -220,8 +220,7 @@
 		"connectingToServer": "Łączenie z serwerem...",
 		"connectionFailed": "Połączenie nie powiodło się",
 		"connectionSuccess": "Połączenie zostało nawiązane pomyślnie",
-		"syncHashing": "Synchronizacja: Hashing {{current}} z {{total}}: {{filename}}",
-		"hashing": "Hashing {{current}} z {{total}}: {{filename}}",
+		"hashing": "Przygotowywanie {{current}} z {{total}}: {{filename}}",
 		"scanningPhotos": "Skanowanie zdjęć i filmów {{current}} z {{total}}",
 		"scanningAlbums": "Skanowanie zdjęć & filmów",
 		"scanningAlbumsFound": "Skanowanie: Znaleziono {{count}} zdjęć & filmów",
@@ -253,7 +252,8 @@
 		"deletionCancelledPartial": "Usunięcie anulowane lub częściowe",
 		"scanningAnalyzingTotalPhotos": "Skanowanie: Analiza {{total}} zdjęć",
 		"scanningAnalyzingProgressPhotos": "Skanowanie: Analiza {{current}} z {{total}} zdjęć",
-		"switchingServer": "Przełączanie serwera..."
+		"switchingServer": "Przełączanie serwera...",
+		"syncHashing": "Synchronizacja: Przygotowywanie {{current}} z {{total}}: {{filename}}"
 	},
 	"restore": {
 		"title": "Przywracanie zdjęć",

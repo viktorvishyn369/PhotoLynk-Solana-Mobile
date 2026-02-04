@@ -171,7 +171,7 @@
 		"backupFailed": "Pencadangan gagal",
 		"backupProgress": "Cadangan: {{current}} dari {{total}}",
 		"allFilesBackedUp": "Semua file {{count}} sudah dicadangkan",
-		"syncPreparing": "Sinkronisasi: Mempersiapkan...",
+		"syncPreparing": "Sinkronisasi: Meng-hash {{current}} dari {{total}}: {{filename}}",
 		"syncFoundFiles": "Sinkronisasi: Ditemukan file server {{count}}...",
 		"syncScanningLocal": "Sinkronisasi: Memindai foto lokal...",
 		"syncDownloading": "Sinkronisasi: Mengunduh...",
@@ -219,8 +219,7 @@
 		"connectingToServer": "Menghubungkan ke server...",
 		"connectionFailed": "Koneksi gagal",
 		"connectionSuccess": "Berhasil tersambung",
-		"syncHashing": "Sinkronisasi: Meng-hash {{current}} dari {{total}}: {{filename}}",
-		"hashing": "Meng-hash {{current}} dari {{total}}: {{filename}}",
+		"hashing": "Mempersiapkan {{current}} dari {{total}}: {{filename}}",
 		"scanningPhotos": "Memindai foto & video {{current}} dari {{total}}",
 		"scanningAlbums": "Memindai album...",
 		"scanningAlbumsFound": "Memindai... Foto & video {{count}} ditemukan",
@@ -252,7 +251,8 @@
 		"deletionCancelledPartial": "Penghapusan dibatalkan atau sebagian",
 		"scanningAnalyzingTotalPhotos": "Memindai: Menganalisis {{total}} foto",
 		"scanningAnalyzingProgressPhotos": "Memindai: Menganalisis {{current}} dari {{total}} foto",
-		"switchingServer": "Mengganti server..."
+		"switchingServer": "Mengganti server...",
+		"syncHashing": "Sinkronisasi: Mempersiapkan {{current}} dari {{total}}: {{filename}}"
 	},
 	"restore": {
 		"title": "Mengembalikan Foto",

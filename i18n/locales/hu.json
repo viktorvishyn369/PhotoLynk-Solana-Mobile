@@ -171,7 +171,7 @@
 		"backupFailed": "A biztonsági mentés sikertelen",
 		"backupProgress": "Biztonsági mentés: {{current}} az {{total}}-ről",
 		"allFilesBackedUp": "Minden {{count}} fájlról már készült biztonsági mentés",
-		"syncPreparing": "Szinkronizálás: Felkészülés...",
+		"syncPreparing": "Szinkronizálás: Preparing {{current}} / {{total}}: {{filename}}",
 		"syncFoundFiles": "Szinkronizálás: {{count}} szerverfájlokat találtam...",
 		"syncScanningLocal": "Szinkronizálás: Helyi fényképek beolvasása...",
 		"syncDownloading": "Szinkronizálás: Letöltés...",
@@ -219,8 +219,7 @@
 		"connectingToServer": "Csatlakozás a szerverhez...",
 		"connectionFailed": "A kapcsolat sikertelen",
 		"connectionSuccess": "Sikeresen csatlakoztatva",
-		"syncHashing": "Szinkronizálás: Hashing {{current}} / {{total}}: {{filename}}",
-		"hashing": "{{total}} {{current}}-nek a következőkből történő kivonatolása: {{filename}}",
+		"hashing": "Előkészítés {{current}} / {{total}}: {{filename}}",
 		"scanningPhotos": "{{total}} fotók és videók {{current}} beolvasása",
 		"scanningAlbums": "Albumok szkennelése...",
 		"scanningAlbumsFound": "Szkennelés... {{count}} talált fényképek és videók",
@@ -252,7 +251,8 @@
 		"deletionCancelledPartial": "Törlés törölt vagy részleges",
 		"scanningAnalyzingTotalPhotos": "Szkennelés: {{total}} fotó elemzése",
 		"scanningAnalyzingProgressPhotos": "Szkennelés: {{current}}/{{total}} fotó elemzése",
-		"switchingServer": "Szerver váltása..."
+		"switchingServer": "Szerver váltása...",
+		"syncHashing": "Szinkronizálás: Előkészítés {{current}} / {{total}}: {{filename}}"
 	},
 	"restore": {
 		"title": "Fotók helyreállítása",

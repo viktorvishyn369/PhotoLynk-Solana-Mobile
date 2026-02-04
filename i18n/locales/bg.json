@@ -171,7 +171,7 @@
 		"backupFailed": "Неуспешно архивиране",
 		"backupProgress": "Резервно копие: {{current}} на {{total}}",
 		"allFilesBackedUp": "Всички {{count}} файлове вече са архивирани",
-		"syncPreparing": "Синхронизиране: Подготвя се...",
+		"syncPreparing": "Синхронизиране: Хеширане на {{current}} на {{total}}: {{filename}}",
 		"syncFoundFiles": "Синхронизиране: {{count}} сървърни файлове...",
 		"syncScanningLocal": "Синхронизиране: Сканиране на местни снимки...",
 		"syncDownloading": "Синхронизиране: Изтегляне на...",
@@ -219,8 +219,7 @@
 		"connectingToServer": "Свързване със сървъра...",
 		"connectionFailed": "Свързването е неуспешно",
 		"connectionSuccess": "Успешно свързване",
-		"syncHashing": "Синхронизиране: Хеширане на {{current}} на {{total}}: {{filename}}",
-		"hashing": "Хеширане на {{current}} на {{total}}: {{filename}}",
+		"hashing": "Подготовка {{current}} от {{total}}: {{filename}}",
 		"scanningPhotos": "Сканиране на {{current}} на снимки и видеоклипове {{total}}",
 		"scanningAlbums": "Сканиране на албуми...",
 		"scanningAlbumsFound": "Сканиране... {{count}} намерени снимки и видеоклипове",
@@ -252,7 +251,8 @@
 		"deletionCancelledPartial": "Отменено или частично заличаване",
 		"scanningAnalyzingTotalPhotos": "Сканиране: Анализ на {{total}} снимки",
 		"scanningAnalyzingProgressPhotos": "Сканиране: Анализ на {{current}} от {{total}} снимки",
-		"switchingServer": "Превключване на сървър..."
+		"switchingServer": "Превключване на сървър...",
+		"syncHashing": "Синхронизация: Подготовка {{current}} от {{total}}: {{filename}}"
 	},
 	"restore": {
 		"title": "Възстановяване на снимки",

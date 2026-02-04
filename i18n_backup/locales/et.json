@@ -206,7 +206,7 @@
 		"connectingToServer": "Ühendamine serveriga...",
 		"connectionFailed": "Ühendus ebaõnnestus",
 		"connectionSuccess": "Edukalt ühendatud",
-		"syncHashing": "Sünkroonimine: {{total}}: {{filename}}: {{filename}}",
+		"syncPreparing": "Sünkroonimine: {{total}}: {{filename}}: {{filename}}",
 		"hashing": "{{total}}-i {{current}}-i pesemine: {{filename}}",
 		"scanningPhotos": "{{current}} {{total}} fotode ja videote skaneerimine",
 		"scanningAlbums": "Fotode ja videote skaneerimine",

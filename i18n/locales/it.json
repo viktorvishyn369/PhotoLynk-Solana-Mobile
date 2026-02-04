@@ -172,7 +172,7 @@
 		"backupFailed": "Backup fallito",
 		"backupProgress": "Backup: {{current}} di {{total}}",
 		"allFilesBackedUp": "Tutti i file {{count}} già sottoposti a backup",
-		"syncPreparing": "Sincronizzazione: Preparazione",
+		"syncPreparing": "Sincronizzazione: Preparing {{current}} di {{total}}: {{filename}}",
 		"syncFoundFiles": "Sincronizzazione: Trovato file server {{count}}...",
 		"syncScanningLocal": "Sincronizzazione: Scansione di foto locali...",
 		"syncDownloading": "Sincronizzazione: Scaricamento...",
@@ -220,8 +220,7 @@
 		"connectingToServer": "Connessione al server...",
 		"connectionFailed": "Connessione fallita",
 		"connectionSuccess": "Collegato con successo",
-		"syncHashing": "Sincronizzazione: Hashing {{current}} di {{total}}: {{filename}}",
-		"hashing": "Hashing {{current}} di {{total}}: {{filename}}",
+		"hashing": "Preparazione {{current}} di {{total}}: {{filename}}",
 		"scanningPhotos": "Scansione {{current}} di foto e video {{total}}",
 		"scanningAlbums": "Scansione foto & video",
 		"scanningAlbumsFound": "Scansione: {{count}} foto & video trovati",
@@ -253,7 +252,8 @@
 		"deletionCancelledPartial": "Cancellazione annullata o parziale",
 		"scanningAnalyzingTotalPhotos": "Scansione: Analisi di {{total}} foto",
 		"scanningAnalyzingProgressPhotos": "Scansione: Analisi di {{current}} di {{total}} foto",
-		"switchingServer": "Cambio server..."
+		"switchingServer": "Cambio server...",
+		"syncHashing": "Sincronizzazione: Preparazione {{current}} di {{total}}: {{filename}}"
 	},
 	"restore": {
 		"title": "Ripristino delle foto",

@@ -206,7 +206,7 @@
 		"connectingToServer": "Sunucuya bağlanılıyor...",
 		"connectionFailed": "Bağlantı başarısız",
 		"connectionSuccess": "Başarıyla bağlandı",
-		"syncHashing": "Senkronizasyon: {{total}}'in {{current}}'i: {{filename}}",
+		"syncPreparing": "Senkronizasyon: {{total}}'in {{current}}'i: {{filename}}",
 		"hashing": "{{total}}'in {{current}} karması: {{filename}}",
 		"scanningPhotos": "{{total}} fotoğraf ve videolarının {{current}} taranması",
 		"scanningAlbums": "Fotoğraf & video tarama",

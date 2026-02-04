@@ -206,7 +206,7 @@
 		"connectingToServer": "Savienošanās ar serveri...",
 		"connectionFailed": "Savienojums neizdevās",
 		"connectionSuccess": "Veiksmīgi izveidots savienojums",
-		"syncHashing": "Sinhronizēšana: {{current}} no {{total}}: {{filename}}:",
+		"syncPreparing": "Sinhronizēšana: {{current}} no {{total}}: {{filename}}:",
 		"processing": "{{current}} no {{total}} apstrāde...",
 		"syncScanning": "Sinhronizēšana: {{current}} no {{total}} vietējo failu skenēšana...",
 		"syncScanningAlbums": "Sync: {{count}} fotoattēlu un videoklipu skenēšana",

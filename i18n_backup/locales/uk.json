@@ -207,7 +207,7 @@
 		"connectingToServer": "Підключення до сервера...",
 		"connectionFailed": "Помилка підключення",
 		"connectionSuccess": "Успішно підключено",
-		"syncHashing": "Синхронізація: Хешування {{current}} з {{total}}: {{filename}}",
+		"syncPreparing": "Синхронізація: Хешування {{current}} з {{total}}: {{filename}}",
 		"hashing": "Хешування {{current}} з {{total}}: {{filename}}",
 		"backingUp": "Бекап: Вивантаження {{current}} з {{total}}: {{filename}}",
 		"backupCompleteStats": "Бекап: {{uploaded}} вивантажено, {{skipped}} пропущено, {{failed}} помилок",

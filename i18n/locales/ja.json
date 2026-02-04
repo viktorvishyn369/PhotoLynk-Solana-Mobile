@@ -172,7 +172,7 @@
 		"backupFailed": "バックアップ失敗",
 		"backupProgress": "バックアップ{{total}}の{{current}}",
 		"allFilesBackedUp": "すべての{{count}}ファイルはバックアップ済み",
-		"syncPreparing": "同期：準備",
+		"syncPreparing": "同期：{{total}}のハッシュ{{current}}：{{filename}}",
 		"syncFoundFiles": "同期：{{count}} サーバーファイルが見つかりました...",
 		"syncScanningLocal": "同期：ローカル写真のスキャン...",
 		"syncDownloading": "同期：ダウンロード...",
@@ -220,8 +220,7 @@
 		"connectingToServer": "サーバーに接続中...",
 		"connectionFailed": "接続に失敗",
 		"connectionSuccess": "接続成功",
-		"syncHashing": "同期：{{total}}のハッシュ{{current}}：{{filename}}",
-		"hashing": "{{total}}のハッシュ{{current}}：{{filename}}",
+		"hashing": "準備中 {{current}} / {{total}}: {{filename}}",
 		"scanningPhotos": "{{total}}の写真とビデオのスキャン{{current}}",
 		"scanningAlbums": "写真とビデオのスキャン",
 		"scanningAlbumsFound": "スキャン：{{count}} の写真とビデオが見つかりました",
@@ -253,7 +252,8 @@
 		"deletionCancelledPartial": "削除の中止または一部",
 		"scanningAnalyzingTotalPhotos": "スキャン: {{total}}枚の写真を分析中",
 		"scanningAnalyzingProgressPhotos": "スキャン: {{current}}/{{total}}枚の写真を分析中",
-		"switchingServer": "サーバー切り替え中..."
+		"switchingServer": "サーバー切り替え中...",
+		"syncHashing": "同期: 準備中 {{current}} / {{total}}: {{filename}}"
 	},
 	"restore": {
 		"title": "写真の復元",

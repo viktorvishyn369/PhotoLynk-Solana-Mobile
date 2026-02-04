@@ -171,7 +171,7 @@
 		"backupFailed": "Backup eșuat",
 		"backupProgress": "Backup: {{current}} de {{total}}",
 		"allFilesBackedUp": "Toate fișierele {{count}} au fost deja salvate",
-		"syncPreparing": "Sincronizare: Pregătirea...",
+		"syncPreparing": "Sync: Preparing {{current}} de {{total}}: {{filename}}",
 		"syncFoundFiles": "Sync: Fișiere server {{count}} găsite...",
 		"syncScanningLocal": "Sync: Scanarea fotografiilor locale...",
 		"syncDownloading": "Sync: Descărcarea...",
@@ -219,8 +219,7 @@
 		"connectingToServer": "Conectarea la server...",
 		"connectionFailed": "Conexiune eșuată",
 		"connectionSuccess": "Conectat cu succes",
-		"syncHashing": "Sync: Hashing {{current}} de {{total}}: {{filename}}",
-		"hashing": "Hashing {{current}} din {{total}}: {{filename}}",
+		"hashing": "Pregătire {{current}} din {{total}}: {{filename}}",
 		"scanningPhotos": "Scanarea {{current}} de fotografii și videoclipuri {{total}}",
 		"scanningAlbums": "Scanarea albumelor...",
 		"scanningAlbumsFound": "Scanarea... {{count}} fotografii și videoclipuri găsite",
@@ -252,7 +251,8 @@
 		"deletionCancelledPartial": "Ștergere anulată sau parțială",
 		"scanningAnalyzingTotalPhotos": "Scanare: Analizare {{total}} fotografii",
 		"scanningAnalyzingProgressPhotos": "Scanare: Analizare {{current}} din {{total}} fotografii",
-		"switchingServer": "Schimbare server..."
+		"switchingServer": "Schimbare server...",
+		"syncHashing": "Sincronizare: Pregătire {{current}} din {{total}}: {{filename}}"
 	},
 	"restore": {
 		"title": "Restaurarea fotografiilor",

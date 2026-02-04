@@ -207,7 +207,7 @@
 		"connectingToServer": "サーバーに接続中...",
 		"connectionFailed": "接続に失敗",
 		"connectionSuccess": "接続成功",
-		"syncHashing": "同期：{{total}}のハッシュ{{current}}：{{filename}}",
+		"syncPreparing": "同期：{{total}}のハッシュ{{current}}：{{filename}}",
 		"hashing": "{{total}}のハッシュ{{current}}：{{filename}}",
 		"scanningPhotos": "{{total}}の写真とビデオのスキャン{{current}}",
 		"scanningAlbums": "写真とビデオのスキャン",

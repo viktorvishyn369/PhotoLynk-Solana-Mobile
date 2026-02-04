@@ -171,7 +171,7 @@
 		"backupFailed": "Atsarginė kopija nepavyko",
 		"backupProgress": "Atsarginė kopija: {{current}} iš {{total}}",
 		"allFilesBackedUp": "Visi {{count}} failai jau yra atsarginės kopijos",
-		"syncPreparing": "Sinchronizavimas: Pasiruošimas",
+		"syncPreparing": "Sinchronizavimas: {{current}} iš {{total}}: {{filename}}",
 		"syncFoundFiles": "Sinchronizavimas: {{count}} serverio failus...",
 		"syncScanningLocal": "Sinchronizavimas: Vietinių nuotraukų nuskaitymas...",
 		"syncDownloading": "Sinchronizavimas: Atsisiuntimas...",
@@ -219,8 +219,7 @@
 		"connectingToServer": "Jungiamasi prie serverio...",
 		"connectionFailed": "Ryšys nepavyko",
 		"connectionSuccess": "Sėkmingai prisijungta",
-		"syncHashing": "Sinchronizavimas: {{current}} iš {{total}}: {{filename}}",
-		"hashing": "{{current}} iš {{total}}: {{filename}}",
+		"hashing": "Ruošiama {{current}} iš {{total}}: {{filename}}",
 		"scanningPhotos": "{{current}} nuotraukų ir vaizdo įrašų skenavimas {{total}}",
 		"scanningAlbums": "Nuotraukų ir vaizdo įrašų skenavimas",
 		"scanningAlbumsFound": "Skenavimas: {{count}} nuotraukų ir vaizdo įrašų rasta",
@@ -252,7 +251,8 @@
 		"deletionCancelledPartial": "Panaikintas arba dalinis ištrynimas",
 		"scanningAnalyzingTotalPhotos": "Nuskaitymas: Analizuojama {{total}} nuotraukų",
 		"scanningAnalyzingProgressPhotos": "Nuskaitymas: Analizuojama {{current}} iš {{total}} nuotraukų",
-		"switchingServer": "Keičiamas serveris..."
+		"switchingServer": "Keičiamas serveris...",
+		"syncHashing": "Sinchronizavimas: Ruošiama {{current}} iš {{total}}: {{filename}}"
 	},
 	"restore": {
 		"title": "Nuotraukų atkūrimas",

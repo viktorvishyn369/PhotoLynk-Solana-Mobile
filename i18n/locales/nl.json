@@ -172,7 +172,7 @@
 		"backupFailed": "Back-up mislukt",
 		"backupProgress": "Back-up: {{current}} of {{total}}",
 		"allFilesBackedUp": "Van alle {{count}}-bestanden is al een back-up gemaakt",
-		"syncPreparing": "Synchroniseren: Voorbereiden",
+		"syncPreparing": "Synchroniseren: Preparing {{current}} van {{total}}: {{filename}}",
 		"syncFoundFiles": "Synchroniseren: {{count}} serverbestanden gevonden...",
 		"syncScanningLocal": "Synchroniseren: Lokale foto's scannen...",
 		"syncDownloading": "Synchroniseren: Downloaden...",
@@ -220,8 +220,7 @@
 		"connectingToServer": "Verbinding maken met server...",
 		"connectionFailed": "Verbinding mislukt",
 		"connectionSuccess": "Met succes verbonden",
-		"syncHashing": "Synchroniseren: Hashing {{current}} van {{total}}: {{filename}}",
-		"hashing": "Hashing {{current}} van {{total}}: {{filename}}",
+		"hashing": "Voorbereiden {{current}} van {{total}}: {{filename}}",
 		"scanningPhotos": "{{current}} van {{total}} foto's en video's scannen",
 		"scanningAlbums": "Foto's & video's scannen",
 		"scanningAlbumsFound": "Scannen: {{count}} foto's & video's gevonden",
@@ -253,7 +252,8 @@
 		"deletionCancelledPartial": "Verwijdering geannuleerd of gedeeltelijk",
 		"scanningAnalyzingTotalPhotos": "Scannen: Analyseren van {{total}} foto's",
 		"scanningAnalyzingProgressPhotos": "Scannen: Analyseren van {{current}} van {{total}} foto's",
-		"switchingServer": "Server wisselen..."
+		"switchingServer": "Server wisselen...",
+		"syncHashing": "Synchronisatie: Voorbereiden {{current}} van {{total}}: {{filename}}"
 	},
 	"restore": {
 		"title": "Foto's herstellen",

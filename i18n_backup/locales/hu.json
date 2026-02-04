@@ -206,7 +206,7 @@
 		"connectingToServer": "Csatlakozás a szerverhez...",
 		"connectionFailed": "A kapcsolat sikertelen",
 		"connectionSuccess": "Sikeresen csatlakoztatva",
-		"syncHashing": "Szinkronizálás: Hashing {{current}} / {{total}}: {{filename}}",
+		"syncPreparing": "Szinkronizálás: Preparing {{current}} / {{total}}: {{filename}}",
 		"hashing": "{{total}} {{current}}-nek a következőkből történő kivonatolása: {{filename}}",
 		"scanningPhotos": "{{total}} fotók és videók {{current}} beolvasása",
 		"scanningAlbums": "Albumok szkennelése...",

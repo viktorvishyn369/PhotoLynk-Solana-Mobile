@@ -206,7 +206,7 @@
 		"connectingToServer": "Conectando-se ao servidor...",
 		"connectionFailed": "Falha na conexão",
 		"connectionSuccess": "Conectado com sucesso",
-		"syncHashing": "Sincronização: Agrupamento {{current}} de {{total}}: {{filename}}",
+		"syncPreparing": "Sincronização: Agrupamento {{current}} de {{total}}: {{filename}}",
 		"hashing": "Agrupamento {{current}} de {{total}}: {{filename}}",
 		"scanningPhotos": "Digitalização {{current}} de fotos e vídeos {{total}}",
 		"scanningAlbums": "Digitalização de álbuns...",

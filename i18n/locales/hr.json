@@ -171,7 +171,7 @@
 		"backupFailed": "Sigurnosno kopiranje je propalo",
 		"backupProgress": "Sigurnosna kopija: {{current}} od {{total}}",
 		"allFilesBackedUp": "Sve datoteke {{count}} su već sigurnosno kopirane.",
-		"syncPreparing": "Sinkronizacija: Priprema...",
+		"syncPreparing": "Sinkronizacija: Haširanje {{current}} od {{total}}: {{filename}}",
 		"syncFoundFiles": "Sinkronizacija: Pronađene {{count}} poslužiteljske datoteke...",
 		"syncScanningLocal": "Sinkronizacija: Skeniranje lokalnih fotografija...",
 		"syncDownloading": "Sinkronizacija: Preuzimanje...",
@@ -219,8 +219,7 @@
 		"connectingToServer": "Povezivanje na poslužitelj...",
 		"connectionFailed": "Povezivanje je propalo",
 		"connectionSuccess": "Uspješno povezano",
-		"syncHashing": "Sinkronizacija: Haširanje {{current}} od {{total}}: {{filename}}",
-		"hashing": "Hashing {{current}} od {{total}}: {{filename}}",
+		"hashing": "Priprema {{current}} od {{total}}: {{filename}}",
 		"scanningPhotos": "Skeniranje {{current}} fotografija i videozapisa {{total}}",
 		"scanningAlbums": "Skeniranje albuma...",
 		"scanningAlbumsFound": "Skeneriranje... Pronađene fotografije i videozapisi {{count}}",
@@ -252,7 +251,8 @@
 		"deletionCancelledPartial": "Brisanje otkazano ili djelomično",
 		"scanningAnalyzingTotalPhotos": "Skeniranje: Analiza {{total}} fotografija",
 		"scanningAnalyzingProgressPhotos": "Skeniranje: Analiza {{current}} od {{total}} fotografija",
-		"switchingServer": "Promjena poslužitelja..."
+		"switchingServer": "Promjena poslužitelja...",
+		"syncHashing": "Sinkronizacija: Priprema {{current}} od {{total}}: {{filename}}"
 	},
 	"restore": {
 		"title": "Obnovi fotografije",

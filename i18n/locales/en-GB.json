@@ -171,7 +171,7 @@
 		"backupFailed": "Backup failed",
 		"backupProgress": "Backup: {{current}} of {{total}}",
 		"allFilesBackedUp": "All {{count}} files already backed up",
-		"syncPreparing": "Sync: Preparing...",
+		"syncPreparing": "Sync: Preparing {{current}} of {{total}}: {{filename}}",
 		"syncFoundFiles": "Sync: Found {{count}} server files...",
 		"syncScanningLocal": "Sync: Scanning local photos...",
 		"syncDownloading": "Sync: Downloading...",
@@ -219,8 +219,7 @@
 		"connectingToServer": "Connecting to server...",
 		"connectionFailed": "Connection failed",
 		"connectionSuccess": "Connected successfully",
-		"syncHashing": "Sync: Hashing {{current}} of {{total}}: {{filename}}",
-		"hashing": "Hashing {{current}} of {{total}}: {{filename}}",
+		"hashing": "Preparing {{current}} of {{total}}: {{filename}}",
 		"scanningPhotos": "Scanning {{current}} of {{total}} photos & videos",
 		"scanningAlbums": "Scanning albums...",
 		"scanningAlbumsFound": "Scanning... {{count}} photos & videos found",
@@ -252,7 +251,8 @@
 		"deletionCancelledPartial": "Deletion cancelled or partial",
 		"scanningAnalyzingTotalPhotos": "Scanning: Analysing {{total}} photos",
 		"scanningAnalyzingProgressPhotos": "Scanning: Analysing {{current}} of {{total}} photos",
-		"switchingServer": "Switching server..."
+		"switchingServer": "Switching server...",
+		"syncHashing": "Sync: Preparing {{current}} of {{total}}: {{filename}}"
 	},
 	"restore": {
 		"title": "Restore Photos",

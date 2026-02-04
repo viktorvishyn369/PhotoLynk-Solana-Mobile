@@ -171,7 +171,7 @@
 		"backupFailed": "बैकअप विफल हो गया",
 		"backupProgress": "बैकअप: {{current}} का {{total}}",
 		"allFilesBackedUp": "सभी {{count}} फ़ाइलें पहले से ही बैकअप की जा चुकी हैं।",
-		"syncPreparing": "सिंक: तैयारी",
+		"syncPreparing": "सिंक: {{total}} का {{filename}} हैशिंग {{current}}",
 		"syncFoundFiles": "सिंक: {{count}} सर्वर फ़ाइलें मिलीं...",
 		"syncScanningLocal": "सिंक: स्थानीय फ़ोटो स्कैन हो रहे हैं...",
 		"syncDownloading": "सिंक: डाउनलोड हो रहा है...",
@@ -219,8 +219,7 @@
 		"connectingToServer": "सर्वर से जुड़ रहा है...",
 		"connectionFailed": "कनेक्शन विफल हो गया",
 		"connectionSuccess": "सफलतापूर्वक जुड़ गया",
-		"syncHashing": "सिंक: {{total}} का {{filename}} हैशिंग {{current}}",
-		"hashing": "{{total}} का हैशिंग {{current}}: {{filename}}",
+		"hashing": "तैयारी {{current}} में से {{total}}: {{filename}}",
 		"scanningPhotos": "{{total}} की {{current}} तस्वीरों और वीडियो का स्कैनिंग",
 		"scanningAlbums": "तस्वीरें और वीडियो स्कैन हो रहे हैं",
 		"scanningAlbumsFound": "स्कैन: {{count}} तस्वीरें और वीडियो मिले",
@@ -252,7 +251,8 @@
 		"deletionCancelledPartial": "मिटान को रद्द या आंशिक",
 		"scanningAnalyzingTotalPhotos": "स्कैनिंग: {{total}} फ़ोटो का विश्लेषण",
 		"scanningAnalyzingProgressPhotos": "स्कैनिंग: {{current}} में से {{total}} फ़ोटो का विश्लेषण",
-		"switchingServer": "सर्वर बदल रहा है..."
+		"switchingServer": "सर्वर बदल रहा है...",
+		"syncHashing": "सिंक: तैयारी {{current}} में से {{total}}: {{filename}}"
 	},
 	"restore": {
 		"title": "फ़ोटो पुनर्स्थापित करें",

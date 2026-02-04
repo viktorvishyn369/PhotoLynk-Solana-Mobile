@@ -172,7 +172,7 @@
 		"backupFailed": "备份失败",
 		"backupProgress": "备份：{{total}} 的 {{current}}",
 		"allFilesBackedUp": "已备份所有 {{count}} 文件",
-		"syncPreparing": "同步：准备",
+		"syncPreparing": "同步：对 {{total}} 的 {{current}} 进行散列： {{filename}}",
 		"syncFoundFiles": "同步：找到 {{count}} 服务器文件...",
 		"syncScanningLocal": "同步：扫描本地照片...",
 		"syncDownloading": "同步：下载...",
@@ -219,8 +219,7 @@
 		"connectingToServer": "连接服务器...",
 		"connectionFailed": "连接失败",
 		"connectionSuccess": "连接成功",
-		"syncHashing": "同步：对 {{total}} 的 {{current}} 进行散列： {{filename}}",
-		"hashing": "对 {{total}} 的 {{current}} 进行散列：{{filename}}",
+		"hashing": "准备中 {{current}} / {{total}}: {{filename}}",
 		"scanningPhotos": "扫描 {{current}} 的 {{total}} 照片和视频",
 		"scanningAlbums": "扫描照片和视频",
 		"scanningAlbumsFound": "扫描：找到 {{count}} 照片和视频",
@@ -252,7 +251,8 @@
 		"deletionCancelledPartial": "取消或部分删除",
 		"scanningAnalyzingTotalPhotos": "扫描：分析 {{total}} 张照片",
 		"scanningAnalyzingProgressPhotos": "扫描：分析 {{current}}/{{total}} 张照片",
-		"switchingServer": "正在切换服务器..."
+		"switchingServer": "正在切换服务器...",
+		"syncHashing": "同步: 准备中 {{current}} / {{total}}: {{filename}}"
 	},
 	"restore": {
 		"title": "恢复照片",

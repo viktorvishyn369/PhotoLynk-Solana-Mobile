@@ -172,7 +172,7 @@
 		"backupFailed": "Резервное копирование не удалось",
 		"backupProgress": "Резервное копирование: {{current}} из {{total}}",
 		"allFilesBackedUp": "Все файлы {{count}} уже сохранены в резервной копии",
-		"syncPreparing": "Синхронизация: Подготовка",
+		"syncPreparing": "Синхронизация: Хеширование {{current}} из {{total}}: {{filename}}",
 		"syncFoundFiles": "Синхронизация: Найдены файлы сервера {{count}}...",
 		"syncScanningLocal": "Синхронизация: Сканирование местных фотографий...",
 		"syncDownloading": "Синхронизация: Загрузка...",
@@ -220,8 +220,7 @@
 		"connectingToServer": "Подключение к серверу...",
 		"connectionFailed": "Не удалось установить соединение",
 		"connectionSuccess": "Подключено успешно",
-		"syncHashing": "Синхронизация: Хеширование {{current}} из {{total}}: {{filename}}",
-		"hashing": "Хеширование {{current}} из {{total}}: {{filename}}",
+		"hashing": "Подготовка {{current}} из {{total}}: {{filename}}",
 		"scanningPhotos": "Сканирование {{current}} из {{total}} фото и видео",
 		"scanningAlbums": "Сканирование фото & видео",
 		"scanningAlbumsFound": "Сканирование: Найдено {{count}} фото & видео",
@@ -253,7 +252,8 @@
 		"deletionCancelledPartial": "Удаление отменено или частично",
 		"scanningAnalyzingTotalPhotos": "Сканирование: Анализ {{total}} фото",
 		"scanningAnalyzingProgressPhotos": "Сканирование: Анализ {{current}} из {{total}} фото",
-		"switchingServer": "Переключение сервера..."
+		"switchingServer": "Переключение сервера...",
+		"syncHashing": "Синхронизация: Подготовка {{current}} из {{total}}: {{filename}}"
 	},
 	"restore": {
 		"title": "Восстановление фотографий",

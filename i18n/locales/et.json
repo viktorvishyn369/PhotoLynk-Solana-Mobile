@@ -171,7 +171,7 @@
 		"backupFailed": "Varundamine ebaõnnestus",
 		"backupProgress": "Varukoopia: {{total}}: {{current}} of",
 		"allFilesBackedUp": "Kõik {{count}} failid on juba varundatud",
-		"syncPreparing": "Sünkroonimine: Ettevalmistused",
+		"syncPreparing": "Sünkroonimine: {{total}}: {{filename}}: {{filename}}",
 		"syncFoundFiles": "Sünkroonimine: {{count}} serverifailid leitud...",
 		"syncScanningLocal": "Sünkroonimine: Kohalike fotode skaneerimine...",
 		"syncDownloading": "Sünkroonimine: Allalaadimine...",
@@ -219,8 +219,7 @@
 		"connectingToServer": "Ühendamine serveriga...",
 		"connectionFailed": "Ühendus ebaõnnestus",
 		"connectionSuccess": "Edukalt ühendatud",
-		"syncHashing": "Sünkroonimine: {{total}}: {{filename}}: {{filename}}",
-		"hashing": "{{total}}-i {{current}}-i pesemine: {{filename}}",
+		"hashing": "Ettevalmistamine {{current}} / {{total}}: {{filename}}",
 		"scanningPhotos": "{{current}} {{total}} fotode ja videote skaneerimine",
 		"scanningAlbums": "Fotode ja videote skaneerimine",
 		"scanningAlbumsFound": "Skaneerimine: {{count}} fotot ja videot leitud",
@@ -252,7 +251,8 @@
 		"deletionCancelledPartial": "Tühistatud või osaline kustutamine",
 		"scanningAnalyzingTotalPhotos": "Skannimine: {{total}} foto analüüsimine",
 		"scanningAnalyzingProgressPhotos": "Skannimine: {{current}}/{{total}} foto analüüsimine",
-		"switchingServer": "Serveri vahetamine..."
+		"switchingServer": "Serveri vahetamine...",
+		"syncHashing": "Sünkroonimine: Ettevalmistamine {{current}} / {{total}}: {{filename}}"
 	},
 	"restore": {
 		"title": "Fotode taastamine",

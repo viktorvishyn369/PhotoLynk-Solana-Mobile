@@ -171,7 +171,7 @@
 		"backupFailed": "Säkerhetskopieringen misslyckades",
 		"backupProgress": "Backup: {{current}} av {{total}}",
 		"allFilesBackedUp": "Alla {{count}}-filer har redan säkerhetskopierats",
-		"syncPreparing": "Synkronisering: Förbereder",
+		"syncPreparing": "Synkronisera: Preparing {{current}} av {{total}}: {{filename}}",
 		"syncFoundFiles": "Synkronisera: Hittade {{count}} serverfiler ...",
 		"syncScanningLocal": "Synkronisera: Skanna lokala foton...",
 		"syncDownloading": "Synkronisera: Nedladdning...",
@@ -219,8 +219,7 @@
 		"connectingToServer": "Ansluter till server...",
 		"connectionFailed": "Anslutningen misslyckades",
 		"connectionSuccess": "Ansluten framgångsrikt",
-		"syncHashing": "Synkronisera: Hashing {{current}} av {{total}}: {{filename}}",
-		"hashing": "Hashing {{current}} av {{total}}: {{filename}}",
+		"hashing": "Förbereder {{current}} av {{total}}: {{filename}}",
 		"scanningPhotos": "Skanna {{current}} av {{total}} foton och videor",
 		"scanningAlbums": "Skannar foton & videor",
 		"scanningAlbumsFound": "Skannar: {{count}} foton & videor hittades",
@@ -252,7 +251,8 @@
 		"deletionCancelledPartial": "Radering återkallad eller delvis",
 		"scanningAnalyzingTotalPhotos": "Skannar: Analyserar {{total}} foton",
 		"scanningAnalyzingProgressPhotos": "Skannar: Analyserar {{current}} av {{total}} foton",
-		"switchingServer": "Byter server..."
+		"switchingServer": "Byter server...",
+		"syncHashing": "Synkronisering: Förbereder {{current}} av {{total}}: {{filename}}"
 	},
 	"restore": {
 		"title": "Återställa foton",

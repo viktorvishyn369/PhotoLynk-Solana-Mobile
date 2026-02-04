@@ -207,7 +207,7 @@
 		"connectingToServer": "Подключение к серверу...",
 		"connectionFailed": "Не удалось установить соединение",
 		"connectionSuccess": "Подключено успешно",
-		"syncHashing": "Синхронизация: Хеширование {{current}} из {{total}}: {{filename}}",
+		"syncPreparing": "Синхронизация: Хеширование {{current}} из {{total}}: {{filename}}",
 		"hashing": "Хеширование {{current}} из {{total}}: {{filename}}",
 		"scanningPhotos": "Сканирование {{current}} из {{total}} фото и видео",
 		"scanningAlbums": "Сканирование фото & видео",

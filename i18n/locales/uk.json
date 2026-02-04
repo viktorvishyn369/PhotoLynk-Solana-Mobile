@@ -172,7 +172,7 @@
 		"backupFailed": "Помилка бекапу",
 		"backupProgress": "Бекап: {{current}} з {{total}}",
 		"allFilesBackedUp": "Усі {{count}} файлів вже збережено",
-		"syncPreparing": "Синхронізація: Підготовка",
+		"syncPreparing": "Синхронізація: Хешування {{current}} з {{total}}: {{filename}}",
 		"syncFoundFiles": "Синхронізація: Знайдено {{count}} файлів на сервері...",
 		"syncScanningLocal": "Синхронізація: Сканування локальних фото...",
 		"syncDownloading": "Синхронізація: Завантаження...",
@@ -220,8 +220,7 @@
 		"connectingToServer": "Підключення до сервера...",
 		"connectionFailed": "Помилка підключення",
 		"connectionSuccess": "Успішно підключено",
-		"syncHashing": "Синхронізація: Хешування {{current}} з {{total}}: {{filename}}",
-		"hashing": "Хешування {{current}} з {{total}}: {{filename}}",
+		"hashing": "Підготовка {{current}} з {{total}}: {{filename}}",
 		"backingUp": "Бекап: Вивантаження {{current}} з {{total}}: {{filename}}",
 		"backupCompleteStats": "Бекап: {{uploaded}} вивантажено, {{skipped}} пропущено, {{failed}} помилок",
 		"checkingCloudAvailability": "Перевірка доступності хмари...",
@@ -253,7 +252,8 @@
 		"uploading": "Вивантаження {{current}} з {{total}}: {{filename}}",
 		"scanningAnalyzingTotalPhotos": "Сканування: Аналіз {{total}} фото",
 		"scanningAnalyzingProgressPhotos": "Сканування: Аналіз {{current}} з {{total}} фото",
-		"switchingServer": "Перемикання сервера..."
+		"switchingServer": "Перемикання сервера...",
+		"syncHashing": "Синхронізація: Підготовка {{current}} з {{total}}: {{filename}}"
 	},
 	"restore": {
 		"title": "Відновити фото",

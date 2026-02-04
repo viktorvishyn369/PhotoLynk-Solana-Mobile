@@ -171,7 +171,7 @@
 		"backupFailed": "Rezerves kopēšana neizdevās",
 		"backupProgress": "Dublējums: {{current}} no {{total}}",
 		"allFilesBackedUp": "Visi {{count}} faili jau ir dublēti",
-		"syncPreparing": "Sinhronizēšana: Sagatavošanās",
+		"syncPreparing": "Sinhronizēšana: {{current}} no {{total}}: {{filename}}:",
 		"syncFoundFiles": "Sinhronizēšana: Atrasti {{count}} servera faili...",
 		"syncScanningLocal": "Sinhronizēšana: Vietējo fotoattēlu skenēšana...",
 		"syncDownloading": "Sinhronizēšana: Lejupielāde...",
@@ -219,8 +219,7 @@
 		"connectingToServer": "Savienošanās ar serveri...",
 		"connectionFailed": "Savienojums neizdevās",
 		"connectionSuccess": "Veiksmīgi izveidots savienojums",
-		"syncHashing": "Sinhronizēšana: {{current}} no {{total}}: {{filename}}:",
-		"hashing": "{{current}} no {{total}} šķeldošana: {{filename}}",
+		"hashing": "Sagatavošana {{current}} no {{total}}: {{filename}}",
 		"scanningPhotos": "{{current}} {{total}} fotoattēlu un videoklipu skenēšana",
 		"scanningAlbums": "Fotoattēlu un videoklipu skenēšana",
 		"scanningAlbumsFound": "Skenēšana: {{count}} fotoattēli un videoklipi atrasti",
@@ -252,7 +251,8 @@
 		"deletionCancelledPartial": "Dzēšana atcelta vai daļēja",
 		"scanningAnalyzingTotalPhotos": "Skenēšana: Analizē {{total}} fotoattēlus",
 		"scanningAnalyzingProgressPhotos": "Skenēšana: Analizē {{current}} no {{total}} fotoattēliem",
-		"switchingServer": "Servera maiņa..."
+		"switchingServer": "Servera maiņa...",
+		"syncHashing": "Sinhronizācija: Sagatavošana {{current}} no {{total}}: {{filename}}"
 	},
 	"restore": {
 		"title": "Fotoattēlu atjaunošana",

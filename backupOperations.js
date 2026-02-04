@@ -372,6 +372,81 @@ const quickYield = () => {
 // ============================================================================
 
 /**
+ * Backfill metadata for manifests that are missing it
+ * Decrypts manifest, extracts metadata, and updates server
+ */
+const backfillManifestMetadata = async (serverUrl, config, masterKey, manifestsWithoutMeta, onStatus) => {
+  if (!manifestsWithoutMeta || manifestsWithoutMeta.length === 0) return 0;
+  
+  let updated = 0;
+  const total = manifestsWithoutMeta.length;
+  
+  for (let i = 0; i < total; i++) {
+    const m = manifestsWithoutMeta[i];
+    if (!m.manifestId) continue;
+    
+    try {
+      // Fetch full manifest
+      const res = await axios.get(`${serverUrl}/api/cloud/manifests/${m.manifestId}`, {
+        ...config,
+        timeout: 10000,
+      });
+      
+      const content = res.data;
+      if (!content?.encryptedManifest) continue;
+      
+      // Decrypt manifest
+      const enc = JSON.parse(content.encryptedManifest);
+      const manifestNonce = naclUtil.decodeBase64(enc.manifestNonce);
+      const manifestBox = naclUtil.decodeBase64(enc.manifestBox);
+      const manifestPlain = nacl.secretbox.open(manifestBox, manifestNonce, masterKey);
+      
+      if (!manifestPlain) continue;
+      
+      const fullManifest = JSON.parse(naclUtil.encodeUTF8(manifestPlain));
+      
+      // Extract metadata and update server
+      const metadata = {
+        filename: fullManifest.filename || null,
+        mediaType: fullManifest.mediaType || null,
+        originalSize: fullManifest.originalSize || null,
+        fileHash: fullManifest.fileHash || null,
+        perceptualHash: fullManifest.perceptualHash || null,
+        creationTime: fullManifest.creationTime || null,
+        exifCaptureTime: fullManifest.exifCaptureTime || null,
+        exifMake: fullManifest.exifMake || null,
+        exifModel: fullManifest.exifModel || null,
+        thumbChunkId: fullManifest.thumbChunkId || null,
+        thumbNonce: fullManifest.thumbNonce || null,
+        thumbSize: fullManifest.thumbSize || null,
+        thumbW: fullManifest.thumbW || null,
+        thumbH: fullManifest.thumbH || null,
+        thumbMime: fullManifest.thumbMime || null,
+      };
+      
+      // Only update if we have meaningful metadata
+      if (metadata.filename || metadata.fileHash || metadata.perceptualHash) {
+        await axios.patch(`${serverUrl}/api/cloud/manifests/${m.manifestId}`, metadata, {
+          ...config,
+          timeout: 10000,
+        });
+        updated++;
+        console.log(`[Backup] Backfilled metadata for ${m.manifestId}: ${metadata.filename}`);
+      }
+    } catch (e) {
+      // Non-critical, continue with next
+      console.log(`[Backup] Failed to backfill ${m.manifestId}:`, e?.message);
+    }
+  }
+  
+  if (updated > 0) {
+    console.log(`[Backup] Backfilled metadata for ${updated} manifests`);
+  }
+  
+  return updated;
+};
+
+/**
  * Fetch all manifests with metadata for fast dedup (no decryption needed)
  * Uses ?meta=true to get filename, size, hashes in single request
  */
@@ -1228,7 +1303,42 @@ export const stealthCloudBackupCore = async ({
   onStatus(t('status.preparingDeduplication'));
   
   const dedupSets = buildDedupSetsFromMeta(serverManifests);
-  console.log(`[Backup] Server: ${serverManifests.length} files, Dedup sets: manifestIds=${dedupSets.manifestIds.size}, filenames=${dedupSets.filenames.size}, fileHashes=${dedupSets.fileHashes.size}, perceptualHashes=${dedupSets.perceptualHashes.size}`);
+  
+  // Debug: count manifests with/without metadata
+  let withMeta = 0, withoutMeta = 0, withFilename = 0, withPHash = 0, withExif = 0;
+  const manifestsWithoutMeta = [];
+  for (const m of serverManifests) {
+    if (m.filename || m.fileHash || m.perceptualHash) {
+      withMeta++;
+    } else {
+      withoutMeta++;
+      manifestsWithoutMeta.push(m);
+    }
+    if (m.filename) withFilename++;
+    if (m.perceptualHash) withPHash++;
+    if (m.exifCaptureTime) withExif++;
+  }
+  console.log(`[Backup] Server: ${serverManifests.length} files (${withMeta} with meta, ${withoutMeta} without), filenames=${withFilename}, pHashes=${withPHash}, exif=${withExif}`);
+  console.log(`[Backup] Dedup sets: manifestIds=${dedupSets.manifestIds.size}, filenames=${dedupSets.filenames.size}, fileHashes=${dedupSets.fileHashes.size}, perceptualHashes=${dedupSets.perceptualHashes.size}`);
+  
+  // Backfill metadata for old manifests that are missing it
+  if (manifestsWithoutMeta.length > 0) {
+    console.log(`[Backup] Backfilling metadata for ${manifestsWithoutMeta.length} manifests without metadata...`);
+    onStatus(t('status.preparingDeduplication'));
+    const backfilled = await backfillManifestMetadata(SERVER_URL, config, masterKey, manifestsWithoutMeta, onStatus);
+    if (backfilled > 0) {
+      // Re-fetch manifests to get updated metadata
+      try {
+        serverManifests = await fetchManifestsWithMeta(SERVER_URL, config);
+        const newDedupSets = buildDedupSetsFromMeta(serverManifests);
+        // Update dedup sets with new data
+        Object.assign(dedupSets, newDedupSets);
+        console.log(`[Backup] After backfill: manifestIds=${dedupSets.manifestIds.size}, filenames=${dedupSets.filenames.size}, pHashes=${dedupSets.perceptualHashes.size}`);
+      } catch (e) {
+        console.warn('[Backup] Failed to re-fetch after backfill:', e?.message);
+      }
+    }
+  }
   
   await yieldToUi();
 

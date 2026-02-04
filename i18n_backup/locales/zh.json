@@ -207,7 +207,7 @@
 		"connectingToServer": "连接服务器...",
 		"connectionFailed": "连接失败",
 		"connectionSuccess": "连接成功",
-		"syncHashing": "同步：对 {{total}} 的 {{current}} 进行散列： {{filename}}",
+		"syncPreparing": "同步：对 {{total}} 的 {{current}} 进行散列： {{filename}}",
 		"hashing": "对 {{total}} 的 {{current}} 进行散列：{{filename}}",
 		"scanningPhotos": "扫描 {{current}} 的 {{total}} 照片和视频",
 		"scanningAlbums": "扫描照片和视频",

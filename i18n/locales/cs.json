@@ -171,7 +171,7 @@
 		"backupFailed": "Zálohování se nezdařilo",
 		"backupProgress": "Zálohování: {{current}} z {{total}}",
 		"allFilesBackedUp": "Všechny soubory {{count}} jsou již zálohovány",
-		"syncPreparing": "Synchronizace: Příprava...",
+		"syncPreparing": "Synchronizace: Preparing {{current}} z {{total}}: {{filename}}",
 		"syncFoundFiles": "Synchronizace: Nalezeny soubory serveru {{count}}...",
 		"syncScanningLocal": "Synchronizace: Skenování místních fotografií...",
 		"syncDownloading": "Synchronizace: Stahování...",
@@ -219,8 +219,7 @@
 		"connectingToServer": "Připojení k serveru...",
 		"connectionFailed": "Připojení se nezdařilo",
 		"connectionSuccess": "Úspěšně připojeno",
-		"syncHashing": "Synchronizace: Hashing {{current}} z {{total}}: {{filename}}",
-		"hashing": "Hashování {{current}} z {{total}}: {{filename}}",
+		"hashing": "Příprava {{current}} z {{total}}: {{filename}}",
 		"scanningPhotos": "Skenování {{current}} fotografií a videí {{total}}",
 		"scanningAlbums": "Skenování alb...",
 		"scanningAlbumsFound": "Skenování... {{count}} nalezené fotografie a videa",
@@ -252,7 +251,8 @@
 		"deletionCancelledPartial": "Zrušení výmazu nebo částečný výmaz",
 		"scanningAnalyzingTotalPhotos": "Skenování: Analýza {{total}} fotografií",
 		"scanningAnalyzingProgressPhotos": "Skenování: Analýza {{current}} z {{total}} fotografií",
-		"switchingServer": "Přepínání serveru..."
+		"switchingServer": "Přepínání serveru...",
+		"syncHashing": "Synchronizace: Příprava {{current}} z {{total}}: {{filename}}"
 	},
 	"restore": {
 		"title": "Obnovení fotografií",

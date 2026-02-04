@@ -172,7 +172,7 @@
 		"backupFailed": "Yedekleme başarısız oldu",
 		"backupProgress": "Yedekleme: {{total}}'in {{current}}'i",
 		"allFilesBackedUp": "Tüm {{count}} dosyaları zaten yedeklenmiş",
-		"syncPreparing": "Senkronizasyon: Hazırlanıyor",
+		"syncPreparing": "Senkronizasyon: {{total}}'in {{current}}'i: {{filename}}",
 		"syncFoundFiles": "Senkronizasyon: {{count}} sunucu dosyaları bulundu...",
 		"syncScanningLocal": "Senkronize et: Yerel fotoğrafları tarama...",
 		"syncDownloading": "Senkronizasyon: İndiriliyor...",
@@ -220,8 +220,7 @@
 		"connectingToServer": "Sunucuya bağlanılıyor...",
 		"connectionFailed": "Bağlantı başarısız",
 		"connectionSuccess": "Başarıyla bağlandı",
-		"syncHashing": "Senkronizasyon: {{total}}'in {{current}}'i: {{filename}}",
-		"hashing": "{{total}}'in {{current}} karması: {{filename}}",
+		"hashing": "Hazırlanıyor {{current}} / {{total}}: {{filename}}",
 		"scanningPhotos": "{{total}} fotoğraf ve videolarının {{current}} taranması",
 		"scanningAlbums": "Fotoğraf & video tarama",
 		"scanningAlbumsFound": "Tarama: {{count}} fotoğraf & video bulundu",
@@ -253,7 +252,8 @@
 		"deletionCancelledPartial": "Silme işlemi iptal edildi veya kısmi",
 		"scanningAnalyzingTotalPhotos": "Tarama: {{total}} fotoğraf analiz ediliyor",
 		"scanningAnalyzingProgressPhotos": "Tarama: {{current}}/{{total}} fotoğraf analiz ediliyor",
-		"switchingServer": "Sunucu değiştiriliyor..."
+		"switchingServer": "Sunucu değiştiriliyor...",
+		"syncHashing": "Senkronizasyon: Hazırlanıyor {{current}} / {{total}}: {{filename}}"
 	},
 	"restore": {
 		"title": "Fotoğrafları Geri Yükle",

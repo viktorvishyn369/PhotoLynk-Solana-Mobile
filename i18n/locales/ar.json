@@ -172,7 +172,7 @@
 		"backupFailed": "فشل النسخ الاحتياطي",
 		"backupProgress": "النسخ الاحتياطي {{current}} من {{total}}",
 		"allFilesBackedUp": "تم نسخ جميع ملفات {{count}} احتياطيًا بالفعل",
-		"syncPreparing": "المزامنة: إعداد",
+		"syncPreparing": "المزامنة تجزئة {{current}} من {{total}}: {{filename}}",
 		"syncFoundFiles": "مزامنة: تم العثور على ملفات خادم {{count}}...",
 		"syncScanningLocal": "المزامنة: مسح الصور المحلية...",
 		"syncDownloading": "المزامنة: تنزيل...",
@@ -220,8 +220,7 @@
 		"connectingToServer": "الاتصال بالخادم...",
 		"connectionFailed": "فشل الاتصال",
 		"connectionSuccess": "تم الاتصال بنجاح",
-		"syncHashing": "المزامنة تجزئة {{current}} من {{total}}: {{filename}}",
-		"hashing": "تجزئة {{current}} من {{total}}: {{filename}}",
+		"hashing": "تحضير {{current}} من {{total}}: {{filename}}",
 		"scanningPhotos": "مسح ضوئي لصور ومقاطع فيديو {{current}} من {{total}}",
 		"scanningAlbums": "مسح الصور ومقاطع الفيديو",
 		"scanningAlbumsFound": "المسح: تم العثور على {{count}} صورة وفيديو",
@@ -253,7 +252,8 @@
 		"deletionCancelledPartial": "تم إلغاء الحذف أو الحذف الجزئي",
 		"scanningAnalyzingTotalPhotos": "المسح: تحليل {{total}} صورة",
 		"scanningAnalyzingProgressPhotos": "المسح: تحليل {{current}} من {{total}} صورة",
-		"switchingServer": "جارٍ تبديل الخادم..."
+		"switchingServer": "جارٍ تبديل الخادم...",
+		"syncHashing": "مزامنة: تحضير {{current}} من {{total}}: {{filename}}"
 	},
 	"restore": {
 		"title": "استعادة الصور",

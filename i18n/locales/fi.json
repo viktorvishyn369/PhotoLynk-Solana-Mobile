@@ -171,7 +171,7 @@
 		"backupFailed": "Varmuuskopiointi epäonnistui",
 		"backupProgress": "Varmuuskopiointi: {{current}} of {{total}}",
 		"allFilesBackedUp": "Kaikki {{count}}-tiedostot on jo varmuuskopioitu.",
-		"syncPreparing": "Synkronoi: Valmistautuminen",
+		"syncPreparing": "Synkronoi: {{filename}}",
 		"syncFoundFiles": "Synkronoi: Löytyi {{count}}-palvelimen tiedostot...",
 		"syncScanningLocal": "Synkronoi: Paikallisten valokuvien skannaaminen...",
 		"syncDownloading": "Synkronoi: Lataa...",
@@ -219,8 +219,7 @@
 		"connectingToServer": "Yhteyden muodostaminen palvelimeen...",
 		"connectionFailed": "Yhteys epäonnistui",
 		"connectionSuccess": "Yhdistetty onnistuneesti",
-		"syncHashing": "Synkronoi: {{filename}}",
-		"hashing": "Tiivistetään {{current}} / {{total}}: {{filename}}",
+		"hashing": "Valmistellaan {{current}} / {{total}}: {{filename}}",
 		"scanningPhotos": "Skannataan kuvia ja videoita {{current}} / {{total}}",
 		"scanningAlbums": "Skannataan kuvia & videoita",
 		"scanningAlbumsFound": "Skannaus: {{count}} kuvaa & videota löydetty",
@@ -252,7 +251,8 @@
 		"deletionCancelledPartial": "Poisto peruutettu tai osittainen",
 		"scanningAnalyzingTotalPhotos": "Skannaus: Analysoidaan {{total}} kuvaa",
 		"scanningAnalyzingProgressPhotos": "Skannaus: Analysoidaan {{current}}/{{total}} kuvaa",
-		"switchingServer": "Vaihdetaan palvelinta..."
+		"switchingServer": "Vaihdetaan palvelinta...",
+		"syncHashing": "Synkronointi: Valmistellaan {{current}} / {{total}}: {{filename}}"
 	},
 	"restore": {
 		"title": "Palauta valokuvat",

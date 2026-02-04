@@ -206,7 +206,7 @@
 		"connectingToServer": "Připojení k serveru...",
 		"connectionFailed": "Připojení se nezdařilo",
 		"connectionSuccess": "Úspěšně připojeno",
-		"syncHashing": "Synchronizace: Hashing {{current}} z {{total}}: {{filename}}",
+		"syncPreparing": "Synchronizace: Preparing {{current}} z {{total}}: {{filename}}",
 		"hashing": "Hashování {{current}} z {{total}}: {{filename}}",
 		"scanningPhotos": "Skenování {{current}} fotografií a videí {{total}}",
 		"scanningAlbums": "Skenování alb...",

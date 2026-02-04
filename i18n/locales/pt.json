@@ -172,7 +172,7 @@
 		"backupFailed": "Falha na cópia de segurança",
 		"backupProgress": "Cópia de segurança: {{current}} de {{total}}",
 		"allFilesBackedUp": "Todos os ficheiros {{count}} já foram copiados",
-		"syncPreparing": "Sincronização: A preparar",
+		"syncPreparing": "Sincronização: Agrupamento {{current}} de {{total}}: {{filename}}",
 		"syncFoundFiles": "Sincronização: Encontrados ficheiros do servidor {{count}}...",
 		"syncScanningLocal": "Sincronização: Digitalização de fotografias locais...",
 		"syncDownloading": "Sincronização: Descarregar...",
@@ -220,8 +220,7 @@
 		"connectingToServer": "Ligação ao servidor...",
 		"connectionFailed": "A ligação falhou",
 		"connectionSuccess": "Ligado com êxito",
-		"syncHashing": "Sincronização: Agrupamento {{current}} de {{total}}: {{filename}}",
-		"hashing": "Agrupamento {{current}} de {{total}}: {{filename}}",
+		"hashing": "Preparando {{current}} de {{total}}: {{filename}}",
 		"scanningPhotos": "Digitalização {{current}} de fotografias e vídeos {{total}}",
 		"scanningAlbums": "A digitalizar fotos & vídeos",
 		"scanningAlbumsFound": "Digitalização: {{count}} fotos & vídeos encontrados",
@@ -253,7 +252,8 @@
 		"deletionCancelledPartial": "Supressão cancelada ou parcial",
 		"scanningAnalyzingTotalPhotos": "Digitalização: Análise de {{total}} fotos",
 		"scanningAnalyzingProgressPhotos": "Digitalização: Análise de {{current}} de {{total}} fotos",
-		"switchingServer": "Mudando servidor..."
+		"switchingServer": "Mudando servidor...",
+		"syncHashing": "Sincronização: Preparando {{current}} de {{total}}: {{filename}}"
 	},
 	"restore": {
 		"title": "Restaurar fotografias",

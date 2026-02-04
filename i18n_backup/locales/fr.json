@@ -206,7 +206,7 @@
 		"connectingToServer": "Connexion au serveur...",
 		"connectionFailed": "Échec de la connexion",
 		"connectionSuccess": "Connexion réussie",
-		"syncHashing": "Sync : Hachage de {{current}} de {{total}} : {{filename}}",
+		"syncPreparing": "Sync : Hachage de {{current}} de {{total}} : {{filename}}",
 		"hashing": "Hachage de {{current}} de {{total}} : {{filename}}",
 "scanningPhotos": "Numérisation de photos et de vidéos {{current}} de {{total}}",
 "scanningAlbums": "Scan des photos & vidéos",

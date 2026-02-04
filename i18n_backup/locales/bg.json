@@ -206,7 +206,7 @@
 		"connectingToServer": "Свързване със сървъра...",
 		"connectionFailed": "Свързването е неуспешно",
 		"connectionSuccess": "Успешно свързване",
-		"syncHashing": "Синхронизиране: Хеширане на {{current}} на {{total}}: {{filename}}",
+		"syncPreparing": "Синхронизиране: Хеширане на {{current}} на {{total}}: {{filename}}",
 		"processing": "Обработка {{current}} на {{total}}...",
 		"syncScanning": "Синхронизиране: Сканиране на {{current}} на локални файлове {{total}}...",
 		"syncScanningAlbums": "Синхронизиране: Сканиране на албуми {{count}}...",

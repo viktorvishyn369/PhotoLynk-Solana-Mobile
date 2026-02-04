@@ -171,7 +171,7 @@
 		"backupFailed": "Η δημιουργία αντιγράφων ασφαλείας απέτυχε",
 		"backupProgress": "Δημιουργία αντιγράφων ασφαλείας: {{current}} του {{total}}",
 		"allFilesBackedUp": "Όλα τα αρχεία {{count}} έχουν ήδη δημιουργηθεί με αντίγραφα ασφαλείας",
-		"syncPreparing": "Συγχρονισμός: Προετοιμασία...",
+		"syncPreparing": "Συγχρονισμός: Preparing {{current}} από {{total}}: {{filename}}",
 		"syncFoundFiles": "Συγχρονισμός: {{count}}...",
 		"syncScanningLocal": "Συγχρονισμός: Σάρωση τοπικών φωτογραφιών...",
 		"syncDownloading": "Συγχρονισμός: Λήψη...",
@@ -219,8 +219,7 @@
 		"connectingToServer": "Σύνδεση στο διακομιστή...",
 		"connectionFailed": "Η σύνδεση απέτυχε",
 		"connectionSuccess": "Συνδέθηκε με επιτυχία",
-		"syncHashing": "Συγχρονισμός: Hashing {{current}} από {{total}}: {{filename}}",
-		"hashing": "Κρυπτογράφηση {{current}} του {{total}}: {{filename}}",
+		"hashing": "Προετοιμασία {{current}} από {{total}}: {{filename}}",
 		"scanningPhotos": "Σάρωση {{current}} των φωτογραφιών και βίντεο {{total}}",
 		"scanningAlbums": "Σάρωση άλμπουμ...",
 		"scanningAlbumsFound": "Σάρωση... {{count}} βρέθηκαν φωτογραφίες και βίντεο",
@@ -252,7 +251,8 @@
 		"deletionCancelledPartial": "Ακυρωμένη ή μερική διαγραφή",
 		"scanningAnalyzingTotalPhotos": "Σάρωση: Ανάλυση {{total}} φωτογραφιών",
 		"scanningAnalyzingProgressPhotos": "Σάρωση: Ανάλυση {{current}} από {{total}} φωτογραφίες",
-		"switchingServer": "Αλλαγή διακομιστή..."
+		"switchingServer": "Αλλαγή διακομιστή...",
+		"syncHashing": "Συγχρονισμός: Προετοιμασία {{current}} από {{total}}: {{filename}}"
 	},
 	"restore": {
 		"title": "Επαναφορά φωτογραφιών",

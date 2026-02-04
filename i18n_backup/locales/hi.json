@@ -206,7 +206,7 @@
 		"connectingToServer": "सर्वर से जुड़ रहा है...",
 		"connectionFailed": "कनेक्शन विफल हो गया",
 		"connectionSuccess": "सफलतापूर्वक जुड़ गया",
-		"syncHashing": "सिंक: {{total}} का {{filename}} हैशिंग {{current}}",
+		"syncPreparing": "सिंक: {{total}} का {{filename}} हैशिंग {{current}}",
 		"hashing": "{{total}} का हैशिंग {{current}}: {{filename}}",
 		"scanningPhotos": "{{total}} की {{current}} तस्वीरों और वीडियो का स्कैनिंग",
 		"scanningAlbums": "तस्वीरें और वीडियो स्कैन हो रहे हैं",

@@ -171,7 +171,7 @@
 		"backupFailed": "Backup mislykkedes",
 		"backupProgress": "Backup: {{current}} af {{total}}",
 		"allFilesBackedUp": "Alle {{count}}-filer er allerede sikkerhedskopieret",
-		"syncPreparing": "Synkronisering: Forbereder",
+		"syncPreparing": "Synkronisering: Preparing af {{current}} af {{total}}: {{filename}}",
 		"syncFoundFiles": "Synkronisering: Fandt {{count}}-serverfiler ...",
 		"syncScanningLocal": "Synkronisering: Scanning af lokale fotos...",
 		"syncDownloading": "Synkronisering: Downloader...",
@@ -219,8 +219,7 @@
 		"connectingToServer": "Opretter forbindelse til serveren...",
 		"connectionFailed": "Forbindelse mislykkedes",
 		"connectionSuccess": "Forbundet med succes",
-		"syncHashing": "Synkronisering: Hashing af {{current}} af {{total}}: {{filename}}",
-		"hashing": "Hashing af {{current}} af {{total}}: {{filename}}",
+		"hashing": "Forbereder {{current}} af {{total}}: {{filename}}",
 		"scanningPhotos": "Scanning af {{current}} af {{total}}-fotos og -videoer",
 		"scanningAlbums": "Scanner fotos & videoer",
 		"scanningAlbumsFound": "Scanner: {{count}} fotos & videoer fundet",
@@ -252,7 +251,8 @@
 		"deletionCancelledPartial": "Sletning annulleret eller delvis",
 		"scanningAnalyzingTotalPhotos": "Scanner: Analyserer {{total}} fotos",
 		"scanningAnalyzingProgressPhotos": "Scanner: Analyserer {{current}} af {{total}} fotos",
-		"switchingServer": "Skifter server..."
+		"switchingServer": "Skifter server...",
+		"syncHashing": "Synkronisering: Forbereder {{current}} af {{total}}: {{filename}}"
 	},
 	"restore": {
 		"title": "Gendan fotos",
