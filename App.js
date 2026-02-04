@@ -1901,25 +1901,7 @@ export default function App() {
       const sourceUri = info?.localUri || info?.uri || asset?.uri || asset?.thumbUri;
       let thumbUri = sourceUri || null;
 
-      if (isVideo) {
-        // Generate video thumbnail
-        let videoThumbUri = null;
-        try {
-          const videoUriCandidates = [info?.localUri, info?.uri, asset?.uri].filter(Boolean);
-          for (const videoUri of videoUriCandidates) {
-            if (videoThumbUri) break;
-            try {
-              let result = await VideoThumbnails.getThumbnailAsync(videoUri, { time: 0 });
-              if (!result?.uri) {
-                result = await VideoThumbnails.getThumbnailAsync(videoUri, { time: 1000 });
-              }
-              if (result?.uri) videoThumbUri = result.uri;
-            } catch (innerErr) {}
-          }
-        } catch (thumbErr) {}
-        if (videoThumbUri) thumbUri = videoThumbUri;
-        else return; // No valid video thumbnail, don't update
-      } else if (Platform.OS === 'android' && asset.mediaType === 'photo') {
+      if (isVideo) return; else if (Platform.OS === 'android' && asset.mediaType === 'photo') {
         try {
           const shouldForceThumb = !!(sourceUri && typeof sourceUri === 'string' && sourceUri.startsWith('content://'));
           if (sourceUri && (shouldForceThumb || ext === 'heic' || ext === 'heif' || ext === 'avif')) {
@@ -2007,7 +1989,8 @@ export default function App() {
           const isVideo = asset.mediaType === 'video' || ['mov', 'mp4', 'avi', 'mkv', 'm4v', '3gp', 'webm'].includes(ext);
           const androidNeedsThumb = Platform.OS === 'android' && asset.mediaType === 'photo' && typeof asset?.uri === 'string' && asset.uri.startsWith('content://');
           
-          // Skip videos - a.uri works fine
+          // Skip video thumbnails during initial load - too heavy, causes UI jank
+          // Videos will show placeholder, user can scroll to load on-demand via fixBackupPickerThumbnail
           if (isVideo) {
             return;
           }

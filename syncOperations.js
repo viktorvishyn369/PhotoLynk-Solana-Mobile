@@ -1480,8 +1480,15 @@ export const localRemoteRestoreCore = async ({
           }
           
           await runSave(async () => {
-            await MediaLibrary.saveToLibraryAsync(localUri);
-            await FileSystem.deleteAsync(localUri, { idempotent: true });
+            // Rename to original filename before saving (removes hash suffix from cache filename)
+            const originalName = `${safeBase}${ext}`;
+            const finalUri = `${FileSystem.cacheDirectory}${originalName}`;
+            if (finalUri !== localUri) {
+              await FileSystem.deleteAsync(finalUri, { idempotent: true });
+              await FileSystem.moveAsync({ from: localUri, to: finalUri });
+            }
+            await MediaLibrary.saveToLibraryAsync(finalUri);
+            await FileSystem.deleteAsync(finalUri, { idempotent: true });
           });
           await quickYield(); // Yield after save
           restored++;

@@ -754,20 +754,9 @@ export const scanExactDuplicates = async ({
         // Store item with both hashes for later grouping
         const rawDHash = dHashHex ? dHashHex.substring(6) : null;
         const rawFileHash = fileHashHex ? fileHashHex.substring(fileHashHex.indexOf(':') + 1) : null;
-        
-        // Extract EXIF data for server-style dedup (cross-platform matching)
-        const exifData = extractExifForDedup(info, asset);
-        const exifKeys = generateExifDedupKeys(exifData);
-        
-        // Extract filename base for filename-based matching
         const filename = info?.filename || asset.filename || '';
-        const baseName = extractBaseFilename(filename);
-        const originalSize = info?.fileSize || asset.fileSize || 0;
         const creationTime = info?.creationTime || asset.creationTime || 0;
-        const dateStr = creationTime ? normalizeDateForCompare(new Date(creationTime * 1000)) : null;
-        
-        // Memory-optimized: Store only minimal data needed for grouping
-        // Don't store full asset/info objects - they consume too much memory with 1000s of files
+        const originalSize = info?.fileSize || asset.fileSize || 0;
         const itemId = asset.id;
         
         allHashedItems.push({
@@ -776,11 +765,6 @@ export const scanExactDuplicates = async ({
           rawFileHash,
           rawDHash,
           isVideo: fileHashHex && fileHashHex.startsWith('video:'),
-          exifKeys,
-          baseName,
-          originalSize,
-          dateStr,
-          filename,
           creationTime,
         });
         
@@ -853,115 +837,6 @@ export const scanExactDuplicates = async ({
   }
 
   await quickYield();
-
-  // ========== SERVER-STYLE DEDUP: EXIF-based grouping ==========
-  // Group by EXIF captureTime + make + model (highest confidence)
-  const exifFullGroups = {};
-  const exifTimeModelGroups = {};
-  const exifTimeMakeGroups = {};
-  
-  for (const item of allHashedItems) {
-    if (item.exifKeys) {
-      if (item.exifKeys.full) {
-        if (!exifFullGroups[item.exifKeys.full]) exifFullGroups[item.exifKeys.full] = [];
-        exifFullGroups[item.exifKeys.full].push(item);
-      }
-      if (item.exifKeys.timeModel) {
-        if (!exifTimeModelGroups[item.exifKeys.timeModel]) exifTimeModelGroups[item.exifKeys.timeModel] = [];
-        exifTimeModelGroups[item.exifKeys.timeModel].push(item);
-      }
-      if (item.exifKeys.timeMake) {
-        if (!exifTimeMakeGroups[item.exifKeys.timeMake]) exifTimeMakeGroups[item.exifKeys.timeMake] = [];
-        exifTimeMakeGroups[item.exifKeys.timeMake].push(item);
-      }
-    }
-  }
-  
-  // Union by EXIF full match (captureTime + make + model)
-  let exifMatches = 0;
-  for (const group of Object.values(exifFullGroups)) {
-    if (group.length > 1) {
-      for (let i = 1; i < group.length; i++) {
-        union(group[0].id, group[i].id);
-        exifMatches++;
-      }
-    }
-  }
-  
-  // Union by EXIF time+model match
-  for (const group of Object.values(exifTimeModelGroups)) {
-    if (group.length > 1) {
-      for (let i = 1; i < group.length; i++) {
-        union(group[0].id, group[i].id);
-        exifMatches++;
-      }
-    }
-  }
-  
-  console.log('[DupScanner] EXIF-based matches:', exifMatches);
-
-  await quickYield();
-
-  // ========== SERVER-STYLE DEDUP: Filename + size/date grouping ==========
-  // Group by baseName + similar size (within 20%)
-  const baseNameSizeGroups = {};
-  for (const item of allHashedItems) {
-    if (item.baseName && item.originalSize > 0) {
-      const key = item.baseName;
-      if (!baseNameSizeGroups[key]) baseNameSizeGroups[key] = [];
-      baseNameSizeGroups[key].push(item);
-    }
-  }
-  
-  let filenameMatches = 0;
-  for (const group of Object.values(baseNameSizeGroups)) {
-    if (group.length > 1) {
-      // Compare sizes within group - union if within 20%
-      for (let i = 0; i < group.length; i++) {
-        for (let j = i + 1; j < group.length; j++) {
-          const sizeA = group[i].originalSize;
-          const sizeB = group[j].originalSize;
-          const diff = Math.abs(sizeA - sizeB) / Math.max(sizeA, sizeB);
-          if (diff < 0.20) {
-            union(group[i].id, group[j].id);
-            filenameMatches++;
-          }
-        }
-      }
-    }
-  }
-  
-  // Group by baseName + same date
-  const baseNameDateGroups = {};
-  for (const item of allHashedItems) {
-    if (item.baseName && item.dateStr) {
-      const key = `${item.baseName}|${item.dateStr}`;
-      if (!baseNameDateGroups[key]) baseNameDateGroups[key] = [];
-      baseNameDateGroups[key].push(item);
-    }
-  }
-  
-  for (const group of Object.values(baseNameDateGroups)) {
-    if (group.length > 1) {
-      for (let i = 1; i < group.length; i++) {
-        union(group[0].id, group[i].id);
-        filenameMatches++;
-      }
-    }
-  }
-  
-  console.log('[DupScanner] Filename-based matches:', filenameMatches);
-
-  await quickYield();
-
-  // Memory cleanup: clear intermediate grouping objects
-  // These can be large with many files and are no longer needed
-  Object.keys(fileHashGroups).forEach(k => delete fileHashGroups[k]);
-  Object.keys(exifFullGroups).forEach(k => delete exifFullGroups[k]);
-  Object.keys(exifTimeModelGroups).forEach(k => delete exifTimeModelGroups[k]);
-  Object.keys(exifTimeMakeGroups).forEach(k => delete exifTimeMakeGroups[k]);
-  Object.keys(baseNameSizeGroups).forEach(k => delete baseNameSizeGroups[k]);
-  Object.keys(baseNameDateGroups).forEach(k => delete baseNameDateGroups[k]);
 
   // Fuzzy dHash comparison (O(n²) but only for images with dHash)
   // Limit to prevent memory/CPU exhaustion with very large libraries
@@ -1261,6 +1136,7 @@ export const scanSimilarPhotos = async ({
               setCachedHash(asset, 'perceptual', hash); // Cache for next run
               hash = 'image:' + hash;
               hashed++;
+              
             }
           }
         } catch (e) {
@@ -1399,41 +1275,41 @@ export const scanSimilarPhotos = async ({
       const aHash = a.hash.startsWith('image:') ? a.hash.substring(6) : a.hash;
       const bHash = b.hash.startsWith('image:') ? b.hash.substring(6) : b.hash;
 
-      const dt = Math.abs((b.createdTs || 0) - (a.createdTs || 0));
       const dist = hammingDistance64(aHash, bHash);
 
-      // Use stricter thresholds if either file lacks EXIF timestamp
-      // (copied files have same OS timestamp, so we can't trust time proximity)
+      // Time-based dHash threshold - photographers take burst shots in quick succession
+      const dt = Math.abs((b.createdTs || 0) - (a.createdTs || 0));
       const bothHaveExif = a.hasExifTime && b.hasExifTime;
-      
-      // Dynamic threshold based on time proximity
-      let threshold;
+      let dhashThreshold;
       if (bothHaveExif) {
-        // Reliable EXIF timestamps
-        if (dt <= 5000) threshold = 24;           // Within 5 seconds - burst shots
-        else if (dt <= 30000) threshold = 18;     // Within 30 seconds
-        else if (dt <= 60000) threshold = 12;     // Within 1 minute
-        else threshold = 6;                       // More than 1 minute apart
+        // With EXIF timestamps
+        if (dt < 30000) dhashThreshold = 16;        // <30 seconds - burst shots
+        else if (dt < 60000) dhashThreshold = 14;   // <1 minute
+        else if (dt < 3600000) dhashThreshold = 10; // <1 hour
+        else dhashThreshold = 6;                     // >1 hour apart
       } else {
-        // No reliable EXIF: use stricter fallback thresholds
-        if (dt <= 5000) threshold = 12;           // Within 5 seconds
-        else if (dt <= 30000) threshold = 9;      // Within 30 seconds
-        else if (dt <= 60000) threshold = 6;      // Within 1 minute
-        else threshold = 3;                       // More than 1 minute apart
+        // Without EXIF - stricter thresholds (file timestamps less reliable)
+        if (dt < 30000) dhashThreshold = 11;        // <30 seconds
+        else if (dt < 60000) dhashThreshold = 9;    // <1 minute
+        else if (dt < 3600000) dhashThreshold = 7;  // <1 hour
+        else dhashThreshold = 5;                     // >1 hour apart
       }
+      
+      // Check if similar by dHash only - edge/corner fallback removed (caused false positives)
+      let isSimilar = dist <= dhashThreshold;
 
-      if (dist > threshold) continue;
+      if (!isSimilar) continue;
 
       // Debug log matches to verify thresholds are working
       if (similarPairs.length < 5) {
-        console.log(`[DupScanner] MATCH: ${a.filename} vs ${b.filename} dist=${dist} threshold=${threshold} dt=${dt} hasExif=${bothHaveExif}`);
+        console.log(`[DupScanner] MATCH: ${a.filename} vs ${b.filename} dist=${dist}`);
       }
 
       const key = [a.asset.id, b.asset.id].sort().join('|');
       if (seen.has(key)) continue;
       seen.add(key);
 
-      similarPairs.push({ a, b, dist, dt });
+      similarPairs.push({ a, b, dist });
     }
 
     // Thermal cooldown every 200 outer iterations
@@ -1471,34 +1347,85 @@ export const scanSimilarPhotos = async ({
   };
 
   const assetMap = new Map();
+  const itemMap = new Map(); // Map asset.id -> item (with hash info)
   for (const item of items) {
     assetMap.set(item.asset.id, item.asset);
+    itemMap.set(item.asset.id, item);
   }
 
+  // Build adjacency list of direct matches (not transitive)
+  const directMatches = new Map(); // id -> Set of directly matched ids
   for (const pair of similarPairs) {
-    union(pair.a.asset.id, pair.b.asset.id);
+    const aId = pair.a.asset.id;
+    const bId = pair.b.asset.id;
+    if (!directMatches.has(aId)) directMatches.set(aId, new Set());
+    if (!directMatches.has(bId)) directMatches.set(bId, new Set());
+    directMatches.get(aId).add(bId);
+    directMatches.get(bId).add(aId);
   }
 
   await quickYield();
 
-  const groupMap = new Map();
-  for (const pair of similarPairs) {
-    const rootA = find(pair.a.asset.id);
-    if (!groupMap.has(rootA)) groupMap.set(rootA, new Set());
-    groupMap.get(rootA).add(pair.a.asset.id);
-    groupMap.get(rootA).add(pair.b.asset.id);
-  }
-
+  // Build groups where ALL members are similar to each other (clique-based)
+  // Start with each pair and only add items that match ALL existing group members
+  const usedIds = new Set();
   const finalGroups = [];
-  for (const [root, idSet] of groupMap) {
-    const group = [];
-    for (const id of idSet) {
-      const asset = assetMap.get(id);
-      if (asset) group.push(asset);
+  
+  // Sort pairs by distance (tightest matches first)
+  const sortedPairs = [...similarPairs].sort((a, b) => a.dist - b.dist);
+  
+  for (const pair of sortedPairs) {
+    const aId = pair.a.asset.id;
+    const bId = pair.b.asset.id;
+    
+    // Skip if both already used in a group
+    if (usedIds.has(aId) && usedIds.has(bId)) continue;
+    
+    // Start a new group with this pair
+    const group = [aId, bId];
+    const groupSet = new Set(group);
+    
+    // Try to expand group with items that match ALL current members
+    const candidates = new Set();
+    for (const id of group) {
+      const matches = directMatches.get(id);
+      if (matches) {
+        for (const matchId of matches) {
+          if (!groupSet.has(matchId) && !usedIds.has(matchId)) {
+            candidates.add(matchId);
+          }
+        }
+      }
     }
+    
+    for (const candidateId of candidates) {
+      // Check if candidate matches ALL items in group
+      const candidateMatches = directMatches.get(candidateId);
+      if (!candidateMatches) continue;
+      
+      let matchesAll = true;
+      for (const groupId of group) {
+        if (!candidateMatches.has(groupId)) {
+          matchesAll = false;
+          break;
+        }
+      }
+      
+      if (matchesAll) {
+        group.push(candidateId);
+        groupSet.add(candidateId);
+      }
+    }
+    
+    // Mark all as used and add group
+    for (const id of group) {
+      usedIds.add(id);
+    }
+    
     if (group.length >= 2) {
-      group.sort((a, b) => (a.creationTime || 0) - (b.creationTime || 0));
-      finalGroups.push(group);
+      const assets = group.map(id => assetMap.get(id)).filter(Boolean);
+      assets.sort((a, b) => (a.creationTime || 0) - (b.creationTime || 0));
+      finalGroups.push(assets);
     }
   }
 
