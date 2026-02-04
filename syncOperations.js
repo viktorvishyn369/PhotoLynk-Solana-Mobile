@@ -502,51 +502,25 @@ const buildDedupSetsFromServerMeta = (manifests) => {
 
 /**
  * Check if a server file should be skipped (already exists locally)
+ * Uses same dedup logic as backup: manifestId, fileHash, perceptualHash (1-bit)
  */
 const shouldSkipServerFile = (serverFile, localSets) => {
-  const { manifestId, filename, fileHash, perceptualHash, originalSize, creationTime } = serverFile;
-  const decodedFilename = decodeServerFilename(filename);
+  const { manifestId, fileHash, perceptualHash } = serverFile;
   
-  // Check by manifestId
+  // Check by manifestId (filename + size hash)
   if (manifestId && localSets.manifestIds.has(manifestId)) {
     return { skip: true, reason: 'manifestId' };
   }
   
-  // Check by filename
-  const normalized = decodedFilename ? normalizeFilenameForCompare(decodedFilename) : null;
-  if (normalized && localSets.filenames.has(normalized)) {
-    return { skip: true, reason: 'filename' };
-  }
-  
-  // Check by file hash (videos)
+  // Check by file hash (exact byte match - images and videos)
   if (fileHash && localSets.fileHashes.has(fileHash)) {
     return { skip: true, reason: 'fileHash' };
   }
   
-  // Check by perceptual hash (images)
+  // Check by perceptual hash (images - 1-bit tolerance)
   if (perceptualHash && localSets.perceptualHashes.size > 0) {
     if (findPerceptualHashMatch(perceptualHash, localSets.perceptualHashes, SYNC_DHASH_THRESHOLD)) {
       return { skip: true, reason: 'perceptualHash' };
-    }
-  }
-  
-  // Fallback: base filename + size
-  const baseName = decodedFilename ? extractBaseFilename(decodedFilename) : null;
-  if (baseName && originalSize && localSets.baseNameSizes.has(baseName)) {
-    const existingSizes = localSets.baseNameSizes.get(baseName);
-    for (const existingSize of existingSizes) {
-      const sizeDiff = Math.abs(originalSize - existingSize) / Math.max(originalSize, existingSize);
-      if (sizeDiff < 0.20) {
-        return { skip: true, reason: 'baseNameSize' };
-      }
-    }
-  }
-  
-  // Fallback: base filename + date
-  if (baseName && creationTime && localSets.baseNameDates.has(baseName)) {
-    const dateStr = normalizeDateForCompare(creationTime);
-    if (dateStr && localSets.baseNameDates.get(baseName).has(dateStr)) {
-      return { skip: true, reason: 'baseNameDate' };
     }
   }
   
@@ -1248,92 +1222,20 @@ export const localRemoteRestoreCore = async ({
 
   for (let i = 0; i < serverFiles.length; i++) {
     const file = serverFiles[i];
-    const normalized = normalizeFilenameForCompare(file?.filename);
-    const baseName = extractBaseFilename(file?.filename);
     
     // Log first few files for debugging
     if (i < 5) {
-      console.log(`[Sync] Server file ${i}: "${file?.filename}" -> normalized: "${normalized}", baseName: "${baseName}", phash: ${file?.perceptualHash || 'none'}`);
-      console.log(`[Sync] Local has filename: ${normalized ? localSets.filenames.has(normalized) : 'N/A'}, baseName: ${baseName ? localSets.baseNameSizes.has(baseName) : 'N/A'}`);
+      console.log(`[Sync] Server file ${i}: "${file?.filename}" phash: ${file?.perceptualHash || 'none'}, fhash: ${file?.fileHash?.substring(0, 16) || 'none'}`);
     }
     
-    // Check by exact filename first
-    if (normalized && localSets.filenames.has(normalized)) {
+    // Use same dedup as backup: manifestId, fileHash, perceptualHash (1-bit)
+    const check = shouldSkipServerFile(file, localSets);
+    if (check.skip) {
       skipped++;
-      skipReasons.filename = (skipReasons.filename || 0) + 1;
-      if (i < 10) console.log(`[Sync] Skip ${file?.filename}: filename`);
+      skipReasons[check.reason] = (skipReasons[check.reason] || 0) + 1;
+      if (i < 10) console.log(`[Sync] Skip ${file?.filename}: ${check.reason}`);
       continue;
     }
-    
-    // Check by base filename + size (handles iOS renaming but requires size match)
-    // Only skip if base name matches AND size is within 20% tolerance
-    const serverSize = file?.originalSize || file?.size;
-    if (baseName && serverSize && localSets.baseNameSizes.has(baseName)) {
-      const existingSizes = localSets.baseNameSizes.get(baseName);
-      let sizeMatched = false;
-      for (const existingSize of existingSizes) {
-        const sizeDiff = Math.abs(serverSize - existingSize) / Math.max(serverSize, existingSize);
-        if (sizeDiff < 0.20) {
-          sizeMatched = true;
-          break;
-        }
-      }
-      if (sizeMatched) {
-        skipped++;
-        skipReasons.baseName = (skipReasons.baseName || 0) + 1;
-        if (i < 10) console.log(`[Sync] Skip ${file?.filename}: baseName+size`);
-        continue;
-      }
-    }
-    
-    // Check by perceptual hash (cross-device dedup for images)
-    const serverPhash = file?.perceptualHash;
-    if (serverPhash && localSets.perceptualHashes && localSets.perceptualHashes.size > 0) {
-      if (findPerceptualHashMatch(serverPhash, localSets.perceptualHashes, SYNC_DHASH_THRESHOLD)) {
-        skipped++;
-        skipReasons.perceptualHash = (skipReasons.perceptualHash || 0) + 1;
-        if (i < 10) console.log(`[Sync] Skip ${file?.filename}: perceptualHash`);
-        continue;
-      }
-    }
-    
-    // Check by file hash (cross-device dedup for videos)
-    const serverFileHash = file?.fileHash;
-    if (serverFileHash && localSets.fileHashes && localSets.fileHashes.has(serverFileHash)) {
-      skipped++;
-      skipReasons.fileHash = (skipReasons.fileHash || 0) + 1;
-      if (i < 10) console.log(`[Sync] Skip ${file?.filename}: fileHash`);
-      continue;
-    }
-    
-    // FALLBACK: Check ALL platform-specific hashes (double-confirm before download)
-    // Check current platform first, then other platforms
-    const platformOrder = Platform.OS === 'ios' ? ['ios', 'android'] : ['android', 'ios'];
-    let platformSkipped = false;
-    for (const plat of platformOrder) {
-      const platformHash = file?.platformHashes?.[plat];
-      if (platformHash) {
-        // Check platform-specific perceptual hash
-        if (platformHash.perceptualHash && localSets.perceptualHashes?.size > 0) {
-          if (findPerceptualHashMatch(platformHash.perceptualHash, localSets.perceptualHashes, SYNC_DHASH_THRESHOLD)) {
-            skipped++;
-            skipReasons[`platform_${plat}_phash`] = (skipReasons[`platform_${plat}_phash`] || 0) + 1;
-            if (i < 10) console.log(`[Sync] Skip ${file?.filename}: platformPhash (${plat})`);
-            platformSkipped = true;
-            break;
-          }
-        }
-        // Check platform-specific file hash
-        if (platformHash.fileHash && localSets.fileHashes?.has(platformHash.fileHash)) {
-          skipped++;
-          skipReasons[`platform_${plat}_fhash`] = (skipReasons[`platform_${plat}_fhash`] || 0) + 1;
-          if (i < 10) console.log(`[Sync] Skip ${file?.filename}: platformFileHash (${plat})`);
-          platformSkipped = true;
-          break;
-        }
-      }
-    }
-    if (platformSkipped) continue;
     
     if (toDownload.length < 5) console.log(`[Sync] Will download: ${file?.filename} (no local match)`);
     toDownload.push(file);
