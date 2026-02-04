@@ -537,3 +537,86 @@ export const runBackgroundPreAnalysis = async ({
     return { error: e?.message };
   }
 };
+
+/**
+ * Pre-filter assets using cached hashes against server dedup sets.
+ * Returns only assets that need uploading (not already on server).
+ * 
+ * @param {Array} assets - Array of MediaLibrary assets
+ * @param {Object} serverDedupSets - { fileHashes: Set, perceptualHashes: Set, manifestIds: Set }
+ * @param {Function} getManifestId - Function to compute manifestId from asset
+ * @param {number} dhashThreshold - dHash threshold for perceptual matching (default 1)
+ * @returns {Object} { toUpload: Array, alreadyOnServer: number, uncached: number }
+ */
+export const preFilterAssetsWithCache = (assets, serverDedupSets, getManifestId, dhashThreshold = 1) => {
+  if (!assets || !serverDedupSets) return { toUpload: assets || [], alreadyOnServer: 0, uncached: 0 };
+  if (!memoryCache) return { toUpload: assets, alreadyOnServer: 0, uncached: assets.length };
+  
+  const { fileHashes: serverFileHashes, perceptualHashes: serverPHashes, manifestIds: serverManifestIds } = serverDedupSets;
+  
+  const toUpload = [];
+  let alreadyOnServer = 0;
+  let uncached = 0;
+  
+  // Hamming distance for dHash comparison
+  const hammingDistance = (a, b) => {
+    if (!a || !b || a.length !== 16 || b.length !== 16) return Number.MAX_SAFE_INTEGER;
+    let dist = 0;
+    for (let i = 0; i < 16; i += 8) {
+      const valA = parseInt(a.substring(i, i + 8), 16);
+      const valB = parseInt(b.substring(i, i + 8), 16);
+      let x = valA ^ valB;
+      while (x) { dist += x & 1; x >>>= 1; }
+    }
+    return dist;
+  };
+  
+  const findPHashMatch = (hash, hashSet) => {
+    if (!hash || !hashSet || hashSet.size === 0) return false;
+    if (hashSet.has(hash)) return true;
+    for (const existing of hashSet) {
+      if (existing && hammingDistance(hash, existing) <= dhashThreshold) return true;
+    }
+    return false;
+  };
+  
+  for (const asset of assets) {
+    // Check manifestId first (quick check)
+    if (getManifestId && serverManifestIds) {
+      try {
+        const manifestId = getManifestId(asset);
+        if (manifestId && serverManifestIds.has(manifestId)) {
+          alreadyOnServer++;
+          continue;
+        }
+      } catch (e) { /* ignore */ }
+    }
+    
+    // Check cached hashes against server
+    const cached = getAllCachedHashes(asset);
+    if (!cached || (!cached.fhash && !cached.phash)) {
+      uncached++;
+      toUpload.push(asset);
+      continue;
+    }
+    
+    // Check file hash (exact match)
+    if (cached.fhash && serverFileHashes && serverFileHashes.has(cached.fhash)) {
+      alreadyOnServer++;
+      continue;
+    }
+    
+    // Check perceptual hash (fuzzy match with threshold)
+    if (cached.phash && serverPHashes && findPHashMatch(cached.phash, serverPHashes)) {
+      alreadyOnServer++;
+      continue;
+    }
+    
+    // Not on server - needs upload
+    toUpload.push(asset);
+  }
+  
+  console.log(`[HashCache] Pre-filter: ${assets.length} total, ${alreadyOnServer} on server, ${toUpload.length} to upload, ${uncached} uncached`);
+  
+  return { toUpload, alreadyOnServer, uncached };
+};

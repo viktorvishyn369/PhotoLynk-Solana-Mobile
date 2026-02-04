@@ -66,6 +66,8 @@ import {
   setCachedHash,
   flushHashCache,
   abortPreAnalysis,
+  preFilterAssetsWithCache,
+  pruneHashCache,
 } from './hashCache';
 
 // ============================================================================
@@ -1290,16 +1292,38 @@ export const stealthCloudBackupCore = async ({
   
   await yieldToUi();
 
-  // ========== PHASE 6: Process Each File (0-100%) ==========
+  // ========== PHASE 6: Pre-filter using cached hashes (instant) ==========
+  onStatus(t('status.preparingDeduplication'));
+  
+  const getManifestIdFromAsset = (asset) => {
+    if (!asset) return null;
+    const filename = asset.filename || `file_${asset.id}`;
+    const size = asset.fileSize || 0;
+    return computeFileIdentity(filename, size);
+  };
+  
+  const { toUpload: assetsToUpload, alreadyOnServer: preFilterSkipped } = preFilterAssetsWithCache(
+    allAssets,
+    dedupSets,
+    getManifestIdFromAsset,
+    CROSS_PLATFORM_DHASH_THRESHOLD
+  );
+  
+  const currentAssetIds = new Set(allAssets.map(a => a.id));
+  pruneHashCache(currentAssetIds);
+  
+  console.log(`[Backup] Pre-filter: ${allAssets.length} total, ${preFilterSkipped} already on server, ${assetsToUpload.length} to upload`);
+
+  // ========== PHASE 7: Process Each File (0-100%) ==========
   const sessionHashes = {
     sessionFileHashes: new Set(),
     sessionPerceptualHashes: new Set(),
   };
 
   let uploaded = 0;
-  let skipped = 0;
+  let skipped = preFilterSkipped;
   let failed = 0;
-  const totalFiles = allAssets.length;
+  const totalFiles = assetsToUpload.length;
 
   for (let i = 0; i < totalFiles; i++) {
     // Check abort
@@ -1308,7 +1332,7 @@ export const stealthCloudBackupCore = async ({
       return { uploaded, skipped, failed, aborted: true };
     }
 
-    const asset = allAssets[i];
+    const asset = assetsToUpload[i];
     const fileNum = i + 1;
     
     // Progress: 0-100% (starts at beginning of file, ends after last file)
@@ -1515,22 +1539,41 @@ export const stealthCloudBackupSelectedCore = async ({
     }
   }
   
+  // Pre-filter using cached hashes (instant)
+  onStatus(t('status.preparingDeduplication'));
+  
+  const getManifestIdFromAsset = (asset) => {
+    if (!asset) return null;
+    const filename = asset.filename || `file_${asset.id}`;
+    const size = asset.fileSize || 0;
+    return computeFileIdentity(filename, size);
+  };
+  
+  const { toUpload: assetsToUpload, alreadyOnServer: preFilterSkipped } = preFilterAssetsWithCache(
+    list,
+    dedupSets,
+    getManifestIdFromAsset,
+    CROSS_PLATFORM_DHASH_THRESHOLD
+  );
+  
+  console.log(`[Backup Selected] Pre-filter: ${list.length} selected, ${preFilterSkipped} already on server, ${assetsToUpload.length} to upload`);
+  
   const sessionHashes = {
     sessionFileHashes: new Set(),
     sessionPerceptualHashes: new Set(),
   };
 
   let uploaded = 0;
-  let skipped = 0;
+  let skipped = preFilterSkipped;
   let failed = 0;
-  const totalFiles = list.length;
+  const totalFiles = assetsToUpload.length;
 
   for (let i = 0; i < totalFiles; i++) {
     if (abortRef?.current) {
       return { uploaded, skipped, failed, aborted: true };
     }
 
-    const asset = list[i];
+    const asset = assetsToUpload[i];
     const fileNum = i + 1;
     
     const fileProgress = 0.10 + (fileNum / totalFiles) * 0.90;
