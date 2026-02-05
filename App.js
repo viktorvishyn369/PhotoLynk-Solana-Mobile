@@ -1995,10 +1995,15 @@ export default function App() {
             return;
           }
 
+          // Skip thumbnail generation for common formats - content:// URIs work fine with Image component
+          // Only generate thumbnails for iOS formats (HEIC, HEIF, AVIF) that may not display on Android
           if (androidNeedsThumb) {
+            const iosFormats = ['heic', 'heif', 'avif'];
+            if (!iosFormats.includes(ext)) {
+              return; // Skip common formats - content:// URI works fine
+            }
             const info = await MediaLibrary.getAssetInfoAsync(asset.id, { shouldDownloadFromNetwork: true });
             const sourceUri = info?.localUri || info?.uri || asset?.uri;
-            console.log('[ThumbGen]', asset.filename, 'localUri:', info?.localUri?.substring(0, 60), 'uri:', info?.uri?.substring(0, 60), 'asset.uri:', asset?.uri?.substring(0, 60));
             if (sourceUri) {
               try {
                 const manipResult = await ImageManipulator.manipulateAsync(
@@ -2007,7 +2012,6 @@ export default function App() {
                   { compress: 0.7, format: ImageManipulator.SaveFormat.JPEG }
                 );
                 const thumbUri = manipResult?.uri || null;
-                console.log('[ThumbGen] SUCCESS', asset.filename, thumbUri?.substring(0, 60));
                 if (thumbUri) {
                   setBackupPickerAssets(prev => {
                     const updated = [...prev];
@@ -2019,10 +2023,8 @@ export default function App() {
                   });
                 }
               } catch (e) {
-                console.log('[ThumbGen] FAIL', asset.filename, e?.message);
+                // Keep original URI
               }
-            } else {
-              console.log('[ThumbGen] NO SOURCE URI', asset.filename);
             }
             return;
           }
