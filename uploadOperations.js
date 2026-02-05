@@ -923,7 +923,7 @@ export const localRemoteBackupSelectedCore = async ({
     // Flush hash cache to disk
     await flushHashCache();
     
-    return { uploaded: successCount, skipped: skippedCount, failed: failedCount, serverTotal };
+    return { uploaded: successCount, skipped: skippedCount, failed: failedCount, serverTotal, selectedCount: list.length };
   } catch (error) {
     console.error('Backup selected error:', error);
     await flushHashCache(); // Save cache even on error

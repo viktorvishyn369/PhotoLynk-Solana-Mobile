@@ -1278,6 +1278,7 @@ export const localRemoteRestoreCore = async ({
   console.log(`[Sync] Starting download phase: ${toDownload.length} files, maxParallel=${maxParallel}`);
   await yieldToUi(); // Yield before creating download tasks
 
+  const serverTotal = serverFiles.length;
   const downloadTasks = toDownload.map((file, idx) => runDownload(async () => {
     console.log(`[Sync] Download task ${idx} started: ${file.filename}`);
     // Check abort
@@ -1426,7 +1427,7 @@ export const localRemoteRestoreCore = async ({
       // Progress: 15-100%
       const progress = 0.15 + (processed / toDownload.length) * 0.85;
       updateProgress(onProgress, progress);
-      updateStatus(onStatus, t('status.syncDownloadingProgress', { current: processed, total: toDownload.length }));
+      updateStatus(onStatus, t('status.syncDownloadingProgress', { current: processed, total: serverTotal }));
     }
   }));
 

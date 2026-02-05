@@ -198,6 +198,11 @@ const AUTO_UPLOAD_FEATURE_ENABLED = false;
 // Module-level cache for PhotoLynkDeleted asset IDs (avoids hook order issues)
 let backupPickerDeletedIdsCache = null;
 
+// Helper: Request media library permissions
+const requestMediaLibraryPermission = async () => {
+  return await MediaLibrary.requestPermissionsAsync(false, ['photo', 'video']);
+};
+
 // Alias for backward compatibility with global function name
 const ensureAutoUploadPolicyAllowsWorkIfBackgrounded = ensureAutoUploadPolicyAllowsWorkIfBackgroundedGlobal;
 
@@ -1620,7 +1625,7 @@ export default function App() {
   // stealthCloudUploadEncryptedChunk is now imported from backupManager.js
 
   const stealthCloudBackupSelected = async ({ assets }) => {
-    const permission = await MediaLibrary.requestPermissionsAsync(false, ['photo', 'video']);
+    const permission = await requestMediaLibraryPermission();
     if (!permission || permission.status !== 'granted') {
       showDarkAlert(t('alerts.permissionNeeded'), t('alerts.permissionNeededMessage'));
       return;
@@ -1679,7 +1684,7 @@ export default function App() {
         return;
       }
 
-      const { uploaded, skipped, failed, serverTotal } = result;
+      const { uploaded, skipped, failed, serverTotal, selectedCount } = result;
 
       if (uploaded === 0 && skipped === 0 && failed === 0) {
         setProgress(1);
@@ -1696,7 +1701,7 @@ export default function App() {
       setProgress(1);
       await sleep(300);
       setStatus(t('status.backupComplete'));
-      showResultAlert('backup', { uploaded, skipped, failed, serverTotal });
+      showResultAlert('backup', { uploaded, skipped, failed, serverTotal: selectedCount || serverTotal });
     } catch (e) {
       console.error('StealthCloud backup error:', e);
       setStatus(t('status.backupFailed'));
@@ -1757,7 +1762,7 @@ export default function App() {
       }
 
       if (result.alreadyBackedUp) {
-        const count = result.serverTotal || result.skipped || list.length;
+        const count = result.selectedCount || list.length;
         setProgress(1); // Show 100% before checkmark
         setStatus(t('status.allFilesBackedUp', { count }));
         await sleep(400); // Brief pause to show 100%
@@ -1769,7 +1774,7 @@ export default function App() {
       setProgress(1); // Show 100% before checkmark
       setStatus(t('status.backupComplete'));
       await sleep(400); // Brief pause to show 100%
-      showResultAlert('backup', { uploaded: result.uploaded, skipped: result.skipped, failed: result.failed, serverTotal: result.serverTotal });
+      showResultAlert('backup', { uploaded: result.uploaded, skipped: result.skipped, failed: result.failed, serverTotal: result.selectedCount || result.serverTotal });
       setProgress(0);
     } catch (error) {
       setStatus(t('status.backupFailed'));
@@ -1931,36 +1936,15 @@ export default function App() {
     if (!reset && !backupPickerHasNext) return;
     setBackupPickerLoading(true);
     try {
-      const permission = await MediaLibrary.requestPermissionsAsync(false, ['photo', 'video']);
+      const permission = await requestMediaLibraryPermission();
       if (permission.status !== 'granted') { showDarkAlert(t('alerts.permissionNeeded'), t('alerts.permissionNeededMessage')); return; }
 
-      let deletedIds = backupPickerDeletedIdsCache;
-      if (Platform.OS === 'android' && !deletedIds) {
-        try {
-          const albums = await MediaLibrary.getAlbumsAsync({ includeSmartAlbums: false });
-          const deletedAlbum = albums.find(a => a && a.title === 'PhotoLynkDeleted');
-          if (deletedAlbum) {
-            deletedIds = await buildLocalAssetIdSetPaged({ album: deletedAlbum });
-          } else {
-            deletedIds = new Set();
-          }
-        } catch (e) {
-          deletedIds = new Set();
-        }
-        backupPickerDeletedIdsCache = deletedIds;
-      }
-
-      const first = 18; // 18 files per batch for thumbnails
+      const first = 18;
       const after = reset ? null : backupPickerAfter;
       const page = await MediaLibrary.getAssetsAsync({ first, after: after || undefined, mediaType: ['photo', 'video'], sortBy: [MediaLibrary.SortBy.creationTime] });
-      const assetsRaw = page && Array.isArray(page.assets) ? page.assets : [];
-      const assets = (Platform.OS === 'android' && deletedIds && deletedIds.size > 0)
-        ? assetsRaw.filter(a => a && a.id && !deletedIds.has(a.id))
-        : assetsRaw;
+      const assets = page && Array.isArray(page.assets) ? page.assets : [];
       if (page && typeof page.totalCount === 'number') {
-        const rawTotal = Number(page.totalCount) || 0;
-        const total = (Platform.OS === 'android' && deletedIds && deletedIds.size > 0) ? Math.max(0, rawTotal - deletedIds.size) : rawTotal;
-        setBackupPickerTotal(total);
+        setBackupPickerTotal(Number(page.totalCount) || 0);
       } else if (reset) {
         setBackupPickerTotal(assets.length);
       }
@@ -2533,7 +2517,7 @@ export default function App() {
     resetSyncPickerState(); setSyncPickerOpen(true); setSyncPickerLoading(true);
     try {
       // Ensure media library permission before listing local assets
-      const permission = await MediaLibrary.requestPermissionsAsync(false, ['photo', 'video']);
+      const permission = await requestMediaLibraryPermission();
       if (!permission || permission.status !== 'granted') {
         showDarkAlert(t('alerts.syncListFailed'), t('alerts.syncListFailedPermission'));
         setSyncPickerOpen(false);
@@ -3358,7 +3342,7 @@ export default function App() {
     setProgressAction('sync');
     setStatus(t('status.syncPreparing'));
 
-    const permission = await MediaLibrary.requestPermissionsAsync(false, ['photo', 'video']);
+    const permission = await requestMediaLibraryPermission();
     if (permission.status !== 'granted') {
       showDarkAlert(t('alerts.permissionRequired'), t('alerts.permissionRequiredSync'));
       setLoadingSafe(false);
@@ -4406,7 +4390,7 @@ export default function App() {
     setBackgroundWarnEligibleSafe(false); // Don't warn during permission prompts
     setWasBackgroundedDuringWorkSafe(false);
 
-    const permission = await MediaLibrary.requestPermissionsAsync(false, ['photo', 'video']);
+    const permission = await requestMediaLibraryPermission();
     if (permission.status !== 'granted') {
       showDarkAlert(t('alerts.permissionRequired'), t('alerts.permissionRequiredSync'));
       setLoadingSafe(false);

@@ -1666,7 +1666,7 @@ export const stealthCloudBackupSelectedCore = async ({
   
   // serverTotal = files on server before + newly uploaded
   const serverTotal = serverManifests.length + uploaded;
-  return { uploaded, skipped, failed, serverTotal };
+  return { uploaded, skipped, failed, serverTotal, selectedCount: list.length };
 };
 
 export default {

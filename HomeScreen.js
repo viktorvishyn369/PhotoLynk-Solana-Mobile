@@ -195,7 +195,7 @@ export const HomeScreen = ({
           <View style={[styles.heroIconContainer, { borderColor: `${statusColor}40` }]}>
             <View style={[styles.heroIconInner, { backgroundColor: `${statusColor}20` }]}>
               <Feather 
-                name={isIdle ? 'check-circle' : isMintingNFT ? 'hexagon' : isCleaning ? 'search' : isSyncing ? 'download-cloud' : 'upload-cloud'} 
+                name={isFetching ? 'loader' : isIdle ? 'check-circle' : isMintingNFT ? 'hexagon' : isCleaning ? 'search' : isSyncing ? 'download-cloud' : 'upload-cloud'} 
                 size={scaleStatus(32)} 
                 color={statusColor} 
               />
@@ -204,7 +204,7 @@ export const HomeScreen = ({
 
           {/* Status Text - Large and Prominent */}
           <Text style={[styles.heroStatusText, { color: statusColor }]}>
-            {isIdle ? t('home.ready') : isMintingNFT ? t('home.mintingNft') : isCleaning ? t('home.scanning') : isSyncing ? t('home.syncing') : t('home.backingUp')}
+            {isFetching ? t('home.loading') : isIdle ? t('home.ready') : isMintingNFT ? t('home.mintingNft') : isCleaning ? t('home.scanning') : isSyncing ? t('home.syncing') : t('home.backingUp')}
           </Text>
 
           {/* Progress Ring/Bar - always rendered for consistent layout */}
