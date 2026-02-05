@@ -192,7 +192,7 @@ export const fetchThumbnailBase64 = async (filename, config, SERVER_URL, retryCo
   // HEIC files may need longer timeout as server converts them
   const ext = (filename || '').split('.').pop()?.toLowerCase() || '';
   const isHeic = ['heic', 'heif'].includes(ext);
-  const timeout = isHeic ? 15000 : 8000;
+  const timeout = isHeic ? 30000 : 10000; // Increased timeout for HEIC conversion
   
   try {
     // Add cache-busting parameter to ensure fresh thumbnails after server fixes
@@ -218,10 +218,10 @@ export const fetchThumbnailBase64 = async (filename, config, SERVER_URL, retryCo
     return `data:image/jpeg;base64,${base64}`;
   } catch (e) {
     console.log('[THUMB] FAIL:', filename, e?.message || 'unknown');
-    // Retry once on timeout for HEIC files
-    if (retryCount < 1 && isHeic && e?.code === 'ECONNABORTED') {
-      console.log('[THUMB] Retrying HEIC:', filename);
-      await new Promise(r => setTimeout(r, 1000));
+    // Retry up to 2 times on timeout for HEIC files
+    if (retryCount < 2 && isHeic && (e?.code === 'ECONNABORTED' || e?.message?.includes('timeout'))) {
+      console.log('[THUMB] Retrying HEIC:', filename, 'attempt:', retryCount + 2);
+      await new Promise(r => setTimeout(r, 2000));
       return fetchThumbnailBase64(filename, config, SERVER_URL, retryCount + 1);
     }
     return null;
