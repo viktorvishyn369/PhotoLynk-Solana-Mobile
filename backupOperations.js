@@ -1476,20 +1476,34 @@ export const stealthCloudBackupSelectedCore = async ({
   onProgress(0);
   onStatus(t('status.backupPreparing'));
 
-  // Android: exclude PhotoLynkDeleted album (our local "trash") from backup
+  // Android: exclude PhotoLynkDeleted files from backup
+  // Use URI-based filtering (more reliable on Android 14+) + album-based as fallback
   if (Platform.OS === 'android') {
+    const beforeCount = list.length;
+    // First: filter by URI path (works reliably on Android 14+)
+    list = list.filter(a => {
+      const uri = a?.uri || '';
+      const localUri = a?.localUri || '';
+      return !uri.includes('/PhotoLynkDeleted/') && !localUri.includes('/PhotoLynkDeleted/');
+    });
+    console.log(`[StealthCloud Backup Selected] URI filter: ${beforeCount} -> ${list.length} (removed ${beforeCount - list.length} PhotoLynkDeleted files)`);
+    
+    // Second: also try album-based filtering as additional safety
     try {
       const albums = await MediaLibrary.getAlbumsAsync();
       const deletedAlbum = albums.find(a => a && a.title === 'PhotoLynkDeleted');
       if (deletedAlbum) {
         const deletedIds = await buildLocalAssetIdSetPaged({ album: deletedAlbum });
+        const beforeAlbum = list.length;
         list = list.filter(a => !deletedIds.has(a.id));
-        if (list.length === 0) {
-          return { uploaded: 0, skipped: 0, failed: 0, noAssets: true };
-        }
+        console.log(`[StealthCloud Backup Selected] Album filter: ${beforeAlbum} -> ${list.length} (removed ${beforeAlbum - list.length} more)`);
       }
     } catch (e) {
-      console.warn('[StealthCloud Backup Selected] Failed to filter PhotoLynkDeleted:', e?.message);
+      console.warn('[StealthCloud Backup Selected] Album filter failed (URI filter already applied):', e?.message);
+    }
+    
+    if (list.length === 0) {
+      return { uploaded: 0, skipped: 0, failed: 0, noAssets: true };
     }
   }
 
