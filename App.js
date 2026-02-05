@@ -137,7 +137,7 @@ import {
   stealthCloudRestoreCore,
   localRemoteRestoreCore,
 } from './syncOperations';
-import { fetchStealthCloudPickerPage, fetchLocalRemotePickerPage, fetchStealthCloudThumbFileUri } from './syncPickerOperations';
+import { fetchStealthCloudPickerPage, fetchLocalRemotePickerPage, fetchStealthCloudThumbFileUri, fetchThumbnailBase64 } from './syncPickerOperations';
 import { SettingsScreen } from './SettingsScreen';
 import { InfoScreen } from './InfoScreen';
 import { LoginScreen } from './LoginScreen';
@@ -188,6 +188,8 @@ const REMOTE_SERVER_QR_SCHEMA = 'photolynk_remote';
 const GITHUB_RELEASES_LATEST_URL = 'https://github.com/viktorvishyn369/PhotoLynk/releases/latest';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
+const SCREEN_HEIGHT_FULL = Dimensions.get('screen').height;
+const ANDROID_NAV_BAR_HEIGHT = Platform.OS === 'android' ? Math.max(48, SCREEN_HEIGHT_FULL - SCREEN_HEIGHT) : 0;
 
 const { MediaDelete } = NativeModules;
 
@@ -2551,7 +2553,8 @@ export default function App() {
         }, 100);
       } else {
         const result = await fetchLocalRemotePickerPage({
-          config, SERVER_URL, offset: 0, limit: SYNC_PICKER_PAGE_SIZE
+          config, SERVER_URL, offset: 0, limit: SYNC_PICKER_PAGE_SIZE,
+          fetchThumbnails: true // Fetch thumbnails during load
         });
         setSyncPickerItems(result.items);
         setSyncPickerTotal(result.total);
@@ -2591,7 +2594,8 @@ export default function App() {
           }
         } else {
           const result = await fetchLocalRemotePickerPage({
-            config, SERVER_URL, offset: syncPickerOffset, limit: SYNC_PICKER_PAGE_SIZE
+            config, SERVER_URL, offset: syncPickerOffset, limit: SYNC_PICKER_PAGE_SIZE,
+            fetchThumbnails: true
           });
           if (result.total !== syncPickerTotal) setSyncPickerTotal(result.total);
           setSyncPickerOffset(result.nextOffset);
@@ -2660,14 +2664,53 @@ export default function App() {
     }
   }, [serverType, syncPickerAuthHeaders]);
 
+  // Enrichment function for local/remote server thumbnails
+  const ensureLocalRemoteSyncThumb = useCallback(async (item) => {
+    try {
+      if (!item || !item.filename) return;
+      if (serverType === 'stealthcloud') return;
+      const filename = String(item.filename);
+      if (item.thumbUri) return;
+
+      const cached = syncPickerThumbCacheRef.current.get(filename);
+      if (cached) {
+        setSyncPickerItems(prev => (prev || []).map(it => (it && String(it.filename || '') === filename ? { ...it, thumbUri: cached } : it)));
+        return;
+      }
+
+      const inFlightKey = `local:${filename}`;
+      if (syncPickerThumbInFlightRef.current.has(inFlightKey)) return;
+      syncPickerThumbInFlightRef.current.add(inFlightKey);
+
+      await syncPickerThumbLimiterRef.current(async () => {
+        try {
+          const headers = syncPickerAuthHeaders && typeof syncPickerAuthHeaders === 'object' ? syncPickerAuthHeaders : {};
+          const SERVER_URL = getServerUrl();
+          const uri = await fetchThumbnailBase64(filename, { headers }, SERVER_URL);
+          if (uri) {
+            syncPickerThumbCacheRef.current.set(filename, uri);
+            setSyncPickerItems(prev => (prev || []).map(it => (it && String(it.filename || '') === filename ? { ...it, thumbUri: uri } : it)));
+          }
+        } finally {
+          syncPickerThumbInFlightRef.current.delete(inFlightKey);
+        }
+      });
+    } catch (e) {
+    }
+  }, [serverType, syncPickerAuthHeaders]);
+
   const onSyncPickerViewableItemsChangedRef = useRef(null);
   onSyncPickerViewableItemsChangedRef.current = ({ viewableItems }) => {
-    if (serverType !== 'stealthcloud') return;
     try {
       const vis = Array.isArray(viewableItems) ? viewableItems : [];
       for (const v of vis) {
         const it = v && v.item ? v.item : null;
-        if (it) ensureStealthCloudSyncThumb(it);
+        if (!it || it.thumbUri) continue;
+        if (serverType === 'stealthcloud') {
+          ensureStealthCloudSyncThumb(it);
+        } else {
+          ensureLocalRemoteSyncThumb(it);
+        }
       }
     } catch (e) {}
   };
@@ -4614,7 +4657,7 @@ export default function App() {
                 <View style={{width: isTablet ? 280 : 240, height: isTablet ? 280 : 240, borderWidth: 2, borderColor: '#03E1FF', borderRadius: scaleSpacing(16)}} />
               </View>
               {/* Bottom bar with cancel button */}
-              <View style={{paddingBottom: Platform.OS === 'ios' ? scaleSpacing(50) : scaleSpacing(30), paddingHorizontal: scaleSpacing(20), backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center'}}>
+              <View style={{paddingBottom: Platform.OS === 'android' ? ANDROID_NAV_BAR_HEIGHT + scaleSpacing(16) : scaleSpacing(50), paddingHorizontal: scaleSpacing(20), backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center'}}>
                 <TouchableOpacity
                   style={{paddingVertical: scaleSpacing(14), paddingHorizontal: scaleSpacing(50), backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: scaleSpacing(12), borderWidth: 1, borderColor: 'rgba(255,255,255,0.3)'}}
                   onPress={() => setQrScannerOpen(false)}>
@@ -4634,7 +4677,7 @@ export default function App() {
                 </Text>
               </View>
               {/* Bottom bar with cancel button */}
-              <View style={{position: 'absolute', bottom: 0, left: 0, right: 0, paddingBottom: Platform.OS === 'ios' ? scaleSpacing(50) : scaleSpacing(30), paddingHorizontal: scaleSpacing(20), alignItems: 'center'}}>
+              <View style={{position: 'absolute', bottom: 0, left: 0, right: 0, paddingBottom: Platform.OS === 'android' ? ANDROID_NAV_BAR_HEIGHT + scaleSpacing(16) : scaleSpacing(50), paddingHorizontal: scaleSpacing(20), alignItems: 'center'}}>
                 <TouchableOpacity
                   style={{paddingVertical: scaleSpacing(14), paddingHorizontal: scaleSpacing(50), backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: scaleSpacing(12), borderWidth: 1, borderColor: 'rgba(255,255,255,0.3)'}}
                   onPress={() => setQrScannerOpen(false)}>
@@ -4950,7 +4993,7 @@ export default function App() {
                   <View style={{width: isTablet ? 280 : 240, height: isTablet ? 280 : 240, borderWidth: 2, borderColor: '#03E1FF', borderRadius: scaleSpacing(16)}} />
                 </View>
                 {/* Bottom bar with cancel button */}
-                <View style={{paddingBottom: Platform.OS === 'ios' ? scaleSpacing(50) : scaleSpacing(30), paddingHorizontal: scaleSpacing(20), backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center'}}>
+                <View style={{paddingBottom: Platform.OS === 'android' ? ANDROID_NAV_BAR_HEIGHT + scaleSpacing(16) : scaleSpacing(50), paddingHorizontal: scaleSpacing(20), backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center'}}>
                   <TouchableOpacity
                     style={{paddingVertical: scaleSpacing(14), paddingHorizontal: scaleSpacing(50), backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: scaleSpacing(12), borderWidth: 1, borderColor: 'rgba(255,255,255,0.3)'}}
                     onPress={() => setQrScannerOpen(false)}>
@@ -4970,7 +5013,7 @@ export default function App() {
                   </Text>
                 </View>
                 {/* Bottom bar with cancel button */}
-                <View style={{position: 'absolute', bottom: 0, left: 0, right: 0, paddingBottom: Platform.OS === 'ios' ? scaleSpacing(50) : scaleSpacing(30), paddingHorizontal: scaleSpacing(20), alignItems: 'center'}}>
+                <View style={{position: 'absolute', bottom: 0, left: 0, right: 0, paddingBottom: Platform.OS === 'android' ? ANDROID_NAV_BAR_HEIGHT + scaleSpacing(16) : scaleSpacing(50), paddingHorizontal: scaleSpacing(20), alignItems: 'center'}}>
                   <TouchableOpacity
                     style={{paddingVertical: scaleSpacing(14), paddingHorizontal: scaleSpacing(50), backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: scaleSpacing(12), borderWidth: 1, borderColor: 'rgba(255,255,255,0.3)'}}
                     onPress={() => setQrScannerOpen(false)}>
@@ -4991,7 +5034,7 @@ export default function App() {
         <InfoScreen
           onBack={() => setView('home')}
           appDisplayName={APP_DISPLAY_NAME}
-          appVersion="1.5.5"
+          appVersion="1.5.6"
           deviceUuid={deviceUuid}
           serverType={serverType}
           stealthUsage={stealthUsage}
