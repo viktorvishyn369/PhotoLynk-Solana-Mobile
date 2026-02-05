@@ -1460,7 +1460,7 @@ export const stealthCloudBackupSelectedCore = async ({
   onProgress,
   abortRef,
 }) => {
-  const list = Array.isArray(assets) ? assets.filter(a => a && a.id) : [];
+  let list = Array.isArray(assets) ? assets.filter(a => a && a.id) : [];
   if (list.length === 0) {
     return { uploaded: 0, skipped: 0, failed: 0, noAssets: true };
   }
@@ -1475,6 +1475,23 @@ export const stealthCloudBackupSelectedCore = async ({
   
   onProgress(0);
   onStatus(t('status.backupPreparing'));
+
+  // Android: exclude PhotoLynkDeleted album (our local "trash") from backup
+  if (Platform.OS === 'android') {
+    try {
+      const albums = await MediaLibrary.getAlbumsAsync();
+      const deletedAlbum = albums.find(a => a && a.title === 'PhotoLynkDeleted');
+      if (deletedAlbum) {
+        const deletedIds = await buildLocalAssetIdSetPaged({ album: deletedAlbum });
+        list = list.filter(a => !deletedIds.has(a.id));
+        if (list.length === 0) {
+          return { uploaded: 0, skipped: 0, failed: 0, noAssets: true };
+        }
+      }
+    } catch (e) {
+      console.warn('[StealthCloud Backup Selected] Failed to filter PhotoLynkDeleted:', e?.message);
+    }
+  }
 
   const config = await getAuthHeaders();
   const SERVER_URL = getServerUrl();
