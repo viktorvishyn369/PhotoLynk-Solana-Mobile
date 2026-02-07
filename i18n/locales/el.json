@@ -349,7 +349,10 @@
 		"storageGbMonthly": "{{gb}} GB Μηνιαία",
 		"pricePerMonth": "{{price}} / μήνα",
 		"pricingUnavailable": "Τιμολόγηση δεν είναι διαθέσιμη",
-		"restorePurchases": "Επαναφορά αγορών"
+		"restorePurchases": "Επαναφορά αγορών",
+		"autoRenewNote": "Η συνδρομή ανανεώνεται αυτόματα μηνιαία. Ακυρώστε οποτεδήποτε στις Ρυθμίσεις.",
+		"termsOfUse": "Όροι Χρήσης",
+		"privacyPolicy": "Πολιτική Απορρήτου"
 	},
 	"nft": {
 		"title": "Γκαλερί NFT",

@@ -349,7 +349,10 @@
 		"storageGbMonthly": "{{gb}} GB Igakuiselt",
 		"pricePerMonth": "{{price}} / kuu",
 		"pricingUnavailable": "Hind ei ole saadaval",
-		"restorePurchases": "Ostude taastamine"
+		"restorePurchases": "Ostude taastamine",
+		"autoRenewNote": "Tellimus uueneb automaatselt igakuiselt. Tühista igal ajal seadetes.",
+		"termsOfUse": "Kasutustingimused",
+		"privacyPolicy": "Privaatsuspoliitika"
 	},
 	"nft": {
 		"title": "NFT galerii",

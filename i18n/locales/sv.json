@@ -349,7 +349,10 @@
 		"storageGbMonthly": "{{gb}} GB Månadsvis",
 		"pricePerMonth": "{{price}} / månad",
 		"pricingUnavailable": "Priser ej tillgängliga",
-		"restorePurchases": "Återställa inköp"
+		"restorePurchases": "Återställa inköp",
+		"autoRenewNote": "Prenumerationen förnyas automatiskt varje månad. Avbryt när som helst i Inställningar.",
+		"termsOfUse": "Användarvillkor",
+		"privacyPolicy": "Integritetspolicy"
 	},
 	"nft": {
 		"title": "NFT Galleri",

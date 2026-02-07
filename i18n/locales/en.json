@@ -364,7 +364,10 @@
 		"storageGbMonthly": "{{gb}} GB Monthly",
 		"pricePerMonth": "{{price}} / month",
 		"pricingUnavailable": "Pricing unavailable",
-		"restorePurchases": "Restore Purchases"
+		"restorePurchases": "Restore Purchases",
+		"autoRenewNote": "Subscription auto-renews monthly. Cancel anytime in Settings.",
+		"termsOfUse": "Terms of Use",
+		"privacyPolicy": "Privacy Policy"
 	},
 	"nft": {
 		"title": "NFT Gallery",

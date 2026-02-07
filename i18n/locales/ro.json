@@ -349,7 +349,10 @@
 		"storageGbMonthly": "{{gb}} GB Lunar",
 		"pricePerMonth": "{{price}} / lună",
 		"pricingUnavailable": "Prețul nu este disponibil",
-		"restorePurchases": "Restaurarea achizițiilor"
+		"restorePurchases": "Restaurarea achizițiilor",
+		"autoRenewNote": "Abonamentul se reînnoiește automat lunar. Anulați oricând din Setări.",
+		"termsOfUse": "Termeni de utilizare",
+		"privacyPolicy": "Politica de confidențialitate"
 	},
 	"nft": {
 		"title": "Galeria NFT",

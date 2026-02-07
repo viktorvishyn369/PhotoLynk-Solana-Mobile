@@ -349,7 +349,10 @@
 		"storageGbMonthly": "{{gb}} GB Месечно",
 		"pricePerMonth": "{{price}} / месец",
 		"pricingUnavailable": "Цените не са налични",
-		"restorePurchases": "Възстановяване на покупките"
+		"restorePurchases": "Възстановяване на покупките",
+		"autoRenewNote": "Абонаментът се подновява автоматично всеки месец. Отменете по всяко време от Настройки.",
+		"termsOfUse": "Условия за ползване",
+		"privacyPolicy": "Политика за поверителност"
 	},
 	"nft": {
 		"title": "Галерия NFT",

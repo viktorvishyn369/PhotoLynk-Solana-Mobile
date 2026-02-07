@@ -349,7 +349,10 @@
 		"storageGbMonthly": "{{gb}} GB मासिक",
 		"pricePerMonth": "{{price}} / महीना",
 		"pricingUnavailable": "मूल्य उपलब्ध नहीं है",
-		"restorePurchases": "खरीदें पुनर्स्थापित करें"
+		"restorePurchases": "खरीदें पुनर्स्थापित करें",
+		"autoRenewNote": "सदस्यता मासिक रूप से स्वतः नवीनीकृत होती है। सेटिंग्स में कभी भी रद्द करें।",
+		"termsOfUse": "उपयोग की शर्तें",
+		"privacyPolicy": "गोपनीयता नीति"
 	},
 	"nft": {
 		"title": "एनएफटी गैलरी",

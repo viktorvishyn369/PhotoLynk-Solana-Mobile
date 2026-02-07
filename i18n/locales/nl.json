@@ -350,7 +350,10 @@
 		"storageGbMonthly": "{{gb}} GB Maandelijks",
 		"pricePerMonth": "{{price}} / maand",
 		"pricingUnavailable": "Prijzen niet beschikbaar",
-		"restorePurchases": "Aankopen herstellen"
+		"restorePurchases": "Aankopen herstellen",
+		"autoRenewNote": "Abonnement wordt maandelijks automatisch verlengd. Annuleer op elk moment in Instellingen.",
+		"termsOfUse": "Gebruiksvoorwaarden",
+		"privacyPolicy": "Privacybeleid"
 	},
 	"nft": {
 		"title": "NFT Galerij",

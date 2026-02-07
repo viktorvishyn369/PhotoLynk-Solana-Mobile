@@ -350,7 +350,10 @@
 		"storageGbMonthly": "{{gb}} GB Aylık",
 		"pricePerMonth": "{{price}} / ay",
 		"pricingUnavailable": "Fiyatlandırma mevcut değil",
-		"restorePurchases": "Satın Almaları Geri Yükle"
+		"restorePurchases": "Satın Almaları Geri Yükle",
+		"autoRenewNote": "Abonelik aylık olarak otomatik yenilenir. Ayarlardan istediğiniz zaman iptal edin.",
+		"termsOfUse": "Kullanım Koşulları",
+		"privacyPolicy": "Gizlilik Politikası"
 	},
 	"nft": {
 		"title": "NFT Galeri",

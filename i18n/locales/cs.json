@@ -349,7 +349,10 @@
 		"storageGbMonthly": "{{gb}} GB Měsíčně",
 		"pricePerMonth": "{{price}} / měsíc",
 		"pricingUnavailable": "Ceny nejsou k dispozici",
-		"restorePurchases": "Obnovení nákupů"
+		"restorePurchases": "Obnovení nákupů",
+		"autoRenewNote": "Předplatné se automaticky obnovuje měsíčně. Zrušte kdykoli v Nastavení.",
+		"termsOfUse": "Podmínky použití",
+		"privacyPolicy": "Zásady ochrany osobních údajů"
 	},
 	"nft": {
 		"title": "Galerie NFT",

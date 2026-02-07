@@ -349,7 +349,10 @@
 		"storageGbMonthly": "{{gb}} GB Bulanan",
 		"pricePerMonth": "{{price}} / bulan",
 		"pricingUnavailable": "Harga tidak tersedia",
-		"restorePurchases": "Mengembalikan Pembelian"
+		"restorePurchases": "Mengembalikan Pembelian",
+		"autoRenewNote": "Langganan diperpanjang otomatis setiap bulan. Batalkan kapan saja di Pengaturan.",
+		"termsOfUse": "Ketentuan Penggunaan",
+		"privacyPolicy": "Kebijakan Privasi"
 	},
 	"nft": {
 		"title": "Galeri NFT",

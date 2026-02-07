@@ -5122,6 +5122,17 @@ export default function App() {
                         <Text style={styles.restorePurchasesText}>{t('subscription.restorePurchases')}</Text>
                       </TouchableOpacity>
                     )}
+                    <Text style={{ color: '#888', fontSize: scale(11), textAlign: 'center', marginTop: scaleSpacing(12), lineHeight: scale(16) }}>
+                      {t('subscription.autoRenewNote')}
+                    </Text>
+                    <View style={{ flexDirection: 'row', justifyContent: 'center', gap: scaleSpacing(16), marginTop: scaleSpacing(8) }}>
+                      <TouchableOpacity onPress={() => Linking.openURL('https://viktorvishyn369.github.io/PhotoLynk/terms.html')}>
+                        <Text style={{ color: '#03E1FF', fontSize: scale(11), textDecorationLine: 'underline' }}>{t('subscription.termsOfUse')}</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity onPress={() => Linking.openURL('https://viktorvishyn369.github.io/PhotoLynk/privacy-policy.html')}>
+                        <Text style={{ color: '#03E1FF', fontSize: scale(11), textDecorationLine: 'underline' }}>{t('subscription.privacyPolicy')}</Text>
+                      </TouchableOpacity>
+                    </View>
                   </>
                 );
               })()}

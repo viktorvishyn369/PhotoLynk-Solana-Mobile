@@ -350,7 +350,10 @@
 		"storageGbMonthly": "{{gb}} GB 月額",
 		"pricePerMonth": "{{price}}/月",
 		"pricingUnavailable": "価格未定",
-		"restorePurchases": "購入した商品の復元"
+		"restorePurchases": "購入した商品の復元",
+		"autoRenewNote": "サブスクリプションは毎月自動更新されます。設定からいつでもキャンセルできます。",
+		"termsOfUse": "利用規約",
+		"privacyPolicy": "プライバシーポリシー"
 	},
 	"nft": {
 		"title": "NFTギャラリー",

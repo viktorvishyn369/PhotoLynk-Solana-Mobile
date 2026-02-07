@@ -350,7 +350,10 @@
 		"storageGbMonthly": "{{gb}} GB شهرياً",
 		"pricePerMonth": "{{price}}/شهرياً",
 		"pricingUnavailable": "الأسعار غير متوفرة",
-		"restorePurchases": "استعادة المشتريات"
+		"restorePurchases": "استعادة المشتريات",
+		"autoRenewNote": "يتجدد الاشتراك تلقائيًا شهريًا. يمكنك الإلغاء في أي وقت من الإعدادات.",
+		"termsOfUse": "شروط الاستخدام",
+		"privacyPolicy": "سياسة الخصوصية"
 	},
 	"nft": {
 		"title": "معرض NFT",

@@ -349,7 +349,10 @@
 		"storageGbMonthly": "{{gb}} GB 月刊",
 		"pricePerMonth": "{{price}} / 月",
 		"pricingUnavailable": "无定价",
-		"restorePurchases": "恢复购买"
+		"restorePurchases": "恢复购买",
+		"autoRenewNote": "订阅每月自动续订。可随时在设置中取消。",
+		"termsOfUse": "使用条款",
+		"privacyPolicy": "隐私政策"
 	},
 	"nft": {
 		"title": "NFT 画廊",

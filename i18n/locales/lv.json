@@ -349,7 +349,10 @@
 		"storageGbMonthly": "{{gb}} GB Ikmēneša",
 		"pricePerMonth": "{{price}} / mēnesis",
 		"pricingUnavailable": "Cenas nav pieejamas",
-		"restorePurchases": "Pirkumu atjaunošana"
+		"restorePurchases": "Pirkumu atjaunošana",
+		"autoRenewNote": "Abonements tiek automātiski atjaunots katru mēnesi. Atceliet jebkurā laikā iestatījumos.",
+		"termsOfUse": "Lietošanas noteikumi",
+		"privacyPolicy": "Privātuma politika"
 	},
 	"nft": {
 		"title": "NFT galerija",

@@ -349,7 +349,10 @@
 		"storageGbMonthly": "{{gb}} GB Kuukausittain",
 		"pricePerMonth": "{{price}} / kuukausi",
 		"pricingUnavailable": "Hinnoittelu ei ole saatavilla",
-		"restorePurchases": "Palauta ostokset"
+		"restorePurchases": "Palauta ostokset",
+		"autoRenewNote": "Tilaus uusiutuu automaattisesti kuukausittain. Peruuta milloin tahansa asetuksista.",
+		"termsOfUse": "Käyttöehdot",
+		"privacyPolicy": "Tietosuojakäytäntö"
 	},
 	"nft": {
 		"title": "NFT Galleria",

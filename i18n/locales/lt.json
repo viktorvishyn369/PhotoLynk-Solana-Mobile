@@ -349,7 +349,10 @@
 		"storageGbMonthly": "{{gb}} GB Mėnesinis",
 		"pricePerMonth": "{{price}} / mėn.",
 		"pricingUnavailable": "Kainos nėra",
-		"restorePurchases": "Atkurti pirkinius"
+		"restorePurchases": "Atkurti pirkinius",
+		"autoRenewNote": "Prenumerata automatiškai atnaujinama kas mėnesį. Atšaukite bet kada nustatymuose.",
+		"termsOfUse": "Naudojimo sąlygos",
+		"privacyPolicy": "Privatumo politika"
 	},
 	"nft": {
 		"title": "NFT galerija",

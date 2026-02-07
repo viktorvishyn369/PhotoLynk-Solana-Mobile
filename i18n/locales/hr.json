@@ -349,7 +349,10 @@
 		"storageGbMonthly": "{{gb}} GB mjesečno",
 		"pricePerMonth": "{{price}} / mjesec",
 		"pricingUnavailable": "Cijene nisu dostupne",
-		"restorePurchases": "Obnova kupnji"
+		"restorePurchases": "Obnova kupnji",
+		"autoRenewNote": "Pretplata se automatski obnavlja mjesečno. Otkažite bilo kada u Postavkama.",
+		"termsOfUse": "Uvjeti korištenja",
+		"privacyPolicy": "Pravila privatnosti"
 	},
 	"nft": {
 		"title": "NFT galerija",

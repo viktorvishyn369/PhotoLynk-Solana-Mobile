@@ -348,7 +348,10 @@
 		"storageGbMonthly": "{{gb}} GB Månedlig",
 		"pricePerMonth": "{{price}} / måned",
 		"pricingUnavailable": "Priser ikke tilgjengelig",
-		"restorePurchases": "Gjenopprett kjøp"
+		"restorePurchases": "Gjenopprett kjøp",
+		"autoRenewNote": "Abonnementet fornyes automatisk månedlig. Avbryt når som helst i Innstillinger.",
+		"termsOfUse": "Bruksvilkår",
+		"privacyPolicy": "Personvernregler"
 	},
 	"nft": {
 		"title": "NFT Gallery",

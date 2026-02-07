@@ -349,7 +349,10 @@
 		"storageGbMonthly": "{{gb}} GB Havonta",
 		"pricePerMonth": "{{price}} / hónap",
 		"pricingUnavailable": "Árképzés nem elérhető",
-		"restorePurchases": "Vásárlások visszaállítása"
+		"restorePurchases": "Vásárlások visszaállítása",
+		"autoRenewNote": "Az előfizetés havonta automatikusan megújul. Bármikor lemondható a Beállításokban.",
+		"termsOfUse": "Felhasználási feltételek",
+		"privacyPolicy": "Adatvédelmi irányelvek"
 	},
 	"nft": {
 		"title": "NFT Galéria",
