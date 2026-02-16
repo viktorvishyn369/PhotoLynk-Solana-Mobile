@@ -55,6 +55,9 @@ const CertificatesViewer = ({ visible, onClose }) => {
 
   useEffect(() => {
     if (visible) loadCertificates();
+    if (!visible) return;
+    const interval = setInterval(loadCertificates, 60000);
+    return () => clearInterval(interval);
   }, [visible, loadCertificates]);
 
   const handleShare = async (cert) => {
@@ -166,7 +169,7 @@ const CertificatesViewer = ({ visible, onClose }) => {
           <View style={styles.detailDivider} />
 
           <DetailRow label="Edition" value="Limited Edition" />
-          <DetailRow label="License" value={c.license || 'All Rights Reserved'} />
+          <DetailRow label="License" value={({'arr':'All Rights Reserved','cc-by':'CC BY 4.0','cc-by-sa':'CC BY-SA 4.0','cc-by-nc':'CC BY-NC 4.0','cc0':'Public Domain (CC0)','commercial':'Commercial License'})[c.license] || c.license || 'All Rights Reserved'} />
           <DetailRow label="Issued" value={formatDate(c.issuedAt)} />
 
           <View style={styles.detailDivider} />

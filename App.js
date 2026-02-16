@@ -2958,6 +2958,34 @@ export default function App() {
     KeepAwake.deactivateKeepAwake('photolynk-work');
   }, [loading]);
 
+  // Background NFT + Certificate sync (runs after auth, polls every 60s)
+  useEffect(() => {
+    if (!token) return;
+    let interval = null;
+    const doSync = async () => {
+      try {
+        const url = getServerUrl();
+        if (!url) return;
+        const config = await getAuthHeaders();
+        const headers = config?.headers || config;
+        if (!headers) return;
+        // Sync NFTs from server → local
+        await NFTOperations.syncNFTsFromServer(url, headers);
+        // Sync certificates from server → local (graceful if endpoint not deployed)
+        try { await NFTOperations.syncCertificatesFromServer(url, headers); } catch (_) {}
+        // Backup local certs to server (in case minted offline)
+        try { await NFTOperations.backupCertificatesToServer(url, headers); } catch (_) {}
+      } catch (e) {
+        console.log('[BGSync] NFT/cert sync error:', e?.message);
+      }
+    };
+    // Initial sync after short delay
+    const timeout = setTimeout(doSync, 5000);
+    // Poll every 60 seconds
+    interval = setInterval(doSync, 60000);
+    return () => { clearTimeout(timeout); if (interval) clearInterval(interval); };
+  }, [token]);
+
   // AppState listener: handles background warnings and auto-upload recovery
   useEffect(() => {
     const sub = AppState.addEventListener('change', (nextState) => {

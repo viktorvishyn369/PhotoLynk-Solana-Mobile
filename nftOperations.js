@@ -4544,6 +4544,56 @@ export const getStoredCertificates = async () => {
 };
 
 /**
+ * Sync certificates from server — merges remote into local, returns merged list
+ */
+export const syncCertificatesFromServer = async (serverUrl, authHeaders) => {
+  try {
+    if (!serverUrl || !authHeaders) return { success: false, merged: 0 };
+    const res = await axios.get(`${serverUrl}/api/nft/certificates`, { headers: authHeaders, timeout: 10000 });
+    const remote = res.data?.certificates || [];
+    if (remote.length === 0) return { success: true, merged: 0 };
+    
+    const local = await getStoredCertificates();
+    const localIds = new Set(local.map(c => c.id));
+    let merged = 0;
+    for (const c of remote) {
+      if (!localIds.has(c.id)) {
+        local.push(c);
+        localIds.add(c.id);
+        merged++;
+      }
+    }
+    if (merged > 0) {
+      await SecureStore.setItemAsync(CERTIFICATES_STORAGE_KEY, JSON.stringify(local));
+      console.log('[NFT] Synced', merged, 'new certificates from server');
+    }
+    return { success: true, merged };
+  } catch (e) {
+    console.warn('[NFT] Certificate server sync failed:', e?.message);
+    return { success: false, merged: 0, error: e?.message };
+  }
+};
+
+/**
+ * Backup all local certificates to server
+ */
+export const backupCertificatesToServer = async (serverUrl, authHeaders) => {
+  try {
+    if (!serverUrl || !authHeaders) return { success: false };
+    const certs = await getStoredCertificates();
+    if (certs.length === 0) return { success: true };
+    await axios.post(`${serverUrl}/api/nft/certificates`, {
+      action: 'backup', certificates: certs,
+    }, { headers: authHeaders, timeout: 10000 });
+    console.log('[NFT] Backed up', certs.length, 'certificates to server');
+    return { success: true };
+  } catch (e) {
+    console.warn('[NFT] Certificate backup failed:', e?.message);
+    return { success: false, error: e?.message };
+  }
+};
+
+/**
  * Remove a certificate by ID
  */
 export const removeCertificate = async (certId) => {
@@ -4564,38 +4614,103 @@ export const removeCertificate = async (certId) => {
  */
 export const formatCertificateForExport = (cert) => {
   if (!cert) return '';
+
+  // Resolve license to full legal name
+  const LICENSE_MAP = {
+    'arr': 'All Rights Reserved',
+    'cc-by': 'Creative Commons Attribution 4.0 International (CC BY 4.0)',
+    'cc-by-sa': 'Creative Commons Attribution-ShareAlike 4.0 International (CC BY-SA 4.0)',
+    'cc-by-nc': 'Creative Commons Attribution-NonCommercial 4.0 International (CC BY-NC 4.0)',
+    'cc0': 'Creative Commons Zero 1.0 Universal (CC0 — Public Domain)',
+    'commercial': 'Commercial License — Contact Rights Holder',
+  };
+  const licenseLabel = LICENSE_MAP[cert.license] || cert.license || 'All Rights Reserved';
+
+  // Format date properly
+  const formatDate = (iso) => {
+    if (!iso) return '—';
+    try {
+      const d = new Date(iso);
+      return d.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }) +
+        ', ' + d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZoneName: 'short' });
+    } catch (_) { return iso; }
+  };
+
+  const issued = formatDate(cert.issuedAt || cert.createdAt);
+  const certId = cert.id || '—';
+  const mint = cert.mintAddress || '—';
+  const tx = cert.txSignature || '—';
+  const creator = cert.creatorWallet || '—';
+  const contentHash = cert.contentHash || '— not recorded —';
+  const exifHash = cert.exifHash || '— not recorded —';
+  const storage = cert.storageType === 'cloud' ? 'StealthCloud (Encrypted Private Storage)' : 'IPFS (Decentralized Public Storage)';
+
   const lines = [
-    '═══════════════════════════════════════════',
-    '       CERTIFICATE OF AUTHENTICITY',
-    '              PhotoLynk NFT',
-    '═══════════════════════════════════════════',
+    '┌─────────────────────────────────────────────────────┐',
+    '│                                                     │',
+    '│          CERTIFICATE OF AUTHENTICITY                │',
+    '│          Digital Asset — Limited Edition             │',
+    '│                                                     │',
+    '│          Issued by PhotoLynk                        │',
+    '│          https://stealthlynk.io                     │',
+    '│                                                     │',
+    '└─────────────────────────────────────────────────────┘',
     '',
-    `Name:           ${cert.name || 'Untitled'}`,
-    `Edition:        ${cert.edition === 'limited' ? 'Limited Edition' : 'Open Edition'}`,
-    `License:        ${cert.license || 'All Rights Reserved'}`,
+    `Certificate ID:   ${certId}`,
+    `Date of Issue:    ${issued}`,
     '',
-    '── Blockchain Proof ──',
-    `Mint Address:   ${cert.mintAddress || 'N/A'}`,
-    `Transaction:    ${cert.txSignature || 'N/A'}`,
-    `Creator Wallet: ${cert.creatorWallet || 'N/A'}`,
+    '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━',
     '',
-    '── Integrity Proof ──',
-    `Content Hash:   ${cert.contentHash || 'N/A'}`,
-    `EXIF Hash:      ${cert.exifHash || 'N/A'}`,
+    'SECTION 1 — WORK IDENTIFICATION',
     '',
-    '── Details ──',
-    `Watermarked:    ${cert.watermarked ? 'Yes' : 'No'}`,
-    `Encrypted:      ${cert.encrypted ? 'Yes' : 'No'}`,
-    `Storage:        ${cert.storageType === 'cloud' ? 'StealthCloud' : 'IPFS'}`,
-    `Issued:         ${cert.issuedAt || cert.createdAt || 'N/A'}`,
+    `  Title:          ${cert.name || 'Untitled'}`,
+    `  Edition:        ${cert.edition === 'limited' ? 'Limited Edition (1 of 1)' : 'Open Edition'}`,
+    `  License:        ${licenseLabel}`,
     '',
-    '── Verify ──',
-    `Solscan:        https://solscan.io/token/${cert.mintAddress || ''}`,
-    `Explorer:       https://explorer.solana.com/address/${cert.mintAddress || ''}`,
+    '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━',
     '',
-    '═══════════════════════════════════════════',
-    '  Issued by PhotoLynk • stealthlynk.io',
-    '═══════════════════════════════════════════',
+    'SECTION 2 — BLOCKCHAIN PROVENANCE',
+    '',
+    `  Network:        Solana (Mainnet Beta)`,
+    `  Mint Address:   ${mint}`,
+    `  Transaction:    ${tx}`,
+    `  Creator Wallet: ${creator}`,
+    '',
+    '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━',
+    '',
+    'SECTION 3 — INTEGRITY VERIFICATION',
+    '',
+    `  Content Hash:   ${contentHash}`,
+    `  EXIF Hash:      ${exifHash}`,
+    '',
+    '  The above cryptographic hashes were computed at the',
+    '  time of minting and can be used to verify that the',
+    '  original work has not been altered or tampered with.',
+    '',
+    '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━',
+    '',
+    'SECTION 4 — ASSET PROTECTION',
+    '',
+    `  Watermarked:    ${cert.watermarked ? 'Yes — visible watermark applied' : 'No'}`,
+    `  Encrypted:      ${cert.encrypted ? 'Yes — AES-256 encrypted at rest' : 'No'}`,
+    `  Storage:        ${storage}`,
+    '',
+    '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━',
+    '',
+    'VERIFICATION',
+    '',
+    `  Solscan:   https://solscan.io/token/${cert.mintAddress || ''}`,
+    `  Explorer:  https://explorer.solana.com/address/${cert.mintAddress || ''}`,
+    '',
+    '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━',
+    '',
+    'This certificate was generated automatically at the time',
+    'of minting by the PhotoLynk application. The blockchain',
+    'record serves as immutable proof of creation, ownership,',
+    'and provenance. This document may be presented as evidence',
+    'of intellectual property rights.',
+    '',
+    '© PhotoLynk — stealthlynk.io',
   ];
   return lines.join('\n');
 };
@@ -4655,6 +4770,8 @@ export default {
   generateCertificate,
   saveCertificate,
   getStoredCertificates,
+  syncCertificatesFromServer,
+  backupCertificatesToServer,
   removeCertificate,
   formatCertificateForExport,
   // Existing constants

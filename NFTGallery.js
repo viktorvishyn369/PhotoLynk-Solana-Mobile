@@ -428,11 +428,16 @@ const NFTGallery = ({
   
   const closeDarkAlert = () => setDarkAlert(null);
   
-  // Load NFTs on mount - sync from server first
+  // Load NFTs on mount - sync from server first, then auto-refresh every 60s
   useEffect(() => {
     if (visible) {
       loadNFTs(true); // true = sync from server
     }
+    if (!visible) return;
+    const interval = setInterval(() => {
+      loadNFTs(true);
+    }, 60000);
+    return () => clearInterval(interval);
   }, [visible]);
   
   // Load NFTs from storage, optionally sync from server first
