@@ -1705,6 +1705,7 @@ export default function App() {
       setProgress(1);
       await sleep(300);
       setStatus(t('status.backupComplete'));
+      refreshStealthUsage();
       showResultAlert('backup', { uploaded, skipped, failed, serverTotal: selectedCount || serverTotal });
     } catch (e) {
       console.error('StealthCloud backup error:', e);
@@ -1777,6 +1778,7 @@ export default function App() {
 
       setProgress(1); // Show 100% before checkmark
       setStatus(t('status.backupComplete'));
+      refreshStealthUsage();
       await sleep(400); // Brief pause to show 100%
       showResultAlert('backup', { uploaded: result.uploaded, skipped: result.skipped, failed: result.failed, serverTotal: result.selectedCount || result.serverTotal });
       setProgress(0);
@@ -3260,87 +3262,50 @@ export default function App() {
     await sleep(cooldownMs);
   };
 
+  // Poll Info screen every 5s while open to catch late server/RC updates
+  const infoRefreshIntervalRef = useRef(null);
+  const infoRefreshInFlightRef = useRef(false);
   useEffect(() => {
-    if (view !== 'info') return;
-
-    let cancelled = false;
+    const clearPoll = () => {
+      if (infoRefreshIntervalRef.current) {
+        clearInterval(infoRefreshIntervalRef.current);
+        infoRefreshIntervalRef.current = null;
+      }
+    };
+    if (view !== 'info') {
+      clearPoll();
+      return;
+    }
 
     // Load plans when opening Info screen (in case Solana initialized late)
     (async () => {
-      try {
-        await loadAvailablePlans();
-      } catch (e) {}
+      try { await loadAvailablePlans(); } catch (e) {}
     })();
 
-    const fetchStealthCloudUsage = async () => {
-      // Check serverType from state or SecureStore
-      let effectiveServerType = serverType;
-      if (!effectiveServerType || effectiveServerType === 'local') {
-        try {
-          const storedType = await SecureStore.getItemAsync('server_type');
-          if (storedType) effectiveServerType = storedType;
-        } catch (e) {}
-      }
-
-      console.log('[StealthCloud] fetchUsage - serverType:', effectiveServerType, 'token:', token ? 'present' : 'null');
-
-      // Skip fetch if auth is in progress (loading state) to avoid race conditions
-      if (loadingRef.current) {
-        console.log('[StealthCloud] Skipping usage fetch - auth in progress');
-        return;
-      }
-
-      if (effectiveServerType !== 'stealthcloud') return;
-
-      // Get token from state or SecureStore
-      let effectiveToken = token;
-      if (!effectiveToken) {
-        try {
-          effectiveToken = await SecureStore.getItemAsync('auth_token');
-        } catch (e) {}
-      }
-
-      if (!effectiveToken) {
-        console.log('[StealthCloud] No token, skipping usage fetch');
-        return;
-      }
-
+    // Initial non-silent fetch
+    (async () => {
       try {
         setStealthUsageLoading(true);
         setStealthUsageError(null);
-
-        // Small delay to ensure auth state is fully settled after login
-        await new Promise(resolve => setTimeout(resolve, 100));
-        if (cancelled) return;
-
-        const config = await getAuthHeaders();
-        const base = getServerUrl();
-        console.log('[StealthCloud] Fetching usage from:', `${base}/api/cloud/usage`);
-        const res = await axios.get(`${base}/api/cloud/usage`, { ...config, timeout: 10000 });
-        const data = res && res.data ? res.data : null;
-        console.log('[StealthCloud] Usage data received:', JSON.stringify(data, null, 2));
-        if (cancelled) return;
-        setStealthUsage(data);
+        await refreshStealthUsage();
       } catch (e) {
-        if (cancelled) return;
-        console.log('[StealthCloud] Usage fetch error:', e?.message);
-        const msg = (e && e.response && e.response.data && e.response.data.error)
-          ? String(e.response.data.error)
-          : (e && e.message ? String(e.message) : 'Usage check failed');
-        setStealthUsage(null);
-        setStealthUsageError(msg);
+        setStealthUsageError(e?.message || 'Usage check failed');
       } finally {
-        if (cancelled) return;
         setStealthUsageLoading(false);
       }
-    };
+    })();
 
-    fetchStealthCloudUsage();
-
-    return () => {
-      cancelled = true;
+    const tick = async () => {
+      if (infoRefreshInFlightRef.current) return;
+      infoRefreshInFlightRef.current = true;
+      try {
+        await refreshStealthUsage();
+      } catch (e) {}
+      infoRefreshInFlightRef.current = false;
     };
-  }, [view, serverType, token, loading]);
+    infoRefreshIntervalRef.current = setInterval(tick, 5000);
+    return () => clearPoll();
+  }, [view]);
 
   /**
    * Opens an external URL in the device's default browser.
@@ -3438,6 +3403,7 @@ export default function App() {
       setProgress(1);
       await sleep(300);
       setStatus(t('status.backupComplete'));
+      refreshStealthUsage();
       showResultAlert('backup', { uploaded, skipped, failed, serverTotal });
     } catch (e) {
       console.error('StealthCloud backup error:', e);
@@ -4481,6 +4447,7 @@ export default function App() {
       const { uploaded, skipped, failed, serverTotal } = result;
       setProgress(1); // Show 100% before checkmark
       setStatus(t('status.backupComplete'));
+      refreshStealthUsage();
       await sleep(400); // Brief pause to show 100%
       showResultAlert('backup', { uploaded, skipped, failed, serverTotal });
       setProgress(0);
