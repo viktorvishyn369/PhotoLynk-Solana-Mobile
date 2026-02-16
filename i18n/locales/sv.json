@@ -893,6 +893,7 @@
 		"watermarked": "Vattenstämpel",
 		"encrypted": "Krypterad",
 		"storage": "Lagring",
-		"untitled": "Utan titel"
+		"untitled": "Utan titel",
+		"shareCert": "Dela certifikat"
 	}
 }

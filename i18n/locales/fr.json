@@ -901,6 +901,7 @@
 		"watermarked": "Filigrané",
 		"encrypted": "Chiffré",
 		"storage": "Stockage",
-		"untitled": "Sans titre"
+		"untitled": "Sans titre",
+		"shareCert": "Partager"
 	}
 }

@@ -901,6 +901,7 @@
 		"watermarked": "Marca d'água",
 		"encrypted": "Criptografado",
 		"storage": "Armazenamento",
-		"untitled": "Sem título"
+		"untitled": "Sem título",
+		"shareCert": "Compartilhar"
 	}
 }

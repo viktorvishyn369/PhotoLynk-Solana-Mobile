@@ -847,6 +847,7 @@
 		"watermarked": "Vannmerke",
 		"encrypted": "Kryptert",
 		"storage": "Lagring",
-		"untitled": "Uten tittel"
+		"untitled": "Uten tittel",
+		"shareCert": "Del sertifikat"
 	}
 }

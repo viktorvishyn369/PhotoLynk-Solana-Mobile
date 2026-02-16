@@ -901,6 +901,7 @@
 		"watermarked": "Водяной знак",
 		"encrypted": "Зашифровано",
 		"storage": "Хранилище",
-		"untitled": "Без названия"
+		"untitled": "Без названия",
+		"shareCert": "Поделиться"
 	}
 }

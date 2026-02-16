@@ -397,7 +397,8 @@
 		"watermarked": "Watermarked",
 		"encrypted": "Encrypted",
 		"storage": "Storage",
-		"untitled": "Untitled"
+		"untitled": "Untitled",
+		"shareCert": "Share Certificate"
 	},
 	"nft": {
 		"title": "NFT Gallery",

@@ -901,6 +901,7 @@
 		"watermarked": "Filigrana",
 		"encrypted": "Crittografato",
 		"storage": "Archiviazione",
-		"untitled": "Senza titolo"
+		"untitled": "Senza titolo",
+		"shareCert": "Condividi"
 	}
 }

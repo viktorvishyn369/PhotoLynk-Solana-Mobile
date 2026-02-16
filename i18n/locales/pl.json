@@ -899,6 +899,7 @@
 		"watermarked": "Znak wodny",
 		"encrypted": "Zaszyfrowane",
 		"storage": "Magazyn",
-		"untitled": "Bez tytułu"
+		"untitled": "Bez tytułu",
+		"shareCert": "Udostępnij"
 	}
 }

@@ -1084,18 +1084,18 @@ const NFTGallery = ({
                   onPress={async () => {
                     try {
                       const cert = NFTOperations.generateCertificate(selectedNFT);
-                      if (!cert) { Alert.alert('Error', 'Could not generate certificate'); return; }
+                      if (!cert) { showDarkAlert(t('common.error'), t('certificates.noCertsHint')); return; }
                       const text = NFTOperations.formatCertificateForExport(cert);
-                      await Share.share({ message: text, title: `Certificate — ${cert.name}` });
+                      await Share.share({ message: text, title: `${t('certificates.certificateOfAuth')} — ${cert.name}` });
                     } catch (e) {
                       if (e.message !== 'User did not share') {
-                        Alert.alert('Error', e.message);
+                        showDarkAlert(t('common.error'), e.message);
                       }
                     }
                   }}
                 >
                   <Feather name="award" size={18} color="#fff" />
-                  <Text style={styles.transferButtonText}>Share Certificate</Text>
+                  <Text style={styles.transferButtonText}>{t('certificates.shareCert') || 'Share Certificate'}</Text>
                 </TouchableOpacity>
               )}
 

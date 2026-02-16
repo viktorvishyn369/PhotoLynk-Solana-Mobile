@@ -848,6 +848,7 @@
 		"watermarked": "Vandmærke",
 		"encrypted": "Krypteret",
 		"storage": "Lagring",
-		"untitled": "Uden titel"
+		"untitled": "Uden titel",
+		"shareCert": "Del certifikat"
 	}
 }

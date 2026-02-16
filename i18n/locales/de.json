@@ -901,6 +901,7 @@
 		"watermarked": "Wasserzeichen",
 		"encrypted": "Verschlüsselt",
 		"storage": "Speicher",
-		"untitled": "Ohne Titel"
+		"untitled": "Ohne Titel",
+		"shareCert": "Teilen"
 	}
 }

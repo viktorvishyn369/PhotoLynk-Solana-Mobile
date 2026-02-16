@@ -899,6 +899,7 @@
 		"watermarked": "Watermerk",
 		"encrypted": "Versleuteld",
 		"storage": "Opslag",
-		"untitled": "Naamloos"
+		"untitled": "Naamloos",
+		"shareCert": "Delen"
 	}
 }

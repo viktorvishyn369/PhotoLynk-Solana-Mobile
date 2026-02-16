@@ -68,7 +68,7 @@ const CertificatesViewer = ({ visible, onClose }) => {
   const handleShare = async (cert) => {
     try {
       const text = NFTOperations.formatCertificateForExport(cert);
-      await Share.share({ message: text, title: `Certificate — ${cert.name}` });
+      await Share.share({ message: text, title: `${t('certificates.certificateOfAuth')} — ${cert.name}` });
     } catch (e) {
       if (e.message !== 'User did not share') {
         showDarkAlert(t('common.error'), e.message);

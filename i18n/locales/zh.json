@@ -910,6 +910,7 @@
 		"watermarked": "水印",
 		"encrypted": "已加密",
 		"storage": "存储",
-		"untitled": "无标题"
+		"untitled": "无标题",
+		"shareCert": "分享证书"
 	}
 }

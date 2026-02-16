@@ -901,6 +901,7 @@
 		"watermarked": "Водяний знак",
 		"encrypted": "Зашифровано",
 		"storage": "Сховище",
-		"untitled": "Без назви"
+		"untitled": "Без назви",
+		"shareCert": "Поділитися"
 	}
 }

@@ -901,6 +901,7 @@
 		"watermarked": "透かし",
 		"encrypted": "暗号化",
 		"storage": "ストレージ",
-		"untitled": "無題"
+		"untitled": "無題",
+		"shareCert": "共有"
 	}
 }

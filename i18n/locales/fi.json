@@ -848,6 +848,7 @@
 		"watermarked": "Vesileima",
 		"encrypted": "Salattu",
 		"storage": "Tallennus",
-		"untitled": "Nimetön"
+		"untitled": "Nimetön",
+		"shareCert": "Jaa todistus"
 	}
 }

@@ -901,6 +901,7 @@
 		"watermarked": "워터마크",
 		"encrypted": "암호화됨",
 		"storage": "저장소",
-		"untitled": "제목 없음"
+		"untitled": "제목 없음",
+		"shareCert": "공유"
 	}
 }
