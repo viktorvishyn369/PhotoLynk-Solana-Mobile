@@ -168,6 +168,7 @@ import NFTOperations, { checkStealthCloudEligibility } from './nftOperations';
 import NFTPhotoPicker from './NFTPhotoPicker';
 import NFTGallery from './NFTGallery';
 import NFTTransferModal from './NFTTransferModal';
+import CertificatesViewer from './CertificatesViewer';
 import { initializeLanguage, t, getCurrentLanguage, setLanguage, SUPPORTED_LANGUAGES } from './i18n';
 import LanguageSelector, { LanguageButton } from './LanguageSelector';
 import {
@@ -359,6 +360,7 @@ export default function App() {
   // NFT state
   const [nftPickerOpen, setNftPickerOpen] = useState(false);
   const [nftGalleryOpen, setNftGalleryOpen] = useState(false);
+  const [nftCertsOpen, setNftCertsOpen] = useState(false);
   const [nftTransferOpen, setNftTransferOpen] = useState(false);
   const [nftToTransfer, setNftToTransfer] = useState(null);
   const [nftMinting, setNftMinting] = useState(false);
@@ -1941,12 +1943,47 @@ export default function App() {
       const permission = await requestMediaLibraryPermission();
       if (permission.status !== 'granted') { showDarkAlert(t('alerts.permissionNeeded'), t('alerts.permissionNeededMessage')); return; }
 
+      // Android: build PhotoLynkDeleted asset ID set on first load (cached for session)
+      if (Platform.OS === 'android' && !backupPickerDeletedIdsCache) {
+        try {
+          const albums = await MediaLibrary.getAlbumsAsync({ includeSmartAlbums: false });
+          const deletedAlbum = albums.find(a => a.title === 'PhotoLynkDeleted');
+          if (deletedAlbum) {
+            const ids = new Set();
+            let dAfter = null;
+            while (true) {
+              const dPage = await MediaLibrary.getAssetsAsync({ album: deletedAlbum, first: 500, after: dAfter || undefined, mediaType: ['photo', 'video'] });
+              if (dPage?.assets) for (const a of dPage.assets) ids.add(a.id);
+              dAfter = dPage?.endCursor;
+              if (!dPage?.hasNextPage || !dPage?.assets?.length) break;
+            }
+            backupPickerDeletedIdsCache = ids;
+          } else {
+            backupPickerDeletedIdsCache = new Set();
+          }
+        } catch (e) { backupPickerDeletedIdsCache = new Set(); }
+      }
+      if (!backupPickerDeletedIdsCache) backupPickerDeletedIdsCache = new Set();
+
       const first = 18;
       const after = reset ? null : backupPickerAfter;
       const page = await MediaLibrary.getAssetsAsync({ first, after: after || undefined, mediaType: ['photo', 'video'], sortBy: [MediaLibrary.SortBy.creationTime] });
-      const assets = page && Array.isArray(page.assets) ? page.assets : [];
+      let assets = page && Array.isArray(page.assets) ? page.assets : [];
+
+      // Filter out PhotoLynkDeleted assets (Android: by ID set + URI path fallback)
+      if (Platform.OS === 'android' && assets.length > 0) {
+        assets = assets.filter(a => {
+          if (backupPickerDeletedIdsCache.has(a.id)) return false;
+          const uri = a?.uri || '';
+          const localUri = a?.localUri || '';
+          if (uri.includes('/PhotoLynkDeleted/') || localUri.includes('/PhotoLynkDeleted/')) return false;
+          return true;
+        });
+      }
+
       if (page && typeof page.totalCount === 'number') {
-        setBackupPickerTotal(Number(page.totalCount) || 0);
+        const adjustedTotal = Math.max(0, Number(page.totalCount) - backupPickerDeletedIdsCache.size);
+        setBackupPickerTotal(adjustedTotal || 0);
       } else if (reset) {
         setBackupPickerTotal(assets.length);
       }
@@ -2323,7 +2360,7 @@ export default function App() {
     }
   };
   
-  const handleMintNFT = async ({ asset, filePath, name, description, stripExif, storageOption, nftType, serverConfig, costEstimate: passedCostEstimate }) => {
+  const handleMintNFT = async ({ asset, filePath, name, description, stripExif, storageOption, nftType, serverConfig, costEstimate: passedCostEstimate, edition, license, watermark, encrypt }) => {
     if (!asset || !filePath) {
       showDarkAlert(t('alerts.error'), t('alerts.selectItemsMessage'));
       return;
@@ -2401,6 +2438,22 @@ export default function App() {
         return;
       }
       
+      // Get master key if encryption is requested
+      let masterKey = null;
+      if (encrypt) {
+        try {
+          masterKey = await getStealthCloudMasterKey();
+        } catch (e) {
+          console.warn('[NFT] Could not get master key for encryption:', e?.message);
+          showDarkAlert(t('alerts.error'), 'Encryption requires login credentials. Please re-login and try again.');
+          setNftMinting(false);
+          setLoadingSafe(false);
+          setStatus(t('status.idle'));
+          setProgress(0);
+          return;
+        }
+      }
+      
       // Mint the NFT
       const result = await NFTOperations.mintPhotoNFT({
         asset,
@@ -2409,11 +2462,10 @@ export default function App() {
         description,
         stripExif,
         storageOption,
-        nftType: nftType || 'compressed', // Default to compressed if not specified
+        nftType: nftType || 'compressed',
         serverConfig,
         onProgress: (p) => setProgress(p),
         onStatus: (s) => {
-          // Translate NFT status messages
           const statusMap = {
             'Preparing NFT...': t('nftStatus.preparing'),
             'Estimating costs...': t('nftStatus.estimatingCosts'),
@@ -2422,6 +2474,10 @@ export default function App() {
             'Uploading to StealthCloud...': t('nftStatus.uploadingStealthCloud'),
             'Uploading to IPFS...': t('nftStatus.uploadingIpfs'),
             'Creating thumbnail...': t('nftStatus.creatingThumbnail'),
+            'Creating preview...': t('nftStatus.creatingThumbnail'),
+            'Creating certificate image...': t('nftStatus.creatingThumbnail'),
+            'Applying watermark...': s,
+            'Encrypting image...': s,
             'Computing integrity proof...': t('nftStatus.computingIntegrity'),
             'Building metadata...': t('nftStatus.buildingMetadata'),
             'Creating NFT on Solana...': t('nftStatus.creatingOnSolana'),
@@ -2435,6 +2491,12 @@ export default function App() {
           const translated = statusMap[s] || s;
           setStatus(`NFT: ${translated}`);
         },
+        // Edition parameters
+        edition,
+        license,
+        watermark,
+        encrypt,
+        masterKey,
       });
       
       if (result.success) {
@@ -5167,6 +5229,7 @@ export default function App() {
         onDismissCompletionTick={dismissCompletionTick}
         onMintNFT={openNftPicker}
         onViewNFTs={openNftGallery}
+        onViewCertificates={() => setNftCertsOpen(true)}
       />
 
       {cleanupModeOpen && (
@@ -6107,6 +6170,12 @@ export default function App() {
         onTransferNFT={handleNftTransfer}
         serverUrl={getServerUrl()}
         getAuthHeaders={getAuthHeaders}
+      />
+
+      {/* Certificates Viewer */}
+      <CertificatesViewer
+        visible={nftCertsOpen}
+        onClose={() => setNftCertsOpen(false)}
       />
 
       {/* NFT Transfer Modal */}

@@ -114,6 +114,7 @@ export const HomeScreen = ({
   onDismissCompletionTick,
   onMintNFT,
   onViewNFTs,
+  onViewCertificates,
 }) => {
   // Detect orientation for tablets - enable scroll in landscape
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
@@ -324,36 +325,36 @@ export const HomeScreen = ({
           {/* Section Label */}
           <Text style={styles.sectionLabel}>{t('home.cleanDuplicates')}</Text>
 
-          {/* NFT ROW - Same style as Backup/Sync */}
+          {/* NFT ROW - Three equal buttons: Create | Album | Certificates */}
           <View style={styles.actionRow}>
             <TouchableOpacity 
-              style={[styles.primaryActionBtn, { backgroundColor: '#9945FF' }, loading && styles.actionDisabled]}
+              style={[styles.nftActionBtn, { backgroundColor: '#9945FF' }, loading && styles.actionDisabled]}
               onPress={onMintNFT}
               disabled={loading}
               activeOpacity={0.8}
             >
-              <View style={styles.primaryActionGradient}>
-                <View style={styles.primaryActionContent}>
-                  <View style={styles.primaryActionIcon}>
-                    <Feather name="hexagon" size={scale(28)} color="#FFFFFF" />
-                  </View>
-                  <View style={styles.primaryActionText}>
-                    <Text style={[styles.primaryActionTitle, { color: '#FFFFFF' }]}>{t('home.nftMemories')}</Text>
-                    <Text style={[styles.primaryActionSubtitle, { color: 'rgba(255,255,255,0.7)' }]}>{t('home.ownPhotosForever')}</Text>
-                  </View>
-                  <Feather name="chevron-right" size={scale(24)} color="rgba(255,255,255,0.5)" />
-                </View>
-              </View>
+              <Feather name="hexagon" size={scale(22)} color="#FFFFFF" />
+              <Text style={[styles.nftActionText, { color: '#FFFFFF' }]}>{t('home.createNft') || 'Create'}</Text>
             </TouchableOpacity>
             
             <TouchableOpacity 
-              style={[styles.secondaryActionBtn, { borderColor: '#9945FF40' }, loading && styles.actionDisabled]}
+              style={[styles.nftActionBtn, { backgroundColor: COLORS.card, borderWidth: 1.5, borderColor: '#9945FF40' }, loading && styles.actionDisabled]}
               onPress={onViewNFTs}
               disabled={loading}
               activeOpacity={0.8}
             >
               <Feather name="image" size={scale(22)} color="#9945FF" />
-              <Text style={[styles.secondaryActionText, { color: '#9945FF' }]}>{t('home.album')}</Text>
+              <Text style={[styles.nftActionText, { color: '#9945FF' }]}>{t('home.album')}</Text>
+            </TouchableOpacity>
+            
+            <TouchableOpacity 
+              style={[styles.nftActionBtn, { backgroundColor: COLORS.card, borderWidth: 1.5, borderColor: 'rgba(245, 158, 11, 0.3)' }, loading && styles.actionDisabled]}
+              onPress={onViewCertificates}
+              disabled={loading}
+              activeOpacity={0.8}
+            >
+              <Feather name="award" size={scale(22)} color="#f59e0b" />
+              <Text style={[styles.nftActionText, { color: '#f59e0b' }]}>Certs</Text>
             </TouchableOpacity>
           </View>
 
@@ -578,6 +579,18 @@ const styles = StyleSheet.create({
   secondaryActionText: {
     fontSize: scale(11),
     fontWeight: '600',
+  },
+  nftActionBtn: {
+    flex: 1,
+    borderRadius: scale(16),
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: scaleSpacing(14),
+    gap: scaleSpacing(4),
+  },
+  nftActionText: {
+    fontSize: scale(11),
+    fontWeight: '700',
   },
   cleanRow: {
     flexDirection: 'row',

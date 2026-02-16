@@ -19,6 +19,7 @@ import {
   TextInput,
   Animated,
   ScrollView,
+  Share,
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import * as FileSystem from 'expo-file-system';
@@ -116,7 +117,7 @@ const NFTImageWithFallback = ({ url, originalUrl, style, isDetail = false }) => 
   const [memoryRetries, setMemoryRetries] = useState(0);
   const [cachedPath, setCachedPath] = useState(null);
   const [effectiveUrl, setEffectiveUrl] = useState(url);
-  const [imageAspectRatio, setImageAspectRatio] = useState(1); // Dynamic aspect ratio for detail view
+  const [imageAspectRatio, setImageAspectRatio] = useState(4/3); // Default landscape ratio until onLoad provides actual dimensions
   const imageRef = React.useRef(null);
   const retryTimerRef = React.useRef(null);
   
@@ -725,14 +726,28 @@ const NFTGallery = ({
                 {new Date(item.createdAt).toLocaleDateString()}
               </Text>
             </View>
-            {/* Show cNFT badge for compressed NFTs */}
-            {(item.isCompressed || item.mintAddress?.startsWith('cnft_')) ? (
+            {/* Edition badge */}
+            {item.edition === 'limited' ? (
+              <View style={[styles.solanaBadge, { backgroundColor: 'rgba(245, 158, 11, 0.3)' }]}>
+                <Text style={{ fontSize: 8, color: '#f59e0b', fontWeight: '600' }}>Limited</Text>
+              </View>
+            ) : item.edition === 'open' ? (
+              <View style={[styles.solanaBadge, { backgroundColor: 'rgba(34, 197, 94, 0.3)' }]}>
+                <Text style={{ fontSize: 8, color: '#22c55e', fontWeight: '600' }}>Open</Text>
+              </View>
+            ) : (item.isCompressed || item.mintAddress?.startsWith('cnft_')) ? (
               <View style={[styles.solanaBadge, { backgroundColor: 'rgba(34, 197, 94, 0.3)' }]}>
                 <Text style={{ fontSize: 8, color: '#22c55e', fontWeight: '600' }}>cNFT</Text>
               </View>
             ) : (
               <View style={styles.solanaBadge}>
                 <Feather name="hexagon" size={10} color="#9945FF" />
+              </View>
+            )}
+            {/* Encrypted indicator */}
+            {item.encrypted && (
+              <View style={[styles.solanaBadge, { backgroundColor: 'rgba(153, 69, 255, 0.3)' }]}>
+                <Feather name="lock" size={8} color="#9945FF" />
               </View>
             )}
           </View>
@@ -758,9 +773,17 @@ const NFTGallery = ({
             <View style={styles.detailHeader}>
               <View style={{ flex: 1 }}>
                 <Text style={styles.detailTitle}>{selectedNFT.name}</Text>
-                {/* Type badges */}
-                <View style={{ flexDirection: 'row', gap: 6, marginTop: 4 }}>
-                  {(selectedNFT.isCompressed || selectedNFT.mintAddress?.startsWith('cnft_')) ? (
+                {/* Type & edition badges */}
+                <View style={{ flexDirection: 'row', gap: 6, marginTop: 4, flexWrap: 'wrap' }}>
+                  {selectedNFT.edition === 'limited' ? (
+                    <View style={{ backgroundColor: 'rgba(245, 158, 11, 0.2)', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 4 }}>
+                      <Text style={{ fontSize: 10, color: '#f59e0b', fontWeight: '600' }}>Limited Edition</Text>
+                    </View>
+                  ) : selectedNFT.edition === 'open' ? (
+                    <View style={{ backgroundColor: 'rgba(34, 197, 94, 0.2)', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 4 }}>
+                      <Text style={{ fontSize: 10, color: '#22c55e', fontWeight: '600' }}>Open Edition</Text>
+                    </View>
+                  ) : (selectedNFT.isCompressed || selectedNFT.mintAddress?.startsWith('cnft_')) ? (
                     <View style={{ backgroundColor: 'rgba(34, 197, 94, 0.2)', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 4 }}>
                       <Text style={{ fontSize: 10, color: '#22c55e', fontWeight: '600' }}>{t('nftAlbum.compressedNft')}</Text>
                     </View>
@@ -774,6 +797,22 @@ const NFTGallery = ({
                       {selectedNFT.storageType ? (selectedNFT.storageType === 'cloud' ? 'StealthCloud' : 'IPFS') : ((selectedNFT.imageUrl || '').includes('stealthlynk.io') ? 'StealthCloud' : 'IPFS')}
                     </Text>
                   </View>
+                  {selectedNFT.encrypted && (
+                    <View style={{ backgroundColor: 'rgba(153, 69, 255, 0.2)', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 4, flexDirection: 'row', alignItems: 'center', gap: 3 }}>
+                      <Feather name="lock" size={9} color="#9945FF" />
+                      <Text style={{ fontSize: 10, color: '#9945FF', fontWeight: '600' }}>Encrypted</Text>
+                    </View>
+                  )}
+                  {selectedNFT.watermarked && (
+                    <View style={{ backgroundColor: 'rgba(34, 197, 94, 0.2)', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 4 }}>
+                      <Text style={{ fontSize: 10, color: '#22c55e', fontWeight: '600' }}>Watermarked</Text>
+                    </View>
+                  )}
+                  {selectedNFT.license && selectedNFT.license !== 'arr' && (
+                    <View style={{ backgroundColor: 'rgba(245, 158, 11, 0.2)', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 4 }}>
+                      <Text style={{ fontSize: 10, color: '#f59e0b', fontWeight: '600' }}>{selectedNFT.license?.toUpperCase()}</Text>
+                    </View>
+                  )}
                 </View>
               </View>
               <TouchableOpacity onPress={() => setSelectedNFT(null)}>
@@ -1033,6 +1072,28 @@ const NFTGallery = ({
               </TouchableOpacity>
               </View>
               
+              {/* Certificate button — Limited Edition only */}
+              {selectedNFT.edition === 'limited' && (
+                <TouchableOpacity
+                  style={[styles.transferButton, { backgroundColor: COLORS.warning, marginBottom: 8 }]}
+                  onPress={async () => {
+                    try {
+                      const cert = NFTOperations.generateCertificate(selectedNFT);
+                      if (!cert) { Alert.alert('Error', 'Could not generate certificate'); return; }
+                      const text = NFTOperations.formatCertificateForExport(cert);
+                      await Share.share({ message: text, title: `Certificate — ${cert.name}` });
+                    } catch (e) {
+                      if (e.message !== 'User did not share') {
+                        Alert.alert('Error', e.message);
+                      }
+                    }
+                  }}
+                >
+                  <Feather name="award" size={18} color="#fff" />
+                  <Text style={styles.transferButtonText}>Share Certificate</Text>
+                </TouchableOpacity>
+              )}
+
               {/* Transfer button */}
               <TouchableOpacity
                 style={styles.transferButton}
@@ -1730,6 +1791,7 @@ const styles = StyleSheet.create({
   detailImage: {
     width: '100%',
     minHeight: 200,
+    maxHeight: 500,
     backgroundColor: COLORS.background,
   },
   ownerSection: {
