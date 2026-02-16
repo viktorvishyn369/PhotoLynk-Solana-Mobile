@@ -5034,7 +5034,7 @@ export default function App() {
         <InfoScreen
           onBack={() => setView('home')}
           appDisplayName={APP_DISPLAY_NAME}
-          appVersion="1.5.6"
+          appVersion="1.5.8"
           deviceUuid={deviceUuid}
           serverType={serverType}
           stealthUsage={stealthUsage}
