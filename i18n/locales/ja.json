@@ -100,7 +100,9 @@
 		"scanning": "スキャニング",
 		"syncing": "同期",
 		"backingUp": "バックアップ",
-		"mintingNft": "NFTの鋳造"
+		"mintingNft": "NFTの鋳造",
+		"createNft": "作成",
+		"viewCerts": "証明書"
 	},
 	"picker": {
 		"selectMedia": "メディアを選ぶ",
@@ -872,5 +874,33 @@
 		"cancel": "キャンセル",
 		"delete": "削除",
 		"renew": "リニューアル"
+	},
+	"certificates": {
+		"title": "証明書",
+		"certificate": "証明書",
+		"certificatesPlural": "証明書",
+		"countLabel": "{{count}}件の証明書",
+		"countLabelOne": "1件の証明書",
+		"noCertsYet": "証明書はまだありません",
+		"noCertsHint": "限定版NFTを作成して真正性証明書を取得",
+		"certificateOfAuth": "真正性証明書",
+		"deleteCert": "証明書を削除",
+		"deleteConfirm": "\"{{name}}\"の証明書を削除しますか？\nローカルのみ削除されます。",
+		"edition": "エディション",
+		"limitedEdition": "限定版",
+		"license": "ライセンス",
+		"issued": "発行日",
+		"blockchainProof": "ブロックチェーン証明",
+		"mintAddress": "ミントアドレス",
+		"transaction": "トランザクション",
+		"creatorWallet": "作成者ウォレット",
+		"integrityProof": "整合性証明",
+		"contentHash": "コンテンツハッシュ",
+		"exifHash": "EXIFハッシュ",
+		"details": "詳細",
+		"watermarked": "透かし",
+		"encrypted": "暗号化",
+		"storage": "ストレージ",
+		"untitled": "無題"
 	}
 }

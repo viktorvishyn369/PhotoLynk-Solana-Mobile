@@ -99,7 +99,9 @@
 		"scanning": "स्कैनिंग",
 		"syncing": "सिंक करना",
 		"backingUp": "बैकअप लेना",
-		"mintingNft": "एनएफटी टकसाल करना"
+		"mintingNft": "एनएफटी टकसाल करना",
+		"createNft": "बनाएं",
+		"viewCerts": "प्रमाण"
 	},
 	"picker": {
 		"selectMedia": "मीडिया चुनें",
@@ -869,5 +871,33 @@
 		"cancel": "रद्द करें",
 		"delete": "मिटायें",
 		"renew": "नवीनीकरण करें"
+	},
+	"certificates": {
+		"title": "प्रमाणपत्र",
+		"certificate": "प्रमाणपत्र",
+		"certificatesPlural": "प्रमाणपत्र",
+		"countLabel": "{{count}} प्रमाणपत्र",
+		"countLabelOne": "1 प्रमाणपत्र",
+		"noCertsYet": "अभी कोई प्रमाणपत्र नहीं",
+		"noCertsHint": "प्रामाणिकता प्रमाणपत्र प्राप्त करने के लिए सीमित संस्करण NFT बनाएं",
+		"certificateOfAuth": "प्रामाणिकता प्रमाणपत्र",
+		"deleteCert": "प्रमाणपत्र हटाएं",
+		"deleteConfirm": "\"{{name}}\" का प्रमाणपत्र हटाएं?\nयह केवल स्थानीय रूप से हटाया जाएगा।",
+		"edition": "संस्करण",
+		"limitedEdition": "सीमित संस्करण",
+		"license": "लाइसेंस",
+		"issued": "जारी",
+		"blockchainProof": "ब्लॉकचेन प्रमाण",
+		"mintAddress": "मिंट पता",
+		"transaction": "लेनदेन",
+		"creatorWallet": "निर्माता वॉलेट",
+		"integrityProof": "अखंडता प्रमाण",
+		"contentHash": "सामग्री हैश",
+		"exifHash": "EXIF हैश",
+		"details": "विवरण",
+		"watermarked": "वॉटरमार्क",
+		"encrypted": "एन्क्रिप्टेड",
+		"storage": "भंडारण",
+		"untitled": "शीर्षकहीन"
 	}
 }

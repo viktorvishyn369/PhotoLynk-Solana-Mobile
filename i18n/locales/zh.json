@@ -100,7 +100,9 @@
 		"scanning": "扫描",
 		"syncing": "同步",
 		"backingUp": "备份",
-		"mintingNft": "造币厂"
+		"mintingNft": "造币厂",
+		"createNft": "创建",
+		"viewCerts": "证书"
 	},
 	"picker": {
 		"selectMedia": "选择媒体",
@@ -881,5 +883,33 @@
 		"cancel": "取消",
 		"delete": "删除",
 		"renew": "更新"
+	},
+	"certificates": {
+		"title": "证书",
+		"certificate": "证书",
+		"certificatesPlural": "证书",
+		"countLabel": "{{count}}个证书",
+		"countLabelOne": "1个证书",
+		"noCertsYet": "暂无证书",
+		"noCertsHint": "创建限量版NFT以获取真品证书",
+		"certificateOfAuth": "真品证书",
+		"deleteCert": "删除证书",
+		"deleteConfirm": "删除\"{{name}}\"的证书？\n仅本地删除。",
+		"edition": "版本",
+		"limitedEdition": "限量版",
+		"license": "许可证",
+		"issued": "签发日期",
+		"blockchainProof": "区块链证明",
+		"mintAddress": "铸造地址",
+		"transaction": "交易",
+		"creatorWallet": "创作者钱包",
+		"integrityProof": "完整性证明",
+		"contentHash": "内容哈希",
+		"exifHash": "EXIF哈希",
+		"details": "详情",
+		"watermarked": "水印",
+		"encrypted": "已加密",
+		"storage": "存储",
+		"untitled": "无标题"
 	}
 }

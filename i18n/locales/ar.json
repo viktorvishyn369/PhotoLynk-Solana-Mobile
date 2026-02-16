@@ -100,7 +100,9 @@
 		"scanning": "المسح الضوئي",
 		"syncing": "المزامنة",
 		"backingUp": "النسخ الاحتياطي",
-		"mintingNft": "سك العملة NFT"
+		"mintingNft": "سك العملة NFT",
+		"createNft": "إنشاء",
+		"viewCerts": "شهادات"
 	},
 	"picker": {
 		"selectMedia": "اختر الوسائط",
@@ -870,5 +872,33 @@
 		"cancel": "إلغاء",
 		"delete": "حذف",
 		"renew": "التجديد"
+	},
+	"certificates": {
+		"title": "الشهادات",
+		"certificate": "شهادة",
+		"certificatesPlural": "شهادات",
+		"countLabel": "{{count}} شهادات",
+		"countLabelOne": "شهادة واحدة",
+		"noCertsYet": "لا توجد شهادات",
+		"noCertsHint": "أنشئ NFT محدود الإصدار للحصول على شهادة أصالة",
+		"certificateOfAuth": "شهادة الأصالة",
+		"deleteCert": "حذف الشهادة",
+		"deleteConfirm": "حذف شهادة \"{{name}}\"؟\nيتم الحذف محلياً فقط.",
+		"edition": "الإصدار",
+		"limitedEdition": "إصدار محدود",
+		"license": "الترخيص",
+		"issued": "صدر في",
+		"blockchainProof": "إثبات البلوكتشين",
+		"mintAddress": "عنوان السك",
+		"transaction": "المعاملة",
+		"creatorWallet": "محفظة المنشئ",
+		"integrityProof": "إثبات السلامة",
+		"contentHash": "تجزئة المحتوى",
+		"exifHash": "تجزئة EXIF",
+		"details": "التفاصيل",
+		"watermarked": "علامة مائية",
+		"encrypted": "مشفر",
+		"storage": "التخزين",
+		"untitled": "بدون عنوان"
 	}
 }

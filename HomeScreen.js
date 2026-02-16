@@ -354,7 +354,7 @@ export const HomeScreen = ({
               activeOpacity={0.8}
             >
               <Feather name="award" size={scale(22)} color="#f59e0b" />
-              <Text style={[styles.nftActionText, { color: '#f59e0b' }]}>Certs</Text>
+              <Text style={[styles.nftActionText, { color: '#f59e0b' }]}>{t('home.viewCerts') || 'Certs'}</Text>
             </TouchableOpacity>
           </View>
 

@@ -100,7 +100,9 @@
 		"scanning": "Tarama",
 		"syncing": "Senkronizasyon",
 		"backingUp": "Yedekleme",
-		"mintingNft": "Darphane NFT"
+		"mintingNft": "Darphane NFT",
+		"createNft": "Oluştur",
+		"viewCerts": "Sert."
 	},
 	"picker": {
 		"selectMedia": "Medya seçin",
@@ -870,5 +872,33 @@
 		"cancel": "İptal",
 		"delete": "Silme",
 		"renew": "Yenileme"
+	},
+	"certificates": {
+		"title": "Sertifikalar",
+		"certificate": "sertifika",
+		"certificatesPlural": "sertifikalar",
+		"countLabel": "{{count}} sertifika",
+		"countLabelOne": "1 sertifika",
+		"noCertsYet": "Henüz sertifika yok",
+		"noCertsHint": "Özgünlük sertifikası almak için sınırlı sayıda NFT oluşturun",
+		"certificateOfAuth": "Özgünlük Sertifikası",
+		"deleteCert": "Sertifikayı sil",
+		"deleteConfirm": "\"{{name}}\" sertifikasını silmek istiyor musunuz?\nYalnızca yerel olarak silinir.",
+		"edition": "Baskı",
+		"limitedEdition": "Sınırlı Baskı",
+		"license": "Lisans",
+		"issued": "Verildi",
+		"blockchainProof": "Blokzincir kanıtı",
+		"mintAddress": "Mint adresi",
+		"transaction": "İşlem",
+		"creatorWallet": "Oluşturucu cüzdanı",
+		"integrityProof": "Bütünlük kanıtı",
+		"contentHash": "İçerik hash",
+		"exifHash": "EXIF hash",
+		"details": "Ayrıntılar",
+		"watermarked": "Filigranlı",
+		"encrypted": "Şifreli",
+		"storage": "Depolama",
+		"untitled": "Başlıksız"
 	}
 }

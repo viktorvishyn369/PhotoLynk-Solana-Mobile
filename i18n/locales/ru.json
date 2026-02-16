@@ -100,7 +100,9 @@
 		"scanning": "Сканирование",
 		"syncing": "Синхронизация",
 		"backingUp": "Резервное копирование",
-		"mintingNft": "Создание NFT"
+		"mintingNft": "Создание NFT",
+		"createNft": "Создать",
+		"viewCerts": "Серт."
 	},
 	"picker": {
 		"selectMedia": "Выберите медиа",
@@ -872,5 +874,33 @@
 		"cancel": "Отмена",
 		"delete": "Удалить",
 		"renew": "Продлить"
+	},
+	"certificates": {
+		"title": "Сертификаты",
+		"certificate": "сертификат",
+		"certificatesPlural": "сертификаты",
+		"countLabel": "{{count}} сертификатов",
+		"countLabelOne": "1 сертификат",
+		"noCertsYet": "Нет сертификатов",
+		"noCertsHint": "Создайте NFT ограниченного тиража для получения сертификата подлинности",
+		"certificateOfAuth": "Сертификат подлинности",
+		"deleteCert": "Удалить сертификат",
+		"deleteConfirm": "Удалить сертификат \"{{name}}\"?\nУдаление только локальное.",
+		"edition": "Издание",
+		"limitedEdition": "Ограниченное издание",
+		"license": "Лицензия",
+		"issued": "Выдан",
+		"blockchainProof": "Подтверждение блокчейн",
+		"mintAddress": "Адрес минта",
+		"transaction": "Транзакция",
+		"creatorWallet": "Кошелёк автора",
+		"integrityProof": "Подтверждение целостности",
+		"contentHash": "Хеш контента",
+		"exifHash": "Хеш EXIF",
+		"details": "Детали",
+		"watermarked": "Водяной знак",
+		"encrypted": "Зашифровано",
+		"storage": "Хранилище",
+		"untitled": "Без названия"
 	}
 }

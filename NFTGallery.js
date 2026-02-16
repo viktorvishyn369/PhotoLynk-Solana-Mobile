@@ -958,7 +958,7 @@ const NFTGallery = ({
                         openLink(`https://xray.helius.xyz/tx/${assetId}?network=mainnet`);
                       } else {
                         // Show alert that we need to rescan
-                        Alert.alert('Rescan Required', 'This cNFT was created before proper asset ID tracking. Please use "Scan Wallet" to update your NFT data.');
+                        showDarkAlert(t('nftAlbum.rescanRequired') || 'Rescan Required', t('nftAlbum.rescanMessage') || 'This cNFT was created before proper asset ID tracking. Please use "Scan Wallet" to update your NFT data.');
                       }
                     }
                   }}

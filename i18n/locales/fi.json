@@ -99,7 +99,9 @@
 		"scanning": "Skannaus",
 		"syncing": "Synkronointi",
 		"backingUp": "Varmuuskopiointi",
-		"mintingNft": "Rahapajan NFT"
+		"mintingNft": "Rahapajan NFT",
+		"createNft": "Luo",
+		"viewCerts": "Sert."
 	},
 	"picker": {
 		"selectMedia": "Valitse media",
@@ -819,5 +821,33 @@
 		"cancel": "Peruuta",
 		"delete": "Poista",
 		"renew": "Renew"
+	},
+	"certificates": {
+		"title": "Sertifikaatit",
+		"certificate": "sertifikaatti",
+		"certificatesPlural": "sertifikaattia",
+		"countLabel": "{{count}} sertifikaattia",
+		"countLabelOne": "1 sertifikaatti",
+		"noCertsYet": "Ei sertifikaatteja",
+		"noCertsHint": "Luo rajoitetun painoksen NFT saadaksesi aitoustodistuksen",
+		"certificateOfAuth": "Aitoustodistus",
+		"deleteCert": "Poista sertifikaatti",
+		"deleteConfirm": "Poista sertifikaatti \"{{name}}\"?\nTämä poistaa vain paikallisesti.",
+		"edition": "Painos",
+		"limitedEdition": "Rajoitettu painos",
+		"license": "Lisenssi",
+		"issued": "Myönnetty",
+		"blockchainProof": "Lohkoketjutodiste",
+		"mintAddress": "Mint-osoite",
+		"transaction": "Tapahtuma",
+		"creatorWallet": "Luojan lompakko",
+		"integrityProof": "Eheyden todiste",
+		"contentHash": "Sisältö-hash",
+		"exifHash": "EXIF-hash",
+		"details": "Tiedot",
+		"watermarked": "Vesileima",
+		"encrypted": "Salattu",
+		"storage": "Tallennus",
+		"untitled": "Nimetön"
 	}
 }

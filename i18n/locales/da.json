@@ -99,7 +99,9 @@
 		"scanning": "Scanning",
 		"syncing": "Synkronisering",
 		"backingUp": "Sikkerhedskopiering",
-		"mintingNft": "Udmøntning af NFT"
+		"mintingNft": "Udmøntning af NFT",
+		"createNft": "Opret",
+		"viewCerts": "Cert."
 	},
 	"picker": {
 		"selectMedia": "Vælg medie",
@@ -819,5 +821,33 @@
 		"cancel": "Annuller",
 		"delete": "Sletning",
 		"renew": "Fornyelse"
+	},
+	"certificates": {
+		"title": "Certifikater",
+		"certificate": "certifikat",
+		"certificatesPlural": "certifikater",
+		"countLabel": "{{count}} certifikater",
+		"countLabelOne": "1 certifikat",
+		"noCertsYet": "Ingen certifikater endnu",
+		"noCertsHint": "Opret en NFT i begrænset oplag for at modtage et ægthedscertifikat",
+		"certificateOfAuth": "Ægthedscertifikat",
+		"deleteCert": "Slet certifikat",
+		"deleteConfirm": "Slet certifikat for \"{{name}}\"?\nDette fjerner kun lokalt.",
+		"edition": "Udgave",
+		"limitedEdition": "Begrænset udgave",
+		"license": "Licens",
+		"issued": "Udstedt",
+		"blockchainProof": "Blockchain-bevis",
+		"mintAddress": "Mint-adresse",
+		"transaction": "Transaktion",
+		"creatorWallet": "Skaber-wallet",
+		"integrityProof": "Integritetbevis",
+		"contentHash": "Indhold-hash",
+		"exifHash": "EXIF-hash",
+		"details": "Detaljer",
+		"watermarked": "Vandmærke",
+		"encrypted": "Krypteret",
+		"storage": "Lagring",
+		"untitled": "Uden titel"
 	}
 }

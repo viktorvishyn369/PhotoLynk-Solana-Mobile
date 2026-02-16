@@ -99,7 +99,9 @@
 		"scanning": "Pemindaian",
 		"syncing": "Sinkronisasi",
 		"backingUp": "Back Up",
-		"mintingNft": "Pencetakan NFT"
+		"mintingNft": "Pencetakan NFT",
+		"createNft": "Create",
+		"viewCerts": "Certs"
 	},
 	"picker": {
 		"selectMedia": "Memilih media",
@@ -806,5 +808,33 @@
 		"cancel": "Batal",
 		"delete": "Menghapus",
 		"renew": "Memperbaharui"
+	},
+	"certificates": {
+		"title": "Certificates",
+		"certificate": "certificate",
+		"certificatesPlural": "certificates",
+		"countLabel": "{{count}} certificates",
+		"countLabelOne": "1 certificate",
+		"noCertsYet": "No Certificates Yet",
+		"noCertsHint": "Mint a Limited Edition NFT to receive a Certificate of Authenticity",
+		"certificateOfAuth": "Certificate of Authenticity",
+		"deleteCert": "Delete Certificate",
+		"deleteConfirm": "Remove certificate for \"{{name}}\"?\nThis only removes it locally — it will sync back from the server on next refresh.",
+		"edition": "Edition",
+		"limitedEdition": "Limited Edition",
+		"license": "License",
+		"issued": "Issued",
+		"blockchainProof": "Blockchain Proof",
+		"mintAddress": "Mint Address",
+		"transaction": "Transaction",
+		"creatorWallet": "Creator Wallet",
+		"integrityProof": "Integrity Proof",
+		"contentHash": "Content Hash",
+		"exifHash": "EXIF Hash",
+		"details": "Details",
+		"watermarked": "Watermarked",
+		"encrypted": "Encrypted",
+		"storage": "Storage",
+		"untitled": "Untitled"
 	}
 }

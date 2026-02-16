@@ -15,12 +15,12 @@ import {
   Modal,
   FlatList,
   Share,
-  Alert,
   ActivityIndicator,
   Dimensions,
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import NFTOperations from './nftOperations';
+import { t } from './i18n';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -40,6 +40,11 @@ const CertificatesViewer = ({ visible, onClose }) => {
   const [certificates, setCertificates] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedCert, setSelectedCert] = useState(null);
+  const [darkAlert, setDarkAlert] = useState(null);
+
+  const showDarkAlert = (title, message, buttons = [{ text: t('common.ok'), onPress: () => setDarkAlert(null) }]) => {
+    setDarkAlert({ title, message, buttons });
+  };
 
   const loadCertificates = useCallback(async () => {
     setLoading(true);
@@ -66,21 +71,21 @@ const CertificatesViewer = ({ visible, onClose }) => {
       await Share.share({ message: text, title: `Certificate — ${cert.name}` });
     } catch (e) {
       if (e.message !== 'User did not share') {
-        Alert.alert('Error', e.message);
+        showDarkAlert(t('common.error'), e.message);
       }
     }
   };
 
   const handleDelete = (cert) => {
-    Alert.alert(
-      'Delete Certificate',
-      `Remove certificate for "${cert.name}"? This cannot be undone.`,
+    showDarkAlert(
+      t('certificates.deleteCert'),
+      t('certificates.deleteConfirm', { name: cert.name }),
       [
-        { text: 'Cancel', style: 'cancel' },
+        { text: t('common.cancel'), onPress: () => setDarkAlert(null) },
         {
-          text: 'Delete',
-          style: 'destructive',
+          text: t('common.delete'),
           onPress: async () => {
+            setDarkAlert(null);
             await NFTOperations.removeCertificate(cert.id);
             if (selectedCert?.id === cert.id) setSelectedCert(null);
             loadCertificates();
@@ -109,7 +114,7 @@ const CertificatesViewer = ({ visible, onClose }) => {
           <Feather name="award" size={16} color="#f59e0b" />
         </View>
         <View style={styles.certCardInfo}>
-          <Text style={styles.certCardName} numberOfLines={1}>{item.name || 'Untitled'}</Text>
+          <Text style={styles.certCardName} numberOfLines={1}>{item.name || t('certificates.untitled')}</Text>
           <Text style={styles.certCardDate}>{formatDate(item.issuedAt)}</Text>
         </View>
         <View style={styles.certCardActions}>
@@ -123,17 +128,17 @@ const CertificatesViewer = ({ visible, onClose }) => {
       </View>
       <View style={styles.certCardMeta}>
         <View style={styles.certTag}>
-          <Text style={styles.certTagText}>Limited Edition</Text>
+          <Text style={styles.certTagText}>{t('certificates.limitedEdition')}</Text>
         </View>
         {item.encrypted && (
           <View style={[styles.certTag, { borderColor: '#9945FF40' }]}>
             <Feather name="lock" size={10} color="#9945FF" />
-            <Text style={[styles.certTagText, { color: '#9945FF' }]}>Encrypted</Text>
+            <Text style={[styles.certTagText, { color: '#9945FF' }]}>{t('certificates.encrypted')}</Text>
           </View>
         )}
         {item.watermarked && (
           <View style={[styles.certTag, { borderColor: 'rgba(34, 197, 94, 0.3)' }]}>
-            <Text style={[styles.certTagText, { color: '#22c55e' }]}>Watermarked</Text>
+            <Text style={[styles.certTagText, { color: '#22c55e' }]}>{t('certificates.watermarked')}</Text>
           </View>
         )}
       </View>
@@ -154,7 +159,7 @@ const CertificatesViewer = ({ visible, onClose }) => {
           <TouchableOpacity onPress={() => setSelectedCert(null)} style={styles.detailBack}>
             <Feather name="arrow-left" size={20} color={COLORS.text} />
           </TouchableOpacity>
-          <Text style={styles.detailTitle} numberOfLines={1}>{c.name || 'Certificate'}</Text>
+          <Text style={styles.detailTitle} numberOfLines={1}>{c.name || t('certificates.title')}</Text>
           <TouchableOpacity onPress={() => handleShare(c)} style={styles.detailShareBtn}>
             <Feather name="share-2" size={18} color="#f59e0b" />
           </TouchableOpacity>
@@ -163,31 +168,31 @@ const CertificatesViewer = ({ visible, onClose }) => {
         <View style={styles.detailCard}>
           <View style={styles.detailBadgeRow}>
             <Feather name="award" size={32} color="#f59e0b" />
-            <Text style={styles.detailBadgeText}>Certificate of Authenticity</Text>
+            <Text style={styles.detailBadgeText}>{t('certificates.certificateOfAuth')}</Text>
           </View>
 
           <View style={styles.detailDivider} />
 
-          <DetailRow label="Edition" value="Limited Edition" />
-          <DetailRow label="License" value={({'arr':'All Rights Reserved','cc-by':'CC BY 4.0','cc-by-sa':'CC BY-SA 4.0','cc-by-nc':'CC BY-NC 4.0','cc0':'Public Domain (CC0)','commercial':'Commercial License'})[c.license] || c.license || 'All Rights Reserved'} />
-          <DetailRow label="Issued" value={formatDate(c.issuedAt)} />
+          <DetailRow label={t('certificates.edition')} value={t('certificates.limitedEdition')} />
+          <DetailRow label={t('certificates.license')} value={({'arr':'All Rights Reserved','cc-by':'CC BY 4.0','cc-by-sa':'CC BY-SA 4.0','cc-by-nc':'CC BY-NC 4.0','cc0':'Public Domain (CC0)','commercial':'Commercial License'})[c.license] || c.license || 'All Rights Reserved'} />
+          <DetailRow label={t('certificates.issued')} value={formatDate(c.issuedAt)} />
 
           <View style={styles.detailDivider} />
-          <Text style={styles.detailSectionTitle}>Blockchain Proof</Text>
-          <DetailRow label="Mint Address" value={c.mintAddress || 'N/A'} mono />
-          <DetailRow label="Transaction" value={c.txSignature || 'N/A'} mono />
-          <DetailRow label="Creator Wallet" value={c.creatorWallet || 'N/A'} mono />
+          <Text style={styles.detailSectionTitle}>{t('certificates.blockchainProof')}</Text>
+          <DetailRow label={t('certificates.mintAddress')} value={c.mintAddress || 'N/A'} mono />
+          <DetailRow label={t('certificates.transaction')} value={c.txSignature || 'N/A'} mono />
+          <DetailRow label={t('certificates.creatorWallet')} value={c.creatorWallet || 'N/A'} mono />
 
           <View style={styles.detailDivider} />
-          <Text style={styles.detailSectionTitle}>Integrity Proof</Text>
-          <DetailRow label="Content Hash" value={c.contentHash || 'N/A'} mono />
-          <DetailRow label="EXIF Hash" value={c.exifHash || 'N/A'} mono />
+          <Text style={styles.detailSectionTitle}>{t('certificates.integrityProof')}</Text>
+          <DetailRow label={t('certificates.contentHash')} value={c.contentHash || 'N/A'} mono />
+          <DetailRow label={t('certificates.exifHash')} value={c.exifHash || 'N/A'} mono />
 
           <View style={styles.detailDivider} />
-          <Text style={styles.detailSectionTitle}>Details</Text>
-          <DetailRow label="Watermarked" value={c.watermarked ? 'Yes' : 'No'} />
-          <DetailRow label="Encrypted" value={c.encrypted ? 'Yes' : 'No'} />
-          <DetailRow label="Storage" value={c.storageType === 'cloud' ? 'StealthCloud' : 'IPFS'} />
+          <Text style={styles.detailSectionTitle}>{t('certificates.details')}</Text>
+          <DetailRow label={t('certificates.watermarked')} value={c.watermarked ? t('common.yes') : t('common.no')} />
+          <DetailRow label={t('certificates.encrypted')} value={c.encrypted ? t('common.yes') : t('common.no')} />
+          <DetailRow label={t('certificates.storage')} value={c.storageType === 'cloud' ? 'StealthCloud' : 'IPFS'} />
         </View>
       </View>
     );
@@ -203,8 +208,8 @@ const CertificatesViewer = ({ visible, onClose }) => {
             <Feather name="x" size={24} color={COLORS.text} />
           </TouchableOpacity>
           <View style={styles.headerCenter}>
-            <Text style={styles.headerTitle}>Certificates</Text>
-            <Text style={styles.headerSubtitle}>{certificates.length} {certificates.length === 1 ? 'certificate' : 'certificates'}</Text>
+            <Text style={styles.headerTitle}>{t('certificates.title')}</Text>
+            <Text style={styles.headerSubtitle}>{certificates.length === 1 ? t('certificates.countLabelOne') : t('certificates.countLabel', { count: certificates.length })}</Text>
           </View>
           <View style={{ width: 40 }} />
         </View>
@@ -218,9 +223,9 @@ const CertificatesViewer = ({ visible, onClose }) => {
         ) : certificates.length === 0 ? (
           <View style={styles.emptyState}>
             <Feather name="award" size={48} color={COLORS.textSecondary} />
-            <Text style={styles.emptyTitle}>No Certificates Yet</Text>
+            <Text style={styles.emptyTitle}>{t('certificates.noCertsYet')}</Text>
             <Text style={styles.emptySubtitle}>
-              Mint a Limited Edition NFT to receive a Certificate of Authenticity
+              {t('certificates.noCertsHint')}
             </Text>
           </View>
         ) : (
@@ -231,6 +236,28 @@ const CertificatesViewer = ({ visible, onClose }) => {
             contentContainerStyle={styles.listContent}
             showsVerticalScrollIndicator={false}
           />
+        )}
+        {/* Dark Alert */}
+        {darkAlert && (
+          <View style={styles.darkAlertOverlay}>
+            <View style={styles.darkAlertCard}>
+              <Text style={styles.darkAlertTitle}>{darkAlert.title}</Text>
+              <Text style={styles.darkAlertMessage}>{darkAlert.message}</Text>
+              <View style={styles.darkAlertButtons}>
+                {darkAlert.buttons.map((btn, idx) => (
+                  <TouchableOpacity
+                    key={idx}
+                    style={[styles.darkAlertButton, idx === darkAlert.buttons.length - 1 && styles.darkAlertButtonPrimary]}
+                    onPress={btn.onPress}
+                  >
+                    <Text style={[styles.darkAlertButtonText, idx === darkAlert.buttons.length - 1 && styles.darkAlertButtonTextPrimary]}>
+                      {btn.text}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+          </View>
         )}
       </View>
     </Modal>
@@ -460,6 +487,64 @@ const styles = StyleSheet.create({
   detailValueMono: {
     fontFamily: 'monospace',
     fontSize: 11,
+  },
+  darkAlertOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.85)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  darkAlertCard: {
+    backgroundColor: '#1a1a1a',
+    borderRadius: 16,
+    padding: 24,
+    width: '100%',
+    maxWidth: 340,
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+  darkAlertTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#fff',
+    textAlign: 'center',
+    marginBottom: 12,
+  },
+  darkAlertMessage: {
+    fontSize: 14,
+    color: '#a1a1aa',
+    textAlign: 'center',
+    marginBottom: 24,
+    lineHeight: 20,
+  },
+  darkAlertButtons: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 12,
+  },
+  darkAlertButton: {
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    borderRadius: 8,
+    backgroundColor: '#2a2a2a',
+    minWidth: 100,
+  },
+  darkAlertButtonPrimary: {
+    backgroundColor: COLORS.primary,
+  },
+  darkAlertButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#a1a1aa',
+    textAlign: 'center',
+  },
+  darkAlertButtonTextPrimary: {
+    color: '#fff',
   },
 });
 

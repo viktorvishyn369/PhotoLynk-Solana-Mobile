@@ -100,7 +100,9 @@
 		"scanning": "Numérisation",
 		"syncing": "Synchronisation",
 		"backingUp": "Sauvegarde",
-		"mintingNft": "Monnaie NFT"
+		"mintingNft": "Monnaie NFT",
+		"createNft": "Créer",
+		"viewCerts": "Certif."
 	},
 	"picker": {
 		"selectMedia": "Sélectionner le support",
@@ -872,5 +874,33 @@
 		"cancel": "Annuler",
 		"delete": "Supprimer",
 		"renew": "Renouveler"
+	},
+	"certificates": {
+		"title": "Certificats",
+		"certificate": "certificat",
+		"certificatesPlural": "certificats",
+		"countLabel": "{{count}} certificats",
+		"countLabelOne": "1 certificat",
+		"noCertsYet": "Pas encore de certificats",
+		"noCertsHint": "Créez un NFT édition limitée pour recevoir un certificat d'authenticité",
+		"certificateOfAuth": "Certificat d'authenticité",
+		"deleteCert": "Supprimer le certificat",
+		"deleteConfirm": "Supprimer le certificat pour \"{{name}}\" ?\nCela ne le supprime que localement.",
+		"edition": "Édition",
+		"limitedEdition": "Édition limitée",
+		"license": "Licence",
+		"issued": "Émis",
+		"blockchainProof": "Preuve blockchain",
+		"mintAddress": "Adresse de mint",
+		"transaction": "Transaction",
+		"creatorWallet": "Portefeuille créateur",
+		"integrityProof": "Preuve d'intégrité",
+		"contentHash": "Hash du contenu",
+		"exifHash": "Hash EXIF",
+		"details": "Détails",
+		"watermarked": "Filigrané",
+		"encrypted": "Chiffré",
+		"storage": "Stockage",
+		"untitled": "Sans titre"
 	}
 }

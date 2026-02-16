@@ -100,7 +100,9 @@
 		"scanning": "Сканування",
 		"syncing": "Синхронізація",
 		"backingUp": "Резервне копіювання",
-		"mintingNft": "Створення NFT"
+		"mintingNft": "Створення NFT",
+		"createNft": "Створити",
+		"viewCerts": "Серт."
 	},
 	"picker": {
 		"selectMedia": "Вибрати медіа",
@@ -872,5 +874,33 @@
 		"cancel": "Скасувати",
 		"delete": "Видалити",
 		"renew": "Поновити"
+	},
+	"certificates": {
+		"title": "Сертифікати",
+		"certificate": "сертифікат",
+		"certificatesPlural": "сертифікати",
+		"countLabel": "{{count}} сертифікатів",
+		"countLabelOne": "1 сертифікат",
+		"noCertsYet": "Ще немає сертифікатів",
+		"noCertsHint": "Створіть NFT обмеженого тиражу, щоб отримати сертифікат автентичності",
+		"certificateOfAuth": "Сертифікат автентичності",
+		"deleteCert": "Видалити сертифікат",
+		"deleteConfirm": "Видалити сертифікат для \"{{name}}\"?\nЦе видалить лише локально — він повернеться з сервера при наступному оновленні.",
+		"edition": "Видання",
+		"limitedEdition": "Обмежене видання",
+		"license": "Ліцензія",
+		"issued": "Видано",
+		"blockchainProof": "Блокчейн підтвердження",
+		"mintAddress": "Адреса мінту",
+		"transaction": "Транзакція",
+		"creatorWallet": "Гаманець автора",
+		"integrityProof": "Підтвердження цілісності",
+		"contentHash": "Хеш контенту",
+		"exifHash": "Хеш EXIF",
+		"details": "Деталі",
+		"watermarked": "Водяний знак",
+		"encrypted": "Зашифровано",
+		"storage": "Сховище",
+		"untitled": "Без назви"
 	}
 }

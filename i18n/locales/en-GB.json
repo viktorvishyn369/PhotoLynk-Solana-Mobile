@@ -99,7 +99,9 @@
 		"scanning": "Scanning",
 		"syncing": "Syncing",
 		"backingUp": "Backing Up",
-		"mintingNft": "Minting NFT"
+		"mintingNft": "Minting NFT",
+		"createNft": "Create",
+		"viewCerts": "Certs"
 	},
 	"picker": {
 		"selectMedia": "Select media",
@@ -858,5 +860,33 @@
 		"cancel": "Cancel",
 		"delete": "Delete",
 		"renew": "Renew"
+	},
+	"certificates": {
+		"title": "Certificates",
+		"certificate": "certificate",
+		"certificatesPlural": "certificates",
+		"countLabel": "{{count}} certificates",
+		"countLabelOne": "1 certificate",
+		"noCertsYet": "No Certificates Yet",
+		"noCertsHint": "Mint a Limited Edition NFT to receive a Certificate of Authenticity",
+		"certificateOfAuth": "Certificate of Authenticity",
+		"deleteCert": "Delete Certificate",
+		"deleteConfirm": "Remove certificate for \"{{name}}\"?\nThis only removes it locally — it will sync back from the server on next refresh.",
+		"edition": "Edition",
+		"limitedEdition": "Limited Edition",
+		"license": "License",
+		"issued": "Issued",
+		"blockchainProof": "Blockchain Proof",
+		"mintAddress": "Mint Address",
+		"transaction": "Transaction",
+		"creatorWallet": "Creator Wallet",
+		"integrityProof": "Integrity Proof",
+		"contentHash": "Content Hash",
+		"exifHash": "EXIF Hash",
+		"details": "Details",
+		"watermarked": "Watermarked",
+		"encrypted": "Encrypted",
+		"storage": "Storage",
+		"untitled": "Untitled"
 	}
 }

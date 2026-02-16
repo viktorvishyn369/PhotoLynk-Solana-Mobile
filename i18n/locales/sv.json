@@ -99,7 +99,9 @@
 		"scanning": "Skanning",
 		"syncing": "Synkronisering",
 		"backingUp": "Säkerhetskopiering",
-		"mintingNft": "Myntning NFT"
+		"mintingNft": "Myntning NFT",
+		"createNft": "Skapa",
+		"viewCerts": "Cert."
 	},
 	"picker": {
 		"selectMedia": "Välj media",
@@ -864,5 +866,33 @@
 		"cancel": "Avbryt",
 		"delete": "Radera",
 		"renew": "Förnya"
+	},
+	"certificates": {
+		"title": "Certifikat",
+		"certificate": "certifikat",
+		"certificatesPlural": "certifikat",
+		"countLabel": "{{count}} certifikat",
+		"countLabelOne": "1 certifikat",
+		"noCertsYet": "Inga certifikat ännu",
+		"noCertsHint": "Skapa en NFT i begränsad upplaga för att få ett äkthetsintyg",
+		"certificateOfAuth": "Äkthetsintyg",
+		"deleteCert": "Radera certifikat",
+		"deleteConfirm": "Radera certifikat för \"{{name}}\"?\nDetta tar bara bort lokalt.",
+		"edition": "Utgåva",
+		"limitedEdition": "Begränsad utgåva",
+		"license": "Licens",
+		"issued": "Utfärdat",
+		"blockchainProof": "Blockchain-bevis",
+		"mintAddress": "Mint-adress",
+		"transaction": "Transaktion",
+		"creatorWallet": "Skapar-plånbok",
+		"integrityProof": "Integritetsbevis",
+		"contentHash": "Innehåll-hash",
+		"exifHash": "EXIF-hash",
+		"details": "Detaljer",
+		"watermarked": "Vattenstämpel",
+		"encrypted": "Krypterad",
+		"storage": "Lagring",
+		"untitled": "Utan titel"
 	}
 }

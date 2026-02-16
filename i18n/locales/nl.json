@@ -100,7 +100,9 @@
 		"scanning": "Scannen",
 		"syncing": "Synchroniseren",
 		"backingUp": "Een back-up maken",
-		"mintingNft": "Munten NFT"
+		"mintingNft": "Munten NFT",
+		"createNft": "Maak",
+		"viewCerts": "Cert."
 	},
 	"picker": {
 		"selectMedia": "Selecteer media",
@@ -870,5 +872,33 @@
 		"cancel": "Annuleren",
 		"delete": "Verwijder",
 		"renew": "Vernieuw"
+	},
+	"certificates": {
+		"title": "Certificaten",
+		"certificate": "certificaat",
+		"certificatesPlural": "certificaten",
+		"countLabel": "{{count}} certificaten",
+		"countLabelOne": "1 certificaat",
+		"noCertsYet": "Nog geen certificaten",
+		"noCertsHint": "Maak een NFT in beperkte oplage om een echtheidscertificaat te ontvangen",
+		"certificateOfAuth": "Echtheidscertificaat",
+		"deleteCert": "Certificaat verwijderen",
+		"deleteConfirm": "Certificaat voor \"{{name}}\" verwijderen?\nDit verwijdert alleen lokaal.",
+		"edition": "Editie",
+		"limitedEdition": "Beperkte editie",
+		"license": "Licentie",
+		"issued": "Uitgegeven",
+		"blockchainProof": "Blockchain-bewijs",
+		"mintAddress": "Mint-adres",
+		"transaction": "Transactie",
+		"creatorWallet": "Maker-wallet",
+		"integrityProof": "Integriteitsbewijs",
+		"contentHash": "Content-hash",
+		"exifHash": "EXIF-hash",
+		"details": "Details",
+		"watermarked": "Watermerk",
+		"encrypted": "Versleuteld",
+		"storage": "Opslag",
+		"untitled": "Naamloos"
 	}
 }

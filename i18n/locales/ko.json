@@ -100,7 +100,9 @@
 		"scanning": "스캔",
 		"syncing": "동기화",
 		"backingUp": "백업",
-		"mintingNft": "NFT 채굴"
+		"mintingNft": "NFT 채굴",
+		"createNft": "만들기",
+		"viewCerts": "인증서"
 	},
 	"picker": {
 		"selectMedia": "미디어 선택",
@@ -872,5 +874,33 @@
 		"cancel": "취소",
 		"delete": "삭제",
 		"renew": "갱신"
+	},
+	"certificates": {
+		"title": "인증서",
+		"certificate": "인증서",
+		"certificatesPlural": "인증서",
+		"countLabel": "{{count}}개의 인증서",
+		"countLabelOne": "1개의 인증서",
+		"noCertsYet": "인증서 없음",
+		"noCertsHint": "한정판 NFT를 만들어 진품 인증서를 받으세요",
+		"certificateOfAuth": "진품 인증서",
+		"deleteCert": "인증서 삭제",
+		"deleteConfirm": "\"{{name}}\" 인증서를 삭제하시겠습니까?\n로컬에서만 삭제됩니다.",
+		"edition": "에디션",
+		"limitedEdition": "한정판",
+		"license": "라이선스",
+		"issued": "발행일",
+		"blockchainProof": "블록체인 증명",
+		"mintAddress": "민트 주소",
+		"transaction": "트랜잭션",
+		"creatorWallet": "제작자 지갑",
+		"integrityProof": "무결성 증명",
+		"contentHash": "콘텐츠 해시",
+		"exifHash": "EXIF 해시",
+		"details": "세부정보",
+		"watermarked": "워터마크",
+		"encrypted": "암호화됨",
+		"storage": "저장소",
+		"untitled": "제목 없음"
 	}
 }
