@@ -335,7 +335,8 @@ export const localRemoteBackupCore = async ({
         }
 
         // iOS fix: Use the actual filename from assetInfo, not the UUID
-        let actualFilename = assetInfo.filename || asset.filename;
+        // If getOriginalResource returned a RAW file, use the RAW filename
+        let actualFilename = (resolved.isRaw && resolved.rawFilename) ? resolved.rawFilename : (assetInfo.filename || asset.filename);
         const isVideo = /\.(mov|mp4|m4v|avi|mkv|webm|3gp)$/i.test(actualFilename);
         
         // Detect real format from magic bytes and fix extension if mismatched
@@ -786,7 +787,8 @@ export const localRemoteBackupSelectedCore = async ({
           continue;
         }
 
-        let actualFilename = assetInfo.filename || asset.filename;
+        // If getOriginalResource returned a RAW file, use the RAW filename
+        let actualFilename = (resolved.isRaw && resolved.rawFilename) ? resolved.rawFilename : (assetInfo.filename || asset.filename);
         const isVideo = /\.(mov|mp4|m4v|avi|mkv|webm|3gp)$/i.test(actualFilename);
         
         // Detect real format from magic bytes and fix extension if mismatched
