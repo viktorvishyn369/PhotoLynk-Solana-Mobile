@@ -52,7 +52,8 @@
 		"waitingForServer": "Čekání na server...",
 		"retryingConnection": "Opakovaný pokus o připojení...",
 		"stillConnecting": "Stále se připojuje...",
-		"almostThere": "Už to skoro je..."
+		"almostThere": "Už to skoro je...",
+		"confirmDeleteAll": "Confirm identity to delete all data"
 	},
 	"home": {
 		"backup": "Záloha",
@@ -274,7 +275,9 @@
 		"scanningAnalyzingProgressPhotos": "Skenování: Analýza {{current}} z {{total}} fotografií",
 		"switchingServer": "Přepínání serveru...",
 		"syncHashing": "Synchronizace: Příprava {{current}} z {{total}}: {{filename}}",
-		"deleting": "Mazání..."
+		"deleting": "Mazání...",
+		"backupRetrying": "Re-authenticating and retrying...",
+		"syncRetrying": "Re-authenticating and retrying..."
 	},
 	"restore": {
 		"title": "Obnovení fotografií",
@@ -895,7 +898,9 @@
 		"ok": "OK",
 		"cancel": "Zrušit",
 		"delete": "Odstranit",
-		"renew": "Obnovit"
+		"renew": "Obnovit",
+		"sessionExpired": "Session Expired",
+		"sessionExpiredRePair": "Your session token is invalid. Please re-pair with your desktop app via the QR code in Settings, or logout and login again."
 	},
 	"certificates": {
 		"title": "Certificates",

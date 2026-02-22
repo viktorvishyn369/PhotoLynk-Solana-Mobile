@@ -53,7 +53,8 @@
 		"waitingForServer": "Sunucu bekleniyor...",
 		"retryingConnection": "Bağlantı yeniden deneniyor...",
 		"stillConnecting": "Hala bağlıyorum.",
-		"almostThere": "Neredeyse geldik."
+		"almostThere": "Neredeyse geldik.",
+		"confirmDeleteAll": "Confirm identity to delete all data"
 	},
 	"home": {
 		"backup": "Yedekleme",
@@ -275,7 +276,9 @@
 		"scanningAnalyzingProgressPhotos": "Tarama: {{current}}/{{total}} fotoğraf analiz ediliyor",
 		"switchingServer": "Sunucu değiştiriliyor...",
 		"syncHashing": "Senkronizasyon: Hazırlanıyor {{current}} / {{total}}: {{filename}}",
-		"deleting": "Siliniyor..."
+		"deleting": "Siliniyor...",
+		"backupRetrying": "Re-authenticating and retrying...",
+		"syncRetrying": "Re-authenticating and retrying..."
 	},
 	"restore": {
 		"title": "Fotoğrafları Geri Yükle",
@@ -1008,7 +1011,9 @@
 		"ok": "OK",
 		"cancel": "İptal",
 		"delete": "Silme",
-		"renew": "Yenileme"
+		"renew": "Yenileme",
+		"sessionExpired": "Session Expired",
+		"sessionExpiredRePair": "Your session token is invalid. Please re-pair with your desktop app via the QR code in Settings, or logout and login again."
 	},
 	"certificates": {
 		"title": "Sertifikalar",

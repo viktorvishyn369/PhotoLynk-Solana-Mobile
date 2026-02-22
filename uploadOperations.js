@@ -104,7 +104,7 @@ export const localRemoteBackupCore = async ({
     let config = await getAuthHeaders();
     try {
       const storedEmail = await SecureStore.getItemAsync('user_email');
-      const storedPassword = await SecureStore.getItemAsync(SAVED_PASSWORD_KEY);
+      const storedPassword = await SecureStore.getItemAsync(SAVED_PASSWORD_KEY, { requireAuthentication: false });
       if (storedEmail && storedPassword) {
         const deviceId = await getDeviceUUID(storedEmail, storedPassword);
         const loginRes = await axios.post(`${SERVER_URL}/api/login`, {
@@ -480,7 +480,7 @@ export const localRemoteBackupCore = async ({
           
           // Store full EXIF to server for universal cross-platform preservation
           // Non-blocking, fire-and-forget
-          const isImage = asset.mediaType === 'photo' || /\.(jpg|jpeg|png|heic|heif|gif|bmp|webp|tiff?)$/i.test(actualFilename || '');
+          const isImage = asset.mediaType === 'photo' || /\.(jpg|jpeg|png|heic|heif|gif|bmp|webp|tiff?|raw|cr2|cr3|nef|arw|dng|orf|rw2|pef|srw|raf|avif)$/i.test(actualFilename || '');
           if (isImage && parsed?.fileHash) {
             try {
               const fullExif = extractFullExif(assetInfo, asset);
@@ -634,7 +634,7 @@ export const localRemoteBackupSelectedCore = async ({
     let config = await getAuthHeaders();
     try {
       const storedEmail = await SecureStore.getItemAsync('user_email');
-      const storedPassword = await SecureStore.getItemAsync(SAVED_PASSWORD_KEY);
+      const storedPassword = await SecureStore.getItemAsync(SAVED_PASSWORD_KEY, { requireAuthentication: false });
       if (storedEmail && storedPassword) {
         const deviceId = await getDeviceUUID(storedEmail, storedPassword);
         const loginRes = await axios.post(`${SERVER_URL}/api/login`, {

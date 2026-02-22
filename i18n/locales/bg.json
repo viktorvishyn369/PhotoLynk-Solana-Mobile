@@ -52,7 +52,8 @@
 		"waitingForServer": "В очакване на сървъра...",
 		"retryingConnection": "Повтарям опита за свързване...",
 		"stillConnecting": "Все още се свързвам...",
-		"almostThere": "Почти дотук..."
+		"almostThere": "Почти дотук...",
+		"confirmDeleteAll": "Confirm identity to delete all data"
 	},
 	"home": {
 		"backup": "Резервно копие",
@@ -274,7 +275,9 @@
 		"scanningAnalyzingProgressPhotos": "Сканиране: Анализ на {{current}} от {{total}} снимки",
 		"switchingServer": "Превключване на сървър...",
 		"syncHashing": "Синхронизация: Подготовка {{current}} от {{total}}: {{filename}}",
-		"deleting": "Изтриване..."
+		"deleting": "Изтриване...",
+		"backupRetrying": "Re-authenticating and retrying...",
+		"syncRetrying": "Re-authenticating and retrying..."
 	},
 	"restore": {
 		"title": "Възстановяване на снимки",
@@ -900,7 +903,9 @@
 		"ok": "OK",
 		"cancel": "Отмяна на",
 		"delete": "Изтриване на",
-		"renew": "Обновяване на"
+		"renew": "Обновяване на",
+		"sessionExpired": "Session Expired",
+		"sessionExpiredRePair": "Your session token is invalid. Please re-pair with your desktop app via the QR code in Settings, or logout and login again."
 	},
 	"certificates": {
 		"title": "Certificates",

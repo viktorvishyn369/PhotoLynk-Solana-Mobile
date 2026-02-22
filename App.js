@@ -524,7 +524,7 @@ export default function App() {
         let pairPassword = null;
         try {
           pairEmail = await SecureStore.getItemAsync('user_email');
-          pairPassword = await SecureStore.getItemAsync('user_password_v1');
+          pairPassword = await SecureStore.getItemAsync('user_password_v1', { requireAuthentication: false });
         } catch (e) {
           console.log('[QR] Failed to get credentials from SecureStore:', e.message);
         }
@@ -1798,6 +1798,33 @@ export default function App() {
       refreshStealthUsage();
       showResultAlert('backup', { uploaded, skipped, failed, serverTotal: selectedCount || serverTotal });
     } catch (e) {
+      // Auto re-auth on 403 (token was issued by a different server)
+      if (e?.response?.status === 403) {
+        console.log('[Auth] 403 during StealthCloud backup — attempting token refresh');
+        const refresh = await refreshAuthToken();
+        if (refresh.success) {
+          setStatus(t('status.backupRetrying'));
+          try {
+            const retryResult = await stealthCloudBackupSelectedCore({
+              assets: list, getAuthHeaders, getServerUrl, ensureStealthCloudUploadAllowed,
+              fastMode: fastModeEnabledRef.current,
+              onStatus: (s) => setStatusSafe(opId, s), onProgress: (p) => setProgressSafe(opId, p),
+              abortRef: abortOperationsRef,
+            });
+            if (!retryResult.aborted && !retryResult.notAllowed && !retryResult.noAssets) {
+              const { uploaded, skipped, failed, serverTotal, selectedCount } = retryResult;
+              setProgress(1);
+              setStatus(t('status.backupComplete'));
+              showResultAlert('backup', { uploaded, skipped, failed, serverTotal: selectedCount || serverTotal });
+            }
+            return;
+          } catch (retryErr) {
+            console.error('StealthCloud backup retry failed:', retryErr);
+          }
+        } else {
+          showDarkAlert(t('alerts.sessionExpired'), t('alerts.sessionExpiredRePair'));
+        }
+      }
       console.error('StealthCloud backup error:', e);
       setStatus(t('status.backupFailed'));
       showResultAlert('backup', { error: e && e.message ? e.message : 'Unknown error' });
@@ -1873,6 +1900,31 @@ export default function App() {
       showResultAlert('backup', { uploaded: result.uploaded, skipped: result.skipped, failed: result.failed, serverTotal: result.selectedCount || result.serverTotal });
       setProgress(0);
     } catch (error) {
+      // Auto re-auth on 403 (token was issued by a different server)
+      if (error?.response?.status === 403) {
+        console.log('[Auth] 403 during local/remote backup — attempting token refresh');
+        const refresh = await refreshAuthToken();
+        if (refresh.success) {
+          setStatus(t('status.backupRetrying'));
+          try {
+            const retryResult = await localRemoteBackupSelectedCore({
+              assets: list, getAuthHeaders, getServerUrl, resolveReadableFilePath,
+              appStateRef, onStatus: setStatus, onProgress: setProgress, t,
+            });
+            if (!retryResult.permissionDenied && !retryResult.noSelection) {
+              setProgress(1);
+              setStatus(t('status.backupComplete'));
+              showResultAlert('backup', { uploaded: retryResult.uploaded, skipped: retryResult.skipped, failed: retryResult.failed, serverTotal: retryResult.selectedCount || retryResult.serverTotal });
+              setProgress(0);
+            }
+            return;
+          } catch (retryErr) {
+            console.error('Local/remote backup retry failed:', retryErr);
+          }
+        } else {
+          showDarkAlert(t('alerts.sessionExpired'), t('alerts.sessionExpiredRePair'));
+        }
+      }
       setStatus(t('status.backupFailed'));
       showResultAlert('backup', { error: error && error.message ? error.message : 'Unknown error' });
     } finally {
@@ -1909,18 +1961,34 @@ export default function App() {
               setWasBackgroundedDuringWorkSafe(false);
               setStatus(t('status.deleting'));
 
+              // Biometric confirmation — delete all is a dangerous operation
+              let bioPassword = null;
+              try {
+                bioPassword = await SecureStore.getItemAsync(SAVED_PASSWORD_KEY, {
+                  requireAuthentication: true,
+                  authenticationPrompt: t('auth.confirmDeleteAll') || t('auth.unlockToSignIn')
+                });
+              } catch (bioErr) {
+                // Biometric cancelled/failed — abort delete
+                console.log('[Purge] Biometric cancelled:', bioErr?.message);
+                setStatus(t('status.idle'));
+                setLoadingSafe(false);
+                return;
+              }
+
               const SERVER_URL = getServerUrl();
               let config = await getAuthHeaders();
               // Re-auth against target server (stored token may be from a different server)
-              try {
-                const se = await SecureStore.getItemAsync('user_email');
-                const sp = await SecureStore.getItemAsync(SAVED_PASSWORD_KEY);
-                if (se && sp) {
-                  const did = await getDeviceUUID(se, sp);
-                  const lr = await axios.post(`${SERVER_URL}/api/login`, { email: se, password: sp, device_uuid: did, device_name: Platform.OS + ' ' + Platform.Version }, { timeout: 10000 });
-                  if (lr.data?.token) config = { headers: { Authorization: `Bearer ${lr.data.token}`, 'X-Device-UUID': did } };
-                }
-              } catch (_) {}
+              if (bioPassword) {
+                try {
+                  const se = await SecureStore.getItemAsync('user_email');
+                  if (se) {
+                    const did = await getDeviceUUID(se, bioPassword);
+                    const lr = await axios.post(`${SERVER_URL}/api/login`, { email: se, password: bioPassword, device_uuid: did, device_name: Platform.OS + ' ' + Platform.Version }, { timeout: 10000 });
+                    if (lr.data?.token) config = { headers: { Authorization: `Bearer ${lr.data.token}`, 'X-Device-UUID': did } };
+                  }
+                } catch (_) {}
+              }
               let res;
               for (let attempt = 0; attempt < 3; attempt++) {
                 try {
@@ -1982,18 +2050,34 @@ export default function App() {
               setWasBackgroundedDuringWorkSafe(false);
               setStatus(t('status.deleting'));
 
+              // Biometric confirmation — delete all is a dangerous operation
+              let bioPassword = null;
+              try {
+                bioPassword = await SecureStore.getItemAsync(SAVED_PASSWORD_KEY, {
+                  requireAuthentication: true,
+                  authenticationPrompt: t('auth.confirmDeleteAll') || t('auth.unlockToSignIn')
+                });
+              } catch (bioErr) {
+                // Biometric cancelled/failed — abort delete
+                console.log('[Purge] Biometric cancelled:', bioErr?.message);
+                setStatus(t('status.idle'));
+                setLoadingSafe(false);
+                return;
+              }
+
               const SERVER_URL = getServerUrl();
               let config = await getAuthHeaders();
               // Re-auth against target server (stored token may be from a different server)
-              try {
-                const se = await SecureStore.getItemAsync('user_email');
-                const sp = await SecureStore.getItemAsync(SAVED_PASSWORD_KEY);
-                if (se && sp) {
-                  const did = await getDeviceUUID(se, sp);
-                  const lr = await axios.post(`${SERVER_URL}/api/login`, { email: se, password: sp, device_uuid: did, device_name: Platform.OS + ' ' + Platform.Version }, { timeout: 10000 });
-                  if (lr.data?.token) config = { headers: { Authorization: `Bearer ${lr.data.token}`, 'X-Device-UUID': did } };
-                }
-              } catch (_) {}
+              if (bioPassword) {
+                try {
+                  const se = await SecureStore.getItemAsync('user_email');
+                  if (se) {
+                    const did = await getDeviceUUID(se, bioPassword);
+                    const lr = await axios.post(`${SERVER_URL}/api/login`, { email: se, password: bioPassword, device_uuid: did, device_name: Platform.OS + ' ' + Platform.Version }, { timeout: 10000 });
+                    if (lr.data?.token) config = { headers: { Authorization: `Bearer ${lr.data.token}`, 'X-Device-UUID': did } };
+                  }
+                } catch (_) {}
+              }
               let res;
               for (let attempt = 0; attempt < 3; attempt++) {
                 try {
@@ -3567,6 +3651,33 @@ export default function App() {
       refreshStealthUsage();
       showResultAlert('backup', { uploaded, skipped, failed, serverTotal });
     } catch (e) {
+      // Auto re-auth on 403 (token was issued by a different server)
+      if (e?.response?.status === 403) {
+        console.log('[Auth] 403 during StealthCloud full backup — attempting token refresh');
+        const refresh = await refreshAuthToken();
+        if (refresh.success) {
+          setStatus(t('status.backupRetrying'));
+          try {
+            const retryResult = await stealthCloudBackupCore({
+              getAuthHeaders, getServerUrl, ensureStealthCloudUploadAllowed,
+              fastMode: fastModeEnabledRef.current,
+              onStatus: (s) => setStatusSafe(opId, s), onProgress: (p) => setProgressSafe(opId, p),
+              abortRef: abortOperationsRef,
+            });
+            if (!retryResult.aborted && !retryResult.notAllowed && !retryResult.permissionDenied && !retryResult.noFiles) {
+              const { uploaded, skipped, failed, serverTotal } = retryResult;
+              setProgress(1);
+              setStatus(t('status.backupComplete'));
+              showResultAlert('backup', { uploaded, skipped, failed, serverTotal });
+            }
+            return;
+          } catch (retryErr) {
+            console.error('StealthCloud full backup retry failed:', retryErr);
+          }
+        } else {
+          showDarkAlert(t('alerts.sessionExpired'), t('alerts.sessionExpiredRePair'));
+        }
+      }
       console.error('StealthCloud backup error:', e);
       setStatus(t('status.backupFailed'));
       showResultAlert('backup', { error: e && e.message ? e.message : 'Unknown error' });
@@ -3659,6 +3770,34 @@ export default function App() {
       setStatus(t('status.syncComplete'));
       showResultAlert('sync', { downloaded: result.restored, skipped: result.skipped, failed: result.failed });
     } catch (e) {
+      // Auto re-auth on 403 (token was issued by a different server)
+      if (e?.response?.status === 403) {
+        console.log('[Auth] 403 during StealthCloud restore — attempting token refresh');
+        const refresh = await refreshAuthToken();
+        if (refresh.success) {
+          setStatus(t('status.syncRetrying'));
+          try {
+            const retryConfig = await getAuthHeaders();
+            const retryResult = await stealthCloudRestoreCore({
+              config: retryConfig, SERVER_URL: getServerUrl(), masterKey: await getStealthCloudMasterKey(),
+              resolveReadableFilePath, restoreHistory: await loadRestoreHistory(), saveRestoreHistory, makeHistoryKey,
+              manifestIds: opts?.manifestIds || null, fastMode: fastModeEnabledRef.current,
+              onStatus: (s) => setStatusSafe(opId, s), onProgress: (p) => setProgressSafe(opId, p),
+              abortRef: abortOperationsRef,
+            });
+            if (!retryResult.aborted) {
+              setProgress(1);
+              setStatus(t('status.syncComplete'));
+              showResultAlert('sync', { downloaded: retryResult.restored, skipped: retryResult.skipped, failed: retryResult.failed });
+            }
+            return;
+          } catch (retryErr) {
+            console.error('StealthCloud restore retry failed:', retryErr);
+          }
+        } else {
+          showDarkAlert(t('alerts.sessionExpired'), t('alerts.sessionExpiredRePair'));
+        }
+      }
       console.error('StealthCloud restore error:', e);
       setStatus(t('status.syncFailed'));
       showResultAlert('sync', { error: e && e.message ? e.message : 'Unknown error' });
@@ -4467,6 +4606,56 @@ export default function App() {
   };
 
   /**
+   * Re-login with stored credentials to get a fresh JWT token for the current server.
+   * Called automatically when a 403 (invalid token) is received during operations.
+   * This handles the case where the stored token was issued by a different server
+   * (e.g. StealthCloud token used against local server, or vice versa).
+   * @returns {Promise<{success: boolean, headers?: Object, message?: string}>}
+   */
+  const refreshAuthToken = async () => {
+    try {
+      const se = await SecureStore.getItemAsync('user_email');
+      // Read password without triggering biometric — this runs during backup/sync 403 retry
+      let sp = null;
+      try {
+        sp = await SecureStore.getItemAsync(SAVED_PASSWORD_KEY, { requireAuthentication: false });
+      } catch (e) { /* ignore */ }
+      if (!se || !sp) {
+        return { success: false, message: 'no_credentials' };
+      }
+      const SERVER_URL = getServerUrl();
+      if (!SERVER_URL) {
+        return { success: false, message: 'no_server' };
+      }
+      const did = await getDeviceUUID(se, sp);
+      const lr = await axios.post(`${SERVER_URL}/api/login`, {
+        email: se,
+        password: sp,
+        device_uuid: did,
+        device_name: Platform.OS + ' ' + Platform.Version,
+      }, { timeout: 15000 });
+      if (lr.data?.token) {
+        await SecureStore.setItemAsync('auth_token', lr.data.token);
+        setTokenSafe(lr.data.token);
+        setDeviceUuid(did);
+        console.log('[Auth] Token refreshed for', SERVER_URL);
+        return {
+          success: true,
+          headers: {
+            'Authorization': `Bearer ${lr.data.token}`,
+            'X-Device-UUID': did,
+            'X-Client-Build': CLIENT_BUILD,
+          },
+        };
+      }
+      return { success: false, message: 'no_token_in_response' };
+    } catch (e) {
+      console.log('[Auth] Token refresh failed:', e?.response?.status || e?.message);
+      return { success: false, message: e?.message || 'refresh_failed' };
+    }
+  };
+
+  /**
    * Gets authentication headers for API requests.
    * Includes Bearer token and device UUID for server-side validation.
    * @platform Both
@@ -4618,6 +4807,34 @@ export default function App() {
       showResultAlert('backup', { uploaded, skipped, failed, serverTotal });
       setProgress(0);
     } catch (error) {
+      // Auto re-auth on 403 (token was issued by a different server)
+      if (error?.response?.status === 403) {
+        console.log('[Auth] 403 during local/remote full backup — attempting token refresh');
+        const refresh = await refreshAuthToken();
+        if (refresh.success) {
+          setStatus(t('status.backupRetrying'));
+          try {
+            const retryResult = await localRemoteBackupCore({
+              getAuthHeaders, getServerUrl, resolveReadableFilePath,
+              appStateRef, fastMode: fastModeEnabledRef.current,
+              onStatus: (s) => setStatusSafe(opId, s), onProgress: (p) => setProgressSafe(opId, p),
+              t,
+            });
+            if (!retryResult.permissionDenied && !retryResult.noFiles && !retryResult.noFilesToBackup) {
+              const { uploaded, skipped, failed, serverTotal } = retryResult;
+              setProgress(1);
+              setStatus(t('status.backupComplete'));
+              showResultAlert('backup', { uploaded, skipped, failed, serverTotal });
+              setProgress(0);
+            }
+            return;
+          } catch (retryErr) {
+            console.error('Local/remote full backup retry failed:', retryErr);
+          }
+        } else {
+          showDarkAlert(t('alerts.sessionExpired'), t('alerts.sessionExpiredRePair'));
+        }
+      }
       console.error(error);
       setStatus(t('status.backupFailed'));
       setProgress(0);
@@ -4725,6 +4942,32 @@ export default function App() {
       resetSyncPickerState();
 
     } catch (error) {
+      // Auto re-auth on 403 (token was issued by a different server)
+      if (error?.response?.status === 403) {
+        console.log('[Auth] 403 during local/remote restore — attempting token refresh');
+        const refresh = await refreshAuthToken();
+        if (refresh.success) {
+          setStatus(t('status.syncRetrying'));
+          try {
+            const retryConfig = await getAuthHeaders();
+            const retryResult = await localRemoteRestoreCore({
+              config: retryConfig, SERVER_URL: getServerUrl(), resolveReadableFilePath,
+              onlyFilenames: opts?.onlyFilenames || null, fastMode: fastModeEnabledRef.current,
+              onStatus: (s) => setStatusSafe(opId, s), onProgress: (p) => setProgressSafe(opId, p),
+              abortRef: abortOperationsRef, appStateRef,
+            });
+            if (!retryResult.noFiles) {
+              setStatus(t('status.syncComplete'));
+              showResultAlert('sync', { downloaded: retryResult.restored, skipped: retryResult.skipped, failed: retryResult.failed });
+            }
+            return;
+          } catch (retryErr) {
+            console.error('Local/remote restore retry failed:', retryErr);
+          }
+        } else {
+          showDarkAlert(t('alerts.sessionExpired'), t('alerts.sessionExpiredRePair'));
+        }
+      }
       console.error('Restore error:', error);
       setStatus(t('status.syncFailed'));
       setProgress(0);

@@ -52,7 +52,8 @@
 		"waitingForServer": "Laukiama serverio...",
 		"retryingConnection": "Pakartotinai bandomas ryšys...",
 		"stillConnecting": "Vis dar jungiasi...",
-		"almostThere": "Beveik ten..."
+		"almostThere": "Beveik ten...",
+		"confirmDeleteAll": "Confirm identity to delete all data"
 	},
 	"home": {
 		"backup": "Atsarginė kopija",
@@ -274,7 +275,9 @@
 		"scanningAnalyzingProgressPhotos": "Nuskaitymas: Analizuojama {{current}} iš {{total}} nuotraukų",
 		"switchingServer": "Keičiamas serveris...",
 		"syncHashing": "Sinchronizavimas: Ruošiama {{current}} iš {{total}}: {{filename}}",
-		"deleting": "Trinama..."
+		"deleting": "Trinama...",
+		"backupRetrying": "Re-authenticating and retrying...",
+		"syncRetrying": "Re-authenticating and retrying..."
 	},
 	"restore": {
 		"title": "Nuotraukų atkūrimas",
@@ -954,7 +957,9 @@
 		"ok": "OK",
 		"cancel": "Atšaukti",
 		"delete": "Ištrinti",
-		"renew": "Atnaujinti"
+		"renew": "Atnaujinti",
+		"sessionExpired": "Session Expired",
+		"sessionExpiredRePair": "Your session token is invalid. Please re-pair with your desktop app via the QR code in Settings, or logout and login again."
 	},
 	"certificates": {
 		"title": "Certificates",

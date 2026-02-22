@@ -53,7 +53,8 @@
 		"waitingForServer": "サーバー待ち...",
 		"retryingConnection": "接続を再試行...",
 		"stillConnecting": "まだつながっている...",
-		"almostThere": "もう少しだ..."
+		"almostThere": "もう少しだ...",
+		"confirmDeleteAll": "Confirm identity to delete all data"
 	},
 	"home": {
 		"backup": "バックアップ",
@@ -275,7 +276,9 @@
 		"scanningAnalyzingProgressPhotos": "スキャン: {{current}}/{{total}}枚の写真を分析中",
 		"switchingServer": "サーバー切り替え中...",
 		"syncHashing": "同期: 準備中 {{current}} / {{total}}: {{filename}}",
-		"deleting": "削除中..."
+		"deleting": "削除中...",
+		"backupRetrying": "Re-authenticating and retrying...",
+		"syncRetrying": "Re-authenticating and retrying..."
 	},
 	"restore": {
 		"title": "写真の復元",
@@ -1010,7 +1013,9 @@
 		"ok": "OK",
 		"cancel": "キャンセル",
 		"delete": "削除",
-		"renew": "リニューアル"
+		"renew": "リニューアル",
+		"sessionExpired": "Session Expired",
+		"sessionExpiredRePair": "Your session token is invalid. Please re-pair with your desktop app via the QR code in Settings, or logout and login again."
 	},
 	"certificates": {
 		"title": "証明書",

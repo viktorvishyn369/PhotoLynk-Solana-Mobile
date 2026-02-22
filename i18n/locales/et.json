@@ -52,7 +52,8 @@
 		"waitingForServer": "Ootab serverit...",
 		"retryingConnection": "Ühenduse uuesti proovimine...",
 		"stillConnecting": "Ikka ühendab...",
-		"almostThere": "Peaaegu valmis..."
+		"almostThere": "Peaaegu valmis...",
+		"confirmDeleteAll": "Confirm identity to delete all data"
 	},
 	"home": {
 		"backup": "Varukoopia",
@@ -274,7 +275,9 @@
 		"scanningAnalyzingProgressPhotos": "Skannimine: {{current}}/{{total}} foto analüüsimine",
 		"switchingServer": "Serveri vahetamine...",
 		"syncHashing": "Sünkroonimine: Ettevalmistamine {{current}} / {{total}}: {{filename}}",
-		"deleting": "Kustutamine..."
+		"deleting": "Kustutamine...",
+		"backupRetrying": "Re-authenticating and retrying...",
+		"syncRetrying": "Re-authenticating and retrying..."
 	},
 	"restore": {
 		"title": "Fotode taastamine",
@@ -949,7 +952,9 @@
 		"ok": "OK",
 		"cancel": "Tühista",
 		"delete": "Kustuta",
-		"renew": "Renew"
+		"renew": "Renew",
+		"sessionExpired": "Session Expired",
+		"sessionExpiredRePair": "Your session token is invalid. Please re-pair with your desktop app via the QR code in Settings, or logout and login again."
 	},
 	"certificates": {
 		"title": "Certificates",

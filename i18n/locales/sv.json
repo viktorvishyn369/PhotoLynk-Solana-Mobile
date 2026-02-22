@@ -52,7 +52,8 @@
 		"waitingForServer": "Väntar på server...",
 		"retryingConnection": "Försöker ansluta på nytt...",
 		"stillConnecting": "Kopplar fortfarande...",
-		"almostThere": "Nästan framme..."
+		"almostThere": "Nästan framme...",
+		"confirmDeleteAll": "Confirm identity to delete all data"
 	},
 	"home": {
 		"backup": "Säkerhetskopiering",
@@ -274,7 +275,9 @@
 		"scanningAnalyzingProgressPhotos": "Skannar: Analyserar {{current}} av {{total}} foton",
 		"switchingServer": "Byter server...",
 		"syncHashing": "Synkronisering: Förbereder {{current}} av {{total}}: {{filename}}",
-		"deleting": "Raderar..."
+		"deleting": "Raderar...",
+		"backupRetrying": "Re-authenticating and retrying...",
+		"syncRetrying": "Re-authenticating and retrying..."
 	},
 	"restore": {
 		"title": "Återställa foton",
@@ -1002,7 +1005,9 @@
 		"ok": "OK",
 		"cancel": "Avbryt",
 		"delete": "Radera",
-		"renew": "Förnya"
+		"renew": "Förnya",
+		"sessionExpired": "Session Expired",
+		"sessionExpiredRePair": "Your session token is invalid. Please re-pair with your desktop app via the QR code in Settings, or logout and login again."
 	},
 	"certificates": {
 		"title": "Certifikat",

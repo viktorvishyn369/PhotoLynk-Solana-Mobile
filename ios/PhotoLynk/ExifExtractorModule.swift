@@ -214,7 +214,74 @@ class ExifExtractorModule: NSObject {
           tiffDict[kCGImagePropertyTIFFSoftware as String] = software
         }
         
+        // Lens info
+        if let lensMake = exifData["lensMake"] as? String {
+          exifDict[kCGImagePropertyExifLensMake as String] = lensMake
+        }
+        if let lensModel = exifData["lensModel"] as? String {
+          exifDict[kCGImagePropertyExifLensModel as String] = lensModel
+        }
+        
+        // Additional camera settings
+        if let flash = exifData["flash"] as? Int {
+          exifDict[kCGImagePropertyExifFlash as String] = flash
+        }
+        if let whiteBalance = exifData["whiteBalance"] as? Int {
+          exifDict[kCGImagePropertyExifWhiteBalance as String] = whiteBalance
+        }
+        if let meteringMode = exifData["meteringMode"] as? Int {
+          exifDict[kCGImagePropertyExifMeteringMode as String] = meteringMode
+        }
+        if let exposureProgram = exifData["exposureProgram"] as? Int {
+          exifDict[kCGImagePropertyExifExposureProgram as String] = exposureProgram
+        }
+        if let exposureBias = exifData["exposureBias"] as? Double {
+          exifDict[kCGImagePropertyExifExposureBiasValue as String] = exposureBias
+        }
+        if let colorSpace = exifData["colorSpace"] as? Int {
+          exifDict[kCGImagePropertyExifColorSpace as String] = colorSpace
+        }
+        if let orientation = exifData["orientation"] as? Int {
+          properties[kCGImagePropertyOrientation as String] = orientation
+          tiffDict[kCGImagePropertyTIFFOrientation as String] = orientation
+        }
+        
+        // IPTC fields (professional metadata — copyright, caption, keywords, creator)
+        var iptcDict = (properties[kCGImagePropertyIPTCDictionary as String] as? [String: Any]) ?? [:]
+        if let iptcCaption = exifData["iptcCaption"] as? String {
+          iptcDict[kCGImagePropertyIPTCCaptionAbstract as String] = iptcCaption
+        }
+        if let iptcCopyright = exifData["iptcCopyright"] as? String {
+          iptcDict[kCGImagePropertyIPTCCopyrightNotice as String] = iptcCopyright
+          tiffDict[kCGImagePropertyTIFFCopyright as String] = iptcCopyright
+        }
+        if let iptcKeywords = exifData["iptcKeywords"] as? [String] {
+          iptcDict[kCGImagePropertyIPTCKeywords as String] = iptcKeywords
+        }
+        if let iptcCreator = exifData["iptcCreator"] as? String {
+          iptcDict[kCGImagePropertyIPTCByline as String] = [iptcCreator]
+          tiffDict[kCGImagePropertyTIFFArtist as String] = iptcCreator
+        }
+        if let iptcTitle = exifData["iptcTitle"] as? String {
+          iptcDict[kCGImagePropertyIPTCObjectName as String] = iptcTitle
+        }
+        if let iptcCity = exifData["iptcCity"] as? String {
+          iptcDict[kCGImagePropertyIPTCCity as String] = iptcCity
+        }
+        if let iptcCountry = exifData["iptcCountry"] as? String {
+          iptcDict[kCGImagePropertyIPTCCountryPrimaryLocationName as String] = iptcCountry
+        }
+        if let iptcCredit = exifData["iptcCredit"] as? String {
+          iptcDict[kCGImagePropertyIPTCCredit as String] = iptcCredit
+        }
+        if let iptcSource = exifData["iptcSource"] as? String {
+          iptcDict[kCGImagePropertyIPTCSource as String] = iptcSource
+        }
+        
         // Update properties
+        if !iptcDict.isEmpty {
+          properties[kCGImagePropertyIPTCDictionary as String] = iptcDict
+        }
         if !exifDict.isEmpty {
           properties[kCGImagePropertyExifDictionary as String] = exifDict
         }

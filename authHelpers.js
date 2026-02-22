@@ -265,7 +265,7 @@ export const checkFirstLaunchAfterReinstall = async () => {
     // If credentials exist, this is an existing user (marker was missing due to migration)
     const existingToken = await SecureStore.getItemAsync('auth_token');
     const existingEmail = await SecureStore.getItemAsync('user_email');
-    const existingPassword = await SecureStore.getItemAsync(SAVED_PASSWORD_KEY);
+    const existingPassword = await SecureStore.getItemAsync(SAVED_PASSWORD_KEY, { requireAuthentication: false });
     
     if (existingToken || existingEmail || existingPassword) {
       // Credentials exist - this is an existing user, just create the marker
@@ -342,8 +342,15 @@ export const validateToken = async ({ storedToken, storedEmail, storedUserId, uu
     };
     await axios.get(`${baseUrl}/api/cloud/usage`, { headers, timeout: 5000 });
     
-    // Token valid - try to get saved password for master key (with biometric)
+    // Token valid - check if master key is already cached (skip biometric if so)
     let savedPassword = null;
+    const existingCache = await SecureStore.getItemAsync('stealthcloud_derived_key_v2').catch(() => null);
+    if (existingCache) {
+      console.log('[Auth] Token valid + master key cached — skipping biometric');
+      return { success: true, savedPassword: null };
+    }
+
+    // Master key not cached — need password to derive it (requires biometric)
     const savedPasswordEmail = await SecureStore.getItemAsync(SAVED_PASSWORD_EMAIL_KEY);
     if (savedPasswordEmail === storedEmail) {
       onStatus?.(t('auth.unlockToSignIn'));

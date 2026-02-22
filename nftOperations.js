@@ -16,6 +16,7 @@ import ImageTracer from 'imagetracerjs';
 import nacl from 'tweetnacl';
 import naclUtil from 'tweetnacl-util';
 import { getDeviceUUID, SAVED_PASSWORD_KEY } from './authHelpers';
+import { computeExifHashFromAssetInfo } from './exifExtractor';
 import { removeNFTImageFromCache } from './nftImageCache';
 import * as Application from 'expo-application';
 
@@ -950,14 +951,23 @@ export const stripExifFromImage = async (filePath) => {
 };
 
 // ============================================================================
-// EXIF HASH (deterministic hash of EXIF metadata for integrity proof)
+// EXIF HASH (deterministic cross-platform hash of EXIF metadata)
 // ============================================================================
 
 /**
- * Compute SHA256 hash of raw EXIF binary segment from a JPEG file.
- * Extracts the APP1 EXIF segment (same bytes that sharp.metadata().exif returns on desktop).
- * This ensures desktop and mobile produce identical hashes for the same file,
- * and users can independently verify by extracting the raw EXIF segment.
+ * Compute deterministic cross-platform SHA256 hash of EXIF metadata.
+ *
+ * iOS and Android re-encode JPEG files differently — raw EXIF binary, thumbnails,
+ * IFD structure, and even pixel data differ for the same photo. Hashing raw EXIF
+ * binary will NEVER match cross-platform.
+ *
+ * Instead, we parse EXIF TIFF IFD entries from the raw APP1 segment, keep only
+ * stable camera-related fields (stripping thumbnails, MakerNote, Software, UUIDs),
+ * sort deterministically, and hash the normalized JSON. This produces identical
+ * hashes on mobile (raw TIFF parsing) and desktop (sharp + exif-reader).
+ *
+ * Returns null if no meaningful EXIF fields are found (e.g. EXIF-stripped files).
+ *
  * @param {string} filePath - Path to the JPEG file
  * @returns {Promise<string|null>} SHA256 hex hash or null
  */
@@ -969,35 +979,189 @@ export const computeExifHash = async (filePath) => {
     });
     const binaryString = atob(base64Content);
 
-    // Find APP1 EXIF segment in JPEG: marker 0xFFE1 followed by length (2 bytes big-endian)
-    // then "Exif\0\0" header, then TIFF data (which is what sharp returns as metadata().exif)
+    // Find APP1 EXIF segment in JPEG
+    let tiffBytes = null;
     for (let i = 0; i < binaryString.length - 4; i++) {
       if (binaryString.charCodeAt(i) === 0xFF && binaryString.charCodeAt(i + 1) === 0xE1) {
         const segLen = (binaryString.charCodeAt(i + 2) << 8) | binaryString.charCodeAt(i + 3);
-        // Segment data starts at i+4, length is segLen-2 (length field includes itself)
         const segData = binaryString.substring(i + 4, i + 2 + segLen);
-        // Check for "Exif\0\0" header (6 bytes)
         if (segData.length >= 6 &&
-            segData.charCodeAt(0) === 0x45 && // E
-            segData.charCodeAt(1) === 0x78 && // x
-            segData.charCodeAt(2) === 0x69 && // i
-            segData.charCodeAt(3) === 0x66 && // f
-            segData.charCodeAt(4) === 0x00 &&
-            segData.charCodeAt(5) === 0x00) {
-          // Convert binary string to Uint8Array for correct hashing
-          // js-sha256 treats string as UTF-8, corrupting bytes >127
-          const segBytes = new Uint8Array(segData.length);
-          for (let j = 0; j < segData.length; j++) {
-            segBytes[j] = segData.charCodeAt(j);
-          }
-          const hash = sha256(segBytes);
-          console.log('[NFT] EXIF hash from raw binary (' + segData.length + ' bytes):', hash.substring(0, 16) + '...');
-          return hash;
+            segData.charCodeAt(0) === 0x45 && segData.charCodeAt(1) === 0x78 &&
+            segData.charCodeAt(2) === 0x69 && segData.charCodeAt(3) === 0x66 &&
+            segData.charCodeAt(4) === 0x00 && segData.charCodeAt(5) === 0x00) {
+          // TIFF data starts after "Exif\0\0" (6 bytes)
+          const tiffStr = segData.substring(6);
+          tiffBytes = new Uint8Array(tiffStr.length);
+          for (let j = 0; j < tiffStr.length; j++) tiffBytes[j] = tiffStr.charCodeAt(j);
+          break;
         }
       }
     }
-    console.log('[NFT] No EXIF APP1 segment found in file');
-    return null;
+    if (!tiffBytes || tiffBytes.length < 8) {
+      console.log('[NFT] No EXIF APP1 segment found in file');
+      return null;
+    }
+
+    // Parse TIFF header
+    const isLE = tiffBytes[0] === 0x49 && tiffBytes[1] === 0x49; // 'II' = little-endian
+    const u16 = (off) => isLE
+      ? (tiffBytes[off] | (tiffBytes[off + 1] << 8))
+      : ((tiffBytes[off] << 8) | tiffBytes[off + 1]);
+    const u32 = (off) => isLE
+      ? (tiffBytes[off] | (tiffBytes[off + 1] << 8) | (tiffBytes[off + 2] << 16) | ((tiffBytes[off + 3] << 24) >>> 0))
+      : (((tiffBytes[off] << 24) >>> 0) | (tiffBytes[off + 1] << 16) | (tiffBytes[off + 2] << 8) | tiffBytes[off + 3]);
+
+    // EXIF tag IDs we care about (must match desktop computeExifHash field list)
+    const EXIF_TAGS = {
+      // IFD0
+      0x010F: 'Make', 0x0110: 'Model', 0x0112: 'Orientation',
+      // ExifIFD
+      0x9003: 'DateTimeOriginal', 0x829A: 'ExposureTime', 0x829D: 'FNumber',
+      0x8827: 'ISO', 0x920A: 'FocalLength', 0xA405: 'FocalLengthIn35mm',
+      0xA402: 'ExposureMode', 0xA403: 'WhiteBalance', 0x9207: 'MeteringMode',
+      0x9209: 'Flash', 0xA001: 'ColorSpace',
+      0xA002: 'PixelXDimension', 0xA003: 'PixelYDimension',
+      0xA406: 'SceneCaptureType',
+      0xA433: 'LensMake', 0xA434: 'LensModel', 0xA431: 'BodySerialNumber',
+      // GPS
+      0x0002: 'GPSLatitude_raw', 0x0004: 'GPSLongitude_raw',
+      0x0006: 'GPSAltitude_raw',
+      0x0001: 'GPSLatitudeRef', 0x0003: 'GPSLongitudeRef',
+    };
+    // Sub-IFD pointer tags
+    const SUB_IFD_TAGS = { 0x8769: 'ExifIFD', 0x8825: 'GPSIFD' };
+
+    const TYPE_SIZES = { 1: 1, 2: 1, 3: 2, 4: 4, 5: 8, 7: 1, 8: 2, 9: 4, 10: 8, 11: 4, 12: 8 };
+
+    const readString = (off, cnt) => {
+      let s = '';
+      for (let k = 0; k < cnt && off + k < tiffBytes.length; k++) {
+        const c = tiffBytes[off + k];
+        if (c === 0) break;
+        s += String.fromCharCode(c);
+      }
+      return s.trim();
+    };
+
+    const readRational = (off) => {
+      const num = u32(off);
+      const den = u32(off + 4);
+      return den !== 0 ? num / den : 0;
+    };
+
+    const readSRational = (off) => {
+      let num = u32(off);
+      if (num >= 0x80000000) num -= 0x100000000;
+      const den = u32(off + 4);
+      return den !== 0 ? num / den : 0;
+    };
+
+    const readValue = (off, typ, cnt) => {
+      const totalBytes = (TYPE_SIZES[typ] || 1) * cnt;
+      const valOff = totalBytes <= 4 ? off + 8 : u32(off + 8);
+      if (valOff + totalBytes > tiffBytes.length) return null;
+      if (typ === 2) return readString(valOff, cnt); // ASCII
+      if (typ === 3 && cnt === 1) return u16(valOff); // SHORT
+      if (typ === 4 && cnt === 1) return u32(valOff); // LONG
+      if (typ === 5 && cnt === 1) return readRational(valOff); // RATIONAL
+      if (typ === 10 && cnt === 1) return readSRational(valOff); // SRATIONAL
+      if (typ === 5 && cnt === 3) { // 3x RATIONAL (GPS coordinates)
+        const d = readRational(valOff);
+        const m = readRational(valOff + 8);
+        const s = readRational(valOff + 16);
+        return d + m / 60 + s / 3600;
+      }
+      return null;
+    };
+
+    const parseIFD = (ifdOff, tagMap, result, subIfdMap) => {
+      if (ifdOff + 2 > tiffBytes.length) return;
+      const numEntries = u16(ifdOff);
+      for (let idx = 0; idx < numEntries; idx++) {
+        const entryOff = ifdOff + 2 + idx * 12;
+        if (entryOff + 12 > tiffBytes.length) break;
+        const tag = u16(entryOff);
+        const typ = u16(entryOff + 2);
+        const cnt = u32(entryOff + 4);
+        // Check for sub-IFD pointers
+        if (subIfdMap && subIfdMap[tag]) {
+          const subOff = u32(entryOff + 8);
+          result['_sub_' + subIfdMap[tag]] = subOff;
+          continue;
+        }
+        const name = tagMap[tag];
+        if (!name) continue;
+        const val = readValue(entryOff, typ, cnt);
+        if (val != null) result[name] = val;
+      }
+    };
+
+    // Parse IFD0 + sub-IFDs
+    const ifd0Off = u32(4);
+    const raw = {};
+    parseIFD(ifd0Off, EXIF_TAGS, raw, SUB_IFD_TAGS);
+    if (raw._sub_ExifIFD) parseIFD(raw._sub_ExifIFD, EXIF_TAGS, raw, null);
+    if (raw._sub_GPSIFD) parseIFD(raw._sub_GPSIFD, EXIF_TAGS, raw, null);
+
+    // Build normalized object (must match desktop computeExifHash exactly)
+    // Round non-GPS decimals to 4dp, trunc GPS to 4dp for cross-platform stability.
+    const r4 = (v) => Math.round(v * 1e4) / 1e4;
+    const t4 = (v) => Math.trunc(v * 1e4) / 1e4;
+    const num4 = (v) => { const n = Number(v); return Number.isInteger(n) ? n : r4(n); };
+    const normalized = {};
+    if (raw.Make) normalized.Make = String(raw.Make).trim();
+    if (raw.Model) normalized.Model = String(raw.Model).trim();
+    if (raw.Orientation != null) normalized.Orientation = Number(raw.Orientation);
+    if (raw.DateTimeOriginal) normalized.DateTimeOriginal = String(raw.DateTimeOriginal).slice(0, 19);
+    if (raw.ExposureTime != null) normalized.ExposureTime = num4(raw.ExposureTime);
+    if (raw.FNumber != null) normalized.FNumber = num4(raw.FNumber);
+    if (raw.ISO != null) normalized.ISO = num4(raw.ISO);
+    if (raw.FocalLength != null) normalized.FocalLength = num4(raw.FocalLength);
+    if (raw.FocalLengthIn35mm != null) normalized.FocalLengthIn35mm = num4(raw.FocalLengthIn35mm);
+    if (raw.ExposureMode != null) normalized.ExposureMode = num4(raw.ExposureMode);
+    if (raw.WhiteBalance != null) normalized.WhiteBalance = num4(raw.WhiteBalance);
+    if (raw.MeteringMode != null) normalized.MeteringMode = num4(raw.MeteringMode);
+    if (raw.Flash != null) normalized.Flash = num4(raw.Flash);
+    if (raw.ColorSpace != null) normalized.ColorSpace = num4(raw.ColorSpace);
+    if (raw.PixelXDimension != null) normalized.PixelXDimension = num4(raw.PixelXDimension);
+    if (raw.PixelYDimension != null) normalized.PixelYDimension = num4(raw.PixelYDimension);
+    if (raw.SceneCaptureType != null) normalized.SceneCaptureType = num4(raw.SceneCaptureType);
+    if (raw.LensMake) normalized.LensMake = String(raw.LensMake).trim();
+    if (raw.LensModel) normalized.LensModel = String(raw.LensModel).trim();
+    if (raw.BodySerialNumber) normalized.BodySerialNumber = String(raw.BodySerialNumber).trim();
+    // GPS: convert DMS to decimal degrees (matching desktop exif-reader output)
+    if (raw.GPSLatitude_raw != null) {
+      let lat = Number(raw.GPSLatitude_raw);
+      if (raw.GPSLatitudeRef === 'S') lat = -lat;
+      normalized.GPSLatitude = t4(lat);
+    }
+    if (raw.GPSLongitude_raw != null) {
+      let lon = Number(raw.GPSLongitude_raw);
+      if (raw.GPSLongitudeRef === 'W') lon = -lon;
+      normalized.GPSLongitude = t4(lon);
+    }
+    if (raw.GPSAltitude_raw != null) normalized.GPSAltitude = t4(Number(raw.GPSAltitude_raw));
+
+    if (Object.keys(normalized).length === 0) {
+      console.log('[NFT] EXIF hash: no meaningful fields found, returning null');
+      return null;
+    }
+
+    // Universal decimal safety net: round non-GPS numerics to 4dp, trunc GPS to 4dp.
+    // This catches any numeric field (current or future) that may have cross-platform float drift.
+    const GPS_KEYS = new Set(['GPSLatitude', 'GPSLongitude', 'GPSAltitude']);
+    const sorted = {};
+    for (const key of Object.keys(normalized).sort()) {
+      let v = normalized[key];
+      if (typeof v === 'number' && !Number.isInteger(v)) {
+        v = GPS_KEYS.has(key) ? t4(v) : r4(v);
+      }
+      sorted[key] = v;
+    }
+    const json = JSON.stringify(sorted);
+    const hash = sha256(json);
+    console.log('[NFT] Normalized EXIF hash (' + Object.keys(sorted).length + ' fields):', hash.substring(0, 16) + '...');
+    return hash;
   } catch (e) {
     console.warn('[NFT] EXIF hash computation failed:', e?.message);
     return null;
@@ -1499,7 +1663,7 @@ const uploadThumbnailToStealthCloud = async (thumbnailPath, nftName, config) => 
       if (!headers['X-Device-UUID']) {
         try {
           const email = await SecureStore.getItemAsync('user_email');
-          const password = await SecureStore.getItemAsync(SAVED_PASSWORD_KEY);
+          const password = await SecureStore.getItemAsync(SAVED_PASSWORD_KEY, { requireAuthentication: false });
           if (email && password) {
             const derived = await getDeviceUUID(email, password);
             if (derived) headers['X-Device-UUID'] = derived;
@@ -1659,7 +1823,7 @@ export const uploadToStealthCloud = async (filePath, config) => {
       if (!headers['X-Device-UUID']) {
         try {
           const email = await SecureStore.getItemAsync('user_email');
-          const password = await SecureStore.getItemAsync(SAVED_PASSWORD_KEY);
+          const password = await SecureStore.getItemAsync(SAVED_PASSWORD_KEY, { requireAuthentication: false });
           if (email && password) {
             const derived = await getDeviceUUID(email, password);
             if (derived) headers['X-Device-UUID'] = derived;
@@ -2886,7 +3050,11 @@ export const mintPhotoNFT = async ({
     const exifData = extractExifForNFT(asset, info);
     
     // Compute EXIF hash from raw EXIF binary in the original file
-    const exifHash = await computeExifHash(filePath);
+    let exifHash = await computeExifHash(filePath);
+    // Fallback: for HEIC/RAW (no JPEG APP1), compute from assetInfo.exif
+    if (!exifHash && info) {
+      exifHash = computeExifHashFromAssetInfo(info);
+    }
     
     // Compute camera serial hash (Limited Edition — device-binding proof)
     const camSerialHash = isLimited ? computeCameraSerialHash(info) : null;
@@ -5072,6 +5240,7 @@ const fetchCompressedNFTs = async (walletAddress, knownMints = null) => {
   // Paginate DAS API — fetch pages until we find enough new cNFTs or run out of pages
   let compressedItems = [];
   let dasPage = 1;
+  let rateLimitRetries = 0;
   const MAX_PAGES = 25; // Safety limit: 25 pages × 20 = 500 items max
   
   while (compressedItems.length < MAX_CNFT_METADATA_PER_CALL && dasPage <= MAX_PAGES) {
@@ -5093,13 +5262,30 @@ const fetchCompressedNFTs = async (walletAddress, knownMints = null) => {
       });
       
       if (!response.ok) {
+        // Rate limited (429) — wait and retry with exponential backoff
+        if (response.status === 429 && rateLimitRetries < 4) {
+          const backoff = Math.pow(2, rateLimitRetries) * 5000; // 5s, 10s, 20s, 40s
+          rateLimitRetries++;
+          console.log(`[cNFT] Rate limited (429), retrying in ${backoff / 1000}s (attempt ${rateLimitRetries}/4)`);
+          await new Promise(r => setTimeout(r, backoff));
+          continue;
+        }
         console.log('[cNFT] DAS HTTP error:', response.status);
         break;
       }
+      rateLimitRetries = 0; // Reset on success
       
       const data = await response.json();
       
       if (data.error) {
+        // Rate limited via JSON-RPC error code
+        if (data.error.code === -32429 && rateLimitRetries < 4) {
+          const backoff = Math.pow(2, rateLimitRetries) * 5000;
+          rateLimitRetries++;
+          console.log(`[cNFT] Rate limited (-32429), retrying in ${backoff / 1000}s (attempt ${rateLimitRetries}/4)`);
+          await new Promise(r => setTimeout(r, backoff));
+          continue;
+        }
         // "Response is too big" — halve page size and retry same page
         if (data.error.code === -32702 && DAS_PAGE_SIZE > 5) {
           DAS_PAGE_SIZE = Math.max(5, Math.floor(DAS_PAGE_SIZE / 2));
@@ -5582,8 +5768,8 @@ export const generateCertificate = (nftData) => {
   if (!nftData) return null;
   // Only generate certificates for explicitly limited edition NFTs
   if (nftData.edition !== 'limited') return null;
-  // Never generate certs for temporary tx_ entries — wait for real cnft_ ID
-  if (nftData.mintAddress && String(nftData.mintAddress).startsWith('tx_')) return null;
+  // Skip temporary tx_ entries unless forceGenerate is set (post-mint immediate cert)
+  if (!nftData.forceGenerate && nftData.mintAddress && String(nftData.mintAddress).startsWith('tx_')) return null;
   const cert = {
     id: `cert_${nftData.mintAddress || Date.now()}`,
     version: 1,
@@ -5607,11 +5793,13 @@ export const generateCertificate = (nftData) => {
   };
 
   // Extract hashes from attributes (check both metadata.attributes and top-level attributes)
+  // Normalize: always include SHA256: prefix for consistency across platforms
+  const ensureHashPrefix = (h) => h && !h.startsWith('SHA256:') ? `SHA256:${h}` : h;
   const attrs = nftData.metadata?.attributes || nftData.attributes || [];
   for (const attr of attrs) {
-    if (attr.trait_type === 'Content Hash') cert.contentHash = attr.value;
-    if (attr.trait_type === 'EXIF Hash') cert.exifHash = attr.value;
-    if (attr.trait_type === 'Camera Hash' && !cert.cameraHash) cert.cameraHash = attr.value;
+    if (attr.trait_type === 'Content Hash') cert.contentHash = ensureHashPrefix(attr.value);
+    if (attr.trait_type === 'EXIF Hash') cert.exifHash = ensureHashPrefix(attr.value);
+    if (attr.trait_type === 'Camera Hash' && !cert.cameraHash) cert.cameraHash = ensureHashPrefix(attr.value);
     if (attr.trait_type === 'License' && !cert.license) cert.license = attr.value;
   }
 

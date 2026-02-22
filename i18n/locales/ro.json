@@ -52,7 +52,8 @@
 		"waitingForServer": "În așteptarea serverului...",
 		"retryingConnection": "Reîncercarea conexiunii...",
 		"stillConnecting": "Încă se conectează...",
-		"almostThere": "Aproape am ajuns..."
+		"almostThere": "Aproape am ajuns...",
+		"confirmDeleteAll": "Confirm identity to delete all data"
 	},
 	"home": {
 		"backup": "Backup",
@@ -274,7 +275,9 @@
 		"scanningAnalyzingProgressPhotos": "Scanare: Analizare {{current}} din {{total}} fotografii",
 		"switchingServer": "Schimbare server...",
 		"syncHashing": "Sincronizare: Pregătire {{current}} din {{total}}: {{filename}}",
-		"deleting": "Se șterge..."
+		"deleting": "Se șterge...",
+		"backupRetrying": "Re-authenticating and retrying...",
+		"syncRetrying": "Re-authenticating and retrying..."
 	},
 	"restore": {
 		"title": "Restaurarea fotografiilor",
@@ -900,7 +903,9 @@
 		"ok": "OK",
 		"cancel": "Anulează",
 		"delete": "Ștergeți",
-		"renew": "Reînnoire"
+		"renew": "Reînnoire",
+		"sessionExpired": "Session Expired",
+		"sessionExpiredRePair": "Your session token is invalid. Please re-pair with your desktop app via the QR code in Settings, or logout and login again."
 	},
 	"certificates": {
 		"title": "Certificates",

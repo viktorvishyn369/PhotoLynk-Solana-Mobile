@@ -1052,7 +1052,7 @@ export const stealthCloudRestoreCore = async ({
 
       // Retrieve and apply EXIF if available (for cross-platform preservation)
       const fileHash = fullManifest.fileHash;
-      if (fileHash && /\.(jpg|jpeg|png|heic|heif|gif|bmp|webp|tiff?)$/i.test(filename || '')) {
+      if (fileHash && /\.(jpg|jpeg|png|heic|heif|gif|bmp|webp|tiff?|raw|cr2|cr3|nef|arw|dng|orf|rw2|pef|srw|raf|avif)$/i.test(filename || '')) {
         try {
           const exifRes = await axios.get(`${SERVER_URL}/api/exif/${fileHash}`, {
             headers: config.headers,
@@ -1061,12 +1061,25 @@ export const stealthCloudRestoreCore = async ({
           });
           if (exifRes.status === 200 && exifRes.data?.exif) {
             // Apply EXIF to file using native module
+            // ONLY if the file doesn't already have EXIF — writeExif re-encodes
+            // the JPEG, destroying original file bytes & SHA256.
             if (ExifExtractor?.writeExif) {
+              let hasExif = false;
               try {
-                await ExifExtractor.writeExif(outPath, exifRes.data.exif);
-                console.log(`[EXIF] Applied EXIF to ${filename}`);
-              } catch (writeErr) {
-                console.log('[EXIF] Write failed (non-critical):', writeErr?.message);
+                if (ExifExtractor.extractExif) {
+                  const existing = await ExifExtractor.extractExif(outPath);
+                  if (existing?.captureTime || existing?.make) hasExif = true;
+                }
+              } catch (_) {}
+              if (!hasExif) {
+                try {
+                  await ExifExtractor.writeExif(outPath, exifRes.data.exif);
+                  console.log(`[EXIF] Applied EXIF to ${filename}`);
+                } catch (writeErr) {
+                  console.log('[EXIF] Write failed (non-critical):', writeErr?.message);
+                }
+              } else {
+                console.log(`[EXIF] File already has EXIF, skipping re-write: ${filename}`);
               }
             } else {
               console.log(`[EXIF] Retrieved EXIF for ${filename} (writeExif not available)`);
@@ -1354,7 +1367,7 @@ export const localRemoteRestoreCore = async ({
         } else {
           // Retrieve and apply EXIF if available (for cross-platform preservation)
           const fileHash = file.fileHash || computedHash;
-          if (fileHash && /\.(jpg|jpeg|png|heic|heif|gif|bmp|webp|tiff?)$/i.test(file.filename || '')) {
+          if (fileHash && /\.(jpg|jpeg|png|heic|heif|gif|bmp|webp|tiff?|raw|cr2|cr3|nef|arw|dng|orf|rw2|pef|srw|raf|avif)$/i.test(file.filename || '')) {
             try {
               const exifRes = await axios.get(`${SERVER_URL}/api/exif/${fileHash}`, {
                 headers: config.headers,
@@ -1364,14 +1377,27 @@ export const localRemoteRestoreCore = async ({
               await quickYield(); // Yield after network request
               if (exifRes.status === 200 && exifRes.data?.exif) {
                 // Apply EXIF to file using native module
+                // ONLY if the file doesn't already have EXIF — writeExif re-encodes
+                // the JPEG, destroying original file bytes & SHA256.
                 if (ExifExtractor?.writeExif) {
+                  const filePath = localUri.replace('file://', '');
+                  let hasExif = false;
                   try {
-                    const filePath = localUri.replace('file://', '');
-                    await ExifExtractor.writeExif(filePath, exifRes.data.exif);
-                    await quickYield(); // Yield after native module call
-                    console.log(`[EXIF] Applied EXIF to ${file.filename}`);
-                  } catch (writeErr) {
-                    console.log('[EXIF] Write failed (non-critical):', writeErr?.message);
+                    if (ExifExtractor.extractExif) {
+                      const existing = await ExifExtractor.extractExif(filePath);
+                      if (existing?.captureTime || existing?.make) hasExif = true;
+                    }
+                  } catch (_) {}
+                  if (!hasExif) {
+                    try {
+                      await ExifExtractor.writeExif(filePath, exifRes.data.exif);
+                      await quickYield(); // Yield after native module call
+                      console.log(`[EXIF] Applied EXIF to ${file.filename}`);
+                    } catch (writeErr) {
+                      console.log('[EXIF] Write failed (non-critical):', writeErr?.message);
+                    }
+                  } else {
+                    console.log(`[EXIF] File already has EXIF, skipping re-write: ${file.filename}`);
                   }
                 } else {
                   console.log(`[EXIF] Retrieved EXIF for ${file.filename} (writeExif not available)`);

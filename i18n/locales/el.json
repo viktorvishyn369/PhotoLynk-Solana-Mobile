@@ -52,7 +52,8 @@
 		"waitingForServer": "Αναμονή για τον διακομιστή...",
 		"retryingConnection": "Επανάληψη σύνδεσης...",
 		"stillConnecting": "Ακόμα συνδέεται...",
-		"almostThere": "Σχεδόν φτάσαμε..."
+		"almostThere": "Σχεδόν φτάσαμε...",
+		"confirmDeleteAll": "Confirm identity to delete all data"
 	},
 	"home": {
 		"backup": "Δημιουργία αντιγράφων ασφαλείας",
@@ -274,7 +275,9 @@
 		"scanningAnalyzingProgressPhotos": "Σάρωση: Ανάλυση {{current}} από {{total}} φωτογραφίες",
 		"switchingServer": "Αλλαγή διακομιστή...",
 		"syncHashing": "Συγχρονισμός: Προετοιμασία {{current}} από {{total}}: {{filename}}",
-		"deleting": "Διαγραφή..."
+		"deleting": "Διαγραφή...",
+		"backupRetrying": "Re-authenticating and retrying...",
+		"syncRetrying": "Re-authenticating and retrying..."
 	},
 	"restore": {
 		"title": "Επαναφορά φωτογραφιών",
@@ -900,7 +903,9 @@
 		"ok": "OK",
 		"cancel": "Ακύρωση",
 		"delete": "Διαγραφή",
-		"renew": "Ανανέωση"
+		"renew": "Ανανέωση",
+		"sessionExpired": "Session Expired",
+		"sessionExpiredRePair": "Your session token is invalid. Please re-pair with your desktop app via the QR code in Settings, or logout and login again."
 	},
 	"certificates": {
 		"title": "Certificates",

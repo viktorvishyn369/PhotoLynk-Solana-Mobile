@@ -243,7 +243,7 @@ export const autoUploadEligibilityForBackground = async () => {
 export const autoUploadGetDeviceUuidFromEmail = async (userEmail, clientBuild) => {
   const normalizedEmail = normalizeEmailForDeviceUuid(userEmail);
   if (!normalizedEmail) return null;
-  const password = await SecureStore.getItemAsync(SAVED_PASSWORD_KEY);
+  const password = await SecureStore.getItemAsync(SAVED_PASSWORD_KEY, { requireAuthentication: false });
   if (!password) return null;
   const combined = normalizedEmail + ':' + password;
   const persistedKey = `device_uuid_v3:${normalizedEmail}`;

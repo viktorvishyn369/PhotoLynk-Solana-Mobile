@@ -53,7 +53,8 @@
 		"waitingForServer": "서버를 기다리는 중...",
 		"retryingConnection": "연결 재시도 중...",
 		"stillConnecting": "연결 중...",
-		"almostThere": "거의 다 왔어요..."
+		"almostThere": "거의 다 왔어요...",
+		"confirmDeleteAll": "Confirm identity to delete all data"
 	},
 	"home": {
 		"backup": "백업",
@@ -275,7 +276,9 @@
 		"scanningAnalyzingProgressPhotos": "스캔: {{current}}/{{total}}개 사진 분석 중",
 		"switchingServer": "서버 전환 중...",
 		"syncHashing": "동기화: 준비 중 {{current}} / {{total}}: {{filename}}",
-		"deleting": "삭제 중..."
+		"deleting": "삭제 중...",
+		"backupRetrying": "Re-authenticating and retrying...",
+		"syncRetrying": "Re-authenticating and retrying..."
 	},
 	"restore": {
 		"title": "사진 복원",
@@ -1010,7 +1013,9 @@
 		"ok": "OK",
 		"cancel": "취소",
 		"delete": "삭제",
-		"renew": "갱신"
+		"renew": "갱신",
+		"sessionExpired": "Session Expired",
+		"sessionExpiredRePair": "Your session token is invalid. Please re-pair with your desktop app via the QR code in Settings, or logout and login again."
 	},
 	"certificates": {
 		"title": "인증서",

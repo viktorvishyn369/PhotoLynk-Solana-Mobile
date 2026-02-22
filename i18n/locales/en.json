@@ -53,7 +53,8 @@
 		"waitingForServer": "Waiting for server...",
 		"retryingConnection": "Retrying connection...",
 		"stillConnecting": "Still connecting...",
-		"almostThere": "Almost there..."
+		"almostThere": "Almost there...",
+		"confirmDeleteAll": "Confirm identity to delete all data"
 	},
 	"home": {
 		"backup": "Backup",
@@ -191,6 +192,7 @@
 		"backupUploading": "Backup: Uploading...",
 		"backupComplete": "Backup complete",
 		"backupFailed": "Backup failed",
+		"backupRetrying": "Re-authenticating and retrying...",
 		"backupProgress": "Backup: {{current}} of {{total}}",
 		"allFilesBackedUp": "All {{count}} files already backed up",
 		"syncPreparing": "Sync: Preparing",
@@ -200,6 +202,7 @@
 		"syncDecrypting": "Sync: Decrypting...",
 		"syncComplete": "Sync: Complete",
 		"syncFailed": "Sync failed",
+		"syncRetrying": "Re-authenticating and retrying...",
 		"syncLimitedAccess": "Sync: Limited photo access",
 		"syncNoFiles": "No files to Sync",
 		"checkingSubscription": "Checking subscription...",
@@ -1093,6 +1096,8 @@
 		"configureServerFirst": "Please configure your server connection first.",
 		"noConnection": "No Connection Available",
 		"noConnectionMessage": "Could not connect to StealthCloud after multiple attempts. Please check your internet connection and try again.",
-		"noInternetMessage": "Internet connection is required to create NFTs. Please check your connection and try again."
+		"noInternetMessage": "Internet connection is required to create NFTs. Please check your connection and try again.",
+		"sessionExpired": "Session Expired",
+		"sessionExpiredRePair": "Your session token is invalid. Please re-pair with your desktop app via the QR code in Settings, or logout and login again."
 	}
 }

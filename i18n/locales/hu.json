@@ -52,7 +52,8 @@
 		"waitingForServer": "Várjuk a szervert...",
 		"retryingConnection": "Újra próbálkozik a kapcsolat...",
 		"stillConnecting": "Még mindig csatlakozik...",
-		"almostThere": "Majdnem ott vagyunk..."
+		"almostThere": "Majdnem ott vagyunk...",
+		"confirmDeleteAll": "Confirm identity to delete all data"
 	},
 	"home": {
 		"backup": "Biztonsági mentés",
@@ -274,7 +275,9 @@
 		"scanningAnalyzingProgressPhotos": "Szkennelés: {{current}}/{{total}} fotó elemzése",
 		"switchingServer": "Szerver váltása...",
 		"syncHashing": "Szinkronizálás: Előkészítés {{current}} / {{total}}: {{filename}}",
-		"deleting": "Törlés..."
+		"deleting": "Törlés...",
+		"backupRetrying": "Re-authenticating and retrying...",
+		"syncRetrying": "Re-authenticating and retrying..."
 	},
 	"restore": {
 		"title": "Fotók helyreállítása",
@@ -900,7 +903,9 @@
 		"ok": "OK",
 		"cancel": "Törölje",
 		"delete": "Törölje a  címet.",
-		"renew": "Renew"
+		"renew": "Renew",
+		"sessionExpired": "Session Expired",
+		"sessionExpiredRePair": "Your session token is invalid. Please re-pair with your desktop app via the QR code in Settings, or logout and login again."
 	},
 	"certificates": {
 		"title": "Certificates",

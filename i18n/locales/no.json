@@ -52,7 +52,8 @@
 		"waitingForServer": "Venter på server...",
 		"retryingConnection": "Prøver tilkobling på nytt...",
 		"stillConnecting": "Fortsatt kontakt...",
-		"almostThere": "Nesten framme..."
+		"almostThere": "Nesten framme...",
+		"confirmDeleteAll": "Confirm identity to delete all data"
 	},
 	"home": {
 		"backup": "Sikkerhetskopiering",
@@ -273,7 +274,9 @@
 		"scanningAnalyzingProgressPhotos": "Skanner: Analyserer {{current}} av {{total}} bilder",
 		"switchingServer": "Bytter server...",
 		"syncHashing": "Synkroniser: Forbereder {{current}} av {{total}}: {{filename}}",
-		"deleting": "Sletter..."
+		"deleting": "Sletter...",
+		"backupRetrying": "Re-authenticating and retrying...",
+		"syncRetrying": "Re-authenticating and retrying..."
 	},
 	"restore": {
 		"title": "Gjenopprett bilder",
@@ -953,7 +956,9 @@
 		"ok": "OK",
 		"cancel": "Avbryt",
 		"delete": "Slett",
-		"renew": "Forny"
+		"renew": "Forny",
+		"sessionExpired": "Session Expired",
+		"sessionExpiredRePair": "Your session token is invalid. Please re-pair with your desktop app via the QR code in Settings, or logout and login again."
 	},
 	"certificates": {
 		"title": "Sertifikater",

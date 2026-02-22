@@ -52,7 +52,8 @@
 		"waitingForServer": "सर्वर का इंतजार...",
 		"retryingConnection": "कनेक्शन फिर से जोड़ रहा है...",
 		"stillConnecting": "अभी भी जुड़ रहा है...",
-		"almostThere": "लगभग वहाँ..."
+		"almostThere": "लगभग वहाँ...",
+		"confirmDeleteAll": "Confirm identity to delete all data"
 	},
 	"home": {
 		"backup": "बैकअप",
@@ -274,7 +275,9 @@
 		"scanningAnalyzingProgressPhotos": "स्कैनिंग: {{current}} में से {{total}} फ़ोटो का विश्लेषण",
 		"switchingServer": "सर्वर बदल रहा है...",
 		"syncHashing": "सिंक: तैयारी {{current}} में से {{total}}: {{filename}}",
-		"deleting": "हटाया जा रहा है..."
+		"deleting": "हटाया जा रहा है...",
+		"backupRetrying": "Re-authenticating and retrying...",
+		"syncRetrying": "Re-authenticating and retrying..."
 	},
 	"restore": {
 		"title": "फ़ोटो पुनर्स्थापित करें",
@@ -1007,7 +1010,9 @@
 		"ok": "OK",
 		"cancel": "रद्द करें",
 		"delete": "मिटायें",
-		"renew": "नवीनीकरण करें"
+		"renew": "नवीनीकरण करें",
+		"sessionExpired": "Session Expired",
+		"sessionExpiredRePair": "Your session token is invalid. Please re-pair with your desktop app via the QR code in Settings, or logout and login again."
 	},
 	"certificates": {
 		"title": "प्रमाणपत्र",

@@ -170,6 +170,17 @@ class ExifExtractorModule(reactContext: ReactApplicationContext) : ReactContextB
                     result.putString("lensModel", it.trim())
                 }
                 
+                // IPTC-equivalent fields from EXIF tags
+                exif.getAttribute(ExifInterface.TAG_IMAGE_DESCRIPTION)?.let {
+                    result.putString("iptcCaption", it.trim())
+                }
+                exif.getAttribute(ExifInterface.TAG_COPYRIGHT)?.let {
+                    result.putString("iptcCopyright", it.trim())
+                }
+                exif.getAttribute(ExifInterface.TAG_ARTIST)?.let {
+                    result.putString("iptcCreator", it.trim())
+                }
+                
                 promise.resolve(result)
             } catch (e: Exception) {
                 promise.reject("E_EXIF", "EXIF extraction failed: ${e.message}")
@@ -303,6 +314,52 @@ class ExifExtractorModule(reactContext: ReactApplicationContext) : ReactContextB
                 if (exifData.hasKey("orientation") && !exifData.isNull("orientation")) {
                     val orientation = exifData.getInt("orientation")
                     exif.setAttribute(ExifInterface.TAG_ORIENTATION, orientation.toString())
+                }
+                
+                // Lens info
+                if (exifData.hasKey("lensMake")) {
+                    exifData.getString("lensMake")?.let {
+                        exif.setAttribute(ExifInterface.TAG_LENS_MAKE, it)
+                    }
+                }
+                if (exifData.hasKey("lensModel")) {
+                    exifData.getString("lensModel")?.let {
+                        exif.setAttribute(ExifInterface.TAG_LENS_MODEL, it)
+                    }
+                }
+                
+                // Additional camera settings
+                if (exifData.hasKey("flash") && !exifData.isNull("flash")) {
+                    exif.setAttribute(ExifInterface.TAG_FLASH, exifData.getInt("flash").toString())
+                }
+                if (exifData.hasKey("whiteBalance") && !exifData.isNull("whiteBalance")) {
+                    exif.setAttribute(ExifInterface.TAG_WHITE_BALANCE, exifData.getInt("whiteBalance").toString())
+                }
+                if (exifData.hasKey("meteringMode") && !exifData.isNull("meteringMode")) {
+                    exif.setAttribute(ExifInterface.TAG_METERING_MODE, exifData.getInt("meteringMode").toString())
+                }
+                if (exifData.hasKey("exposureProgram") && !exifData.isNull("exposureProgram")) {
+                    exif.setAttribute(ExifInterface.TAG_EXPOSURE_PROGRAM, exifData.getInt("exposureProgram").toString())
+                }
+                if (exifData.hasKey("colorSpace") && !exifData.isNull("colorSpace")) {
+                    exif.setAttribute(ExifInterface.TAG_COLOR_SPACE, exifData.getInt("colorSpace").toString())
+                }
+                
+                // IPTC-equivalent EXIF tags
+                if (exifData.hasKey("iptcCaption")) {
+                    exifData.getString("iptcCaption")?.let {
+                        exif.setAttribute(ExifInterface.TAG_IMAGE_DESCRIPTION, it)
+                    }
+                }
+                if (exifData.hasKey("iptcCopyright")) {
+                    exifData.getString("iptcCopyright")?.let {
+                        exif.setAttribute(ExifInterface.TAG_COPYRIGHT, it)
+                    }
+                }
+                if (exifData.hasKey("iptcCreator")) {
+                    exifData.getString("iptcCreator")?.let {
+                        exif.setAttribute(ExifInterface.TAG_ARTIST, it)
+                    }
                 }
                 
                 exif.saveAttributes()

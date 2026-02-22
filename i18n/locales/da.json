@@ -52,7 +52,8 @@
 		"waitingForServer": "Venter på serveren...",
 		"retryingConnection": "Forsøger at oprette forbindelse igen...",
 		"stillConnecting": "Der er stadig forbindelse...",
-		"almostThere": "Vi er der næsten..."
+		"almostThere": "Vi er der næsten...",
+		"confirmDeleteAll": "Confirm identity to delete all data"
 	},
 	"home": {
 		"backup": "Backup",
@@ -274,7 +275,9 @@
 		"scanningAnalyzingProgressPhotos": "Scanner: Analyserer {{current}} af {{total}} fotos",
 		"switchingServer": "Skifter server...",
 		"syncHashing": "Synkronisering: Forbereder {{current}} af {{total}}: {{filename}}",
-		"deleting": "Sletter..."
+		"deleting": "Sletter...",
+		"backupRetrying": "Re-authenticating and retrying...",
+		"syncRetrying": "Re-authenticating and retrying..."
 	},
 	"restore": {
 		"title": "Gendan fotos",
@@ -954,7 +957,9 @@
 		"ok": "OK",
 		"cancel": "Annuller",
 		"delete": "Sletning",
-		"renew": "Fornyelse"
+		"renew": "Fornyelse",
+		"sessionExpired": "Session Expired",
+		"sessionExpiredRePair": "Your session token is invalid. Please re-pair with your desktop app via the QR code in Settings, or logout and login again."
 	},
 	"certificates": {
 		"title": "Certifikater",

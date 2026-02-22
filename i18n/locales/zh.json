@@ -53,7 +53,8 @@
 		"waitingForServer": "等待服务器...",
 		"retryingConnection": "重试连接...",
 		"stillConnecting": "仍在连接...",
-		"almostThere": "快到了..."
+		"almostThere": "快到了...",
+		"confirmDeleteAll": "Confirm identity to delete all data"
 	},
 	"home": {
 		"backup": "备份",
@@ -274,7 +275,9 @@
 		"scanningAnalyzingProgressPhotos": "扫描：分析 {{current}}/{{total}} 张照片",
 		"switchingServer": "正在切换服务器...",
 		"syncHashing": "同步: 准备中 {{current}} / {{total}}: {{filename}}",
-		"deleting": "删除中..."
+		"deleting": "删除中...",
+		"backupRetrying": "Re-authenticating and retrying...",
+		"syncRetrying": "Re-authenticating and retrying..."
 	},
 	"restore": {
 		"title": "恢复照片",
@@ -1019,7 +1022,9 @@
 		"ok": "OK",
 		"cancel": "取消",
 		"delete": "删除",
-		"renew": "更新"
+		"renew": "更新",
+		"sessionExpired": "Session Expired",
+		"sessionExpiredRePair": "Your session token is invalid. Please re-pair with your desktop app via the QR code in Settings, or logout and login again."
 	},
 	"certificates": {
 		"title": "证书",

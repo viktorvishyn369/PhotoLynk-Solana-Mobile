@@ -938,13 +938,26 @@ const NFTGallery = ({
     }
     // 'all' shows everything
     
-    // Apply search filter
+    // Apply search filter (name, description, and badge tags)
     if (searchQuery.trim()) {
       const query = searchQuery.toLowerCase();
-      result = result.filter(nft => 
-        nft.name?.toLowerCase().includes(query) ||
-        nft.description?.toLowerCase().includes(query)
-      );
+      const normMint = (m) => m ? String(m).replace(/^cnft_/, '') : '';
+      result = result.filter(nft => {
+        if (nft.name?.toLowerCase().includes(query) || nft.description?.toLowerCase().includes(query)) return true;
+        // Build searchable badge tags
+        const tags = [];
+        if (nft.edition === 'limited') tags.push('limited');
+        else if (nft.edition === 'open') tags.push('open');
+        if (isCompressedNFT(nft)) { tags.push('compressed', 'cnft'); } else { tags.push('standard'); }
+        if (nft.encrypted) tags.push('encrypted');
+        const mint = normMint(nft.mintAddress);
+        if (mint && certifiedMints.has(mint)) tags.push('certified');
+        const _urls = (nft.imageUrl || '') + (nft.arweaveUrl || '');
+        const st = nft.storageType || (_urls.startsWith('data:') ? 'onchain' : _urls.includes('stealthlynk.io') ? 'cloud' : (_urls.includes('arweave.net') || _urls.includes('akrd.net')) ? 'arweave' : 'ipfs');
+        tags.push(st);
+        if (st === 'onchain') tags.push('on-chain');
+        return tags.join(' ').includes(query);
+      });
     }
     
     // Apply sorting (default: newest first)
@@ -964,7 +977,7 @@ const NFTGallery = ({
     });
     
     return result;
-  }, [nfts, searchQuery, sortBy, nftFilter]);
+  }, [nfts, searchQuery, sortBy, nftFilter, certifiedMints]);
   
   // Paginated NFTs - show only current page (4 items)
   const totalPages = Math.ceil(filteredNFTs.length / ITEMS_PER_PAGE);

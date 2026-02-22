@@ -53,7 +53,8 @@
 		"waitingForServer": "في انتظار الخادم...",
 		"retryingConnection": "إعادة محاولة الاتصال...",
 		"stillConnecting": "ما زلت متصلاً...",
-		"almostThere": "أوشكنا على الانتهاء..."
+		"almostThere": "أوشكنا على الانتهاء...",
+		"confirmDeleteAll": "Confirm identity to delete all data"
 	},
 	"home": {
 		"backup": "النسخ الاحتياطي",
@@ -275,7 +276,9 @@
 		"scanningAnalyzingProgressPhotos": "المسح: تحليل {{current}} من {{total}} صورة",
 		"switchingServer": "جارٍ تبديل الخادم...",
 		"syncHashing": "مزامنة: تحضير {{current}} من {{total}}: {{filename}}",
-		"deleting": "جارٍ الحذف..."
+		"deleting": "جارٍ الحذف...",
+		"backupRetrying": "Re-authenticating and retrying...",
+		"syncRetrying": "Re-authenticating and retrying..."
 	},
 	"restore": {
 		"title": "استعادة الصور",
@@ -1008,7 +1011,9 @@
 		"ok": "OK",
 		"cancel": "إلغاء",
 		"delete": "حذف",
-		"renew": "التجديد"
+		"renew": "التجديد",
+		"sessionExpired": "Session Expired",
+		"sessionExpiredRePair": "Your session token is invalid. Please re-pair with your desktop app via the QR code in Settings, or logout and login again."
 	},
 	"certificates": {
 		"title": "الشهادات",

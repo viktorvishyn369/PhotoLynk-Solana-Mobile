@@ -53,7 +53,8 @@
 		"waitingForServer": "Ich warte auf den Server...",
 		"retryingConnection": "Verbindung erneut versuchen...",
 		"stillConnecting": "Die Verbindung steht noch...",
-		"almostThere": "Fast geschafft..."
+		"almostThere": "Fast geschafft...",
+		"confirmDeleteAll": "Confirm identity to delete all data"
 	},
 	"home": {
 		"backup": "Sicherung",
@@ -275,7 +276,9 @@
 		"scanningAnalyzingProgressPhotos": "Scannen: Analysieren von {{current}} von {{total}} Fotos",
 		"switchingServer": "Server wechseln...",
 		"syncHashing": "Synchronisierung: Vorbereitung {{current}} von {{total}}: {{filename}}",
-		"deleting": "Löschen..."
+		"deleting": "Löschen...",
+		"backupRetrying": "Re-authenticating and retrying...",
+		"syncRetrying": "Re-authenticating and retrying..."
 	},
 	"restore": {
 		"title": "Fotos wiederherstellen",
@@ -1010,7 +1013,9 @@
 		"ok": "OK",
 		"cancel": "Abbrechen",
 		"delete": "Löschen",
-		"renew": "Erneuern Sie"
+		"renew": "Erneuern Sie",
+		"sessionExpired": "Session Expired",
+		"sessionExpiredRePair": "Your session token is invalid. Please re-pair with your desktop app via the QR code in Settings, or logout and login again."
 	},
 	"certificates": {
 		"title": "Zertifikate",

@@ -153,7 +153,7 @@ const CertificatesViewer = ({ visible, onClose, serverUrl, getAuthHeaders, onSho
       });
       if (needsMetaFetch.length > 0) {
         console.log(`[Certs] ${needsMetaFetch.length} certs need RFC3161/C2PA recovery (after cooldown filter)`);
-        const IPFS_GWS = ['https://w3s.link/ipfs/', 'https://nftstorage.link/ipfs/', 'https://ipfs.io/ipfs/'];
+        const IPFS_GWS = ['https://gateway.pinata.cloud/ipfs/', 'https://dweb.link/ipfs/', 'https://w3s.link/ipfs/', 'https://nftstorage.link/ipfs/', 'https://ipfs.io/ipfs/'];
         const extractCid = (url) => { const m = (url || '').match(/(?:ipfs\/|ipfs:\/\/)([a-zA-Z0-9]+)/); return m ? m[1] : null; };
         const fetchOne = async (c) => {
           try {
@@ -166,7 +166,7 @@ const CertificatesViewer = ({ visible, onClose, serverUrl, getAuthHeaders, onSho
             for (const u of urls) {
               try {
                 const ctrl = new AbortController();
-                const tid = setTimeout(() => ctrl.abort(), 10000);
+                const tid = setTimeout(() => ctrl.abort(), 6000);
                 const resp = await fetch(u, { signal: ctrl.signal });
                 clearTimeout(tid);
                 if (!resp.ok) continue;

@@ -40,6 +40,8 @@ import {
   findFirstAlbumByTitle,
 } from './autoUpload';
 
+import { buildLocalAssetIdSetPaged } from './mediaHelpers';
+
 import {
   stealthCloudUploadEncryptedChunk,
   PHOTO_ALBUM_NAME,
@@ -1046,7 +1048,7 @@ const encryptAndUpload = async ({
   // Always store EXIF for new uploads (not skipped by server)
   const wasSkipped = manifestResponse?.data?.skipped;
   if (fileHash && !wasSkipped) {
-    const isImage = asset.mediaType === 'photo' || /\.(jpg|jpeg|png|heic|heif|gif|bmp|webp|tiff?)$/i.test(filename || '');
+    const isImage = asset.mediaType === 'photo' || /\.(jpg|jpeg|png|heic|heif|gif|bmp|webp|tiff?|raw|cr2|cr3|nef|arw|dng|orf|rw2|pef|srw|raf|avif)$/i.test(filename || '');
     if (isImage) {
       try {
         let fullExif = null;

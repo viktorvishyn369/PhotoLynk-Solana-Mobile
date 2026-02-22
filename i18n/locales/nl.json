@@ -53,7 +53,8 @@
 		"waitingForServer": "Wachten op server...",
 		"retryingConnection": "Verbinding opnieuw proberen...",
 		"stillConnecting": "Nog steeds aan het verbinden...",
-		"almostThere": "We zijn er bijna..."
+		"almostThere": "We zijn er bijna...",
+		"confirmDeleteAll": "Confirm identity to delete all data"
 	},
 	"home": {
 		"backup": "Back-up",
@@ -275,7 +276,9 @@
 		"scanningAnalyzingProgressPhotos": "Scannen: Analyseren van {{current}} van {{total}} foto's",
 		"switchingServer": "Server wisselen...",
 		"syncHashing": "Synchronisatie: Voorbereiden {{current}} van {{total}}: {{filename}}",
-		"deleting": "Verwijderen..."
+		"deleting": "Verwijderen...",
+		"backupRetrying": "Re-authenticating and retrying...",
+		"syncRetrying": "Re-authenticating and retrying..."
 	},
 	"restore": {
 		"title": "Foto's herstellen",
@@ -1008,7 +1011,9 @@
 		"ok": "OK",
 		"cancel": "Annuleren",
 		"delete": "Verwijder",
-		"renew": "Vernieuw"
+		"renew": "Vernieuw",
+		"sessionExpired": "Session Expired",
+		"sessionExpiredRePair": "Your session token is invalid. Please re-pair with your desktop app via the QR code in Settings, or logout and login again."
 	},
 	"certificates": {
 		"title": "Certificaten",

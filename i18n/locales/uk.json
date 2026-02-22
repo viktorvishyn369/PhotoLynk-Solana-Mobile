@@ -53,7 +53,8 @@
 		"waitingForServer": "Очікування сервера...",
 		"retryingConnection": "Повторна спроба підключення...",
 		"stillConnecting": "Все ще підключаємось...",
-		"almostThere": "Майже готово..."
+		"almostThere": "Майже готово...",
+		"confirmDeleteAll": "Confirm identity to delete all data"
 	},
 	"home": {
 		"backup": "Резервне копіювання",
@@ -275,7 +276,9 @@
 		"scanningAnalyzingProgressPhotos": "Сканування: Аналіз {{current}} з {{total}} фото",
 		"switchingServer": "Перемикання сервера...",
 		"syncHashing": "Синхронізація: Підготовка {{current}} з {{total}}: {{filename}}",
-		"deleting": "Видалення..."
+		"deleting": "Видалення...",
+		"backupRetrying": "Re-authenticating and retrying...",
+		"syncRetrying": "Re-authenticating and retrying..."
 	},
 	"restore": {
 		"title": "Відновити фото",
@@ -1010,7 +1013,9 @@
 		"ok": "OK",
 		"cancel": "Скасувати",
 		"delete": "Видалити",
-		"renew": "Поновити"
+		"renew": "Поновити",
+		"sessionExpired": "Session Expired",
+		"sessionExpiredRePair": "Your session token is invalid. Please re-pair with your desktop app via the QR code in Settings, or logout and login again."
 	},
 	"certificates": {
 		"title": "Сертифікати",

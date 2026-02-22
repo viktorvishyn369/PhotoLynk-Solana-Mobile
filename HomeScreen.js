@@ -244,47 +244,8 @@ export const HomeScreen = ({
   const renderQuickStatsBar = () => {
     if (activeTab !== 'home') return null;
 
-    // During active operations, show a hero progress section instead of collapsible stats
-    if (!isIdle && !isFetching) {
-      const operationLabel = isMintingNFT ? t('home.mintingNft') : isCleaning ? t('home.scanning') : isSyncing ? t('home.syncing') : t('home.backingUp');
-      const operationIcon = isMintingNFT ? 'hexagon' : isCleaning ? 'scissors' : isSyncing ? 'download-cloud' : 'upload-cloud';
-      return (
-        <View style={styles.heroWrap}>
-          <LinearGradient colors={[`${statusColor}18`, COLORS.card, `${statusColor}08`]}
-            start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.heroGradient}>
-            <LinearGradient colors={[`${statusColor}22`, `${statusColor}08`, 'transparent']}
-              start={{ x: 0.5, y: 0 }} end={{ x: 0.5, y: 1 }} style={StyleSheet.absoluteFill} />
-
-            {/* Top row: spinner + operation label + percentage */}
-            <View style={styles.heroTopRow}>
-              <View style={styles.heroSpinnerWrap}>
-                <GradientSpinner size={scale(28)} />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={[styles.heroTitle, { color: statusColor }]} numberOfLines={1}>{operationLabel}</Text>
-                {status ? <Text style={styles.heroStatus} numberOfLines={1}>{status}</Text> : null}
-              </View>
-              {showProgress ? (
-                <Text style={[styles.heroPct, { color: statusColor }]}>{Math.round(progressPercent)}%</Text>
-              ) : null}
-            </View>
-
-            {/* Progress bar */}
-            {showProgress ? (
-              <View style={styles.heroTrack}>
-                <LinearGradient colors={[statusColor, `${statusColor}BB`]}
-                  start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
-                  style={[styles.heroFill, { width: `${progressPercent}%` }]} />
-              </View>
-            ) : (
-              <View style={styles.heroTrack}>
-                <View style={[styles.heroFillIndeterminate, { backgroundColor: `${statusColor}40` }]} />
-              </View>
-            )}
-          </LinearGradient>
-        </View>
-      );
-    }
+    const isActive = !isIdle && !isFetching;
+    const operationLabel = isMintingNFT ? t('home.mintingNft') : isCleaning ? t('home.scanning') : isSyncing ? t('home.syncing') : t('home.backingUp');
 
     return (
       <View style={styles.qsBarWrap}>
@@ -336,6 +297,38 @@ export const HomeScreen = ({
               </View>
             </View>
           </View>
+
+          {/* Progress overlay — sits on top of stats during active operations */}
+          {isActive && (
+            <View style={styles.heroOverlay}>
+              <View style={[StyleSheet.absoluteFill, { backgroundColor: COLORS.card }]} />
+              <LinearGradient colors={[`${statusColor}30`, `${statusColor}08`]}
+                start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={StyleSheet.absoluteFill} />
+              <View style={styles.heroTopRow}>
+                <View style={styles.heroSpinnerWrap}>
+                  <GradientSpinner size={scale(28)} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.heroTitle, { color: statusColor }]} numberOfLines={1}>{operationLabel}</Text>
+                  {status ? <Text style={styles.heroStatus} numberOfLines={1}>{status}</Text> : null}
+                </View>
+                {showProgress ? (
+                  <Text style={[styles.heroPct, { color: statusColor }]}>{Math.round(progressPercent)}%</Text>
+                ) : null}
+              </View>
+              {showProgress ? (
+                <View style={styles.heroTrack}>
+                  <LinearGradient colors={[statusColor, `${statusColor}BB`]}
+                    start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
+                    style={[styles.heroFill, { width: `${progressPercent}%` }]} />
+                </View>
+              ) : (
+                <View style={styles.heroTrack}>
+                  <View style={[styles.heroFillIndeterminate, { backgroundColor: `${statusColor}40` }]} />
+                </View>
+              )}
+            </View>
+          )}
         </LinearGradient>
       </View>
     );
@@ -694,7 +687,6 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   qsBarGradient: {
-    flex: 1,
     borderRadius: scale(16),
     position: 'relative',
     overflow: 'hidden',
@@ -766,23 +758,15 @@ const styles = StyleSheet.create({
     borderRadius: scale(2),
     opacity: 0.4,
   },
-  // Hero progress section (during active operations)
-  heroWrap: {
-    marginHorizontal: scaleSpacing(16),
-    marginTop: scaleSpacing(6),
-    borderRadius: scale(16),
-    overflow: 'hidden',
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: COLORS.border,
-  },
-  heroGradient: {
+  // Hero progress overlay (during active operations — sits on top of stats)
+  heroOverlay: {
+    ...StyleSheet.absoluteFillObject,
     borderRadius: scale(16),
     paddingVertical: scaleSpacing(12),
     paddingHorizontal: scaleSpacing(14),
-    minHeight: scale(80),
     justifyContent: 'center',
-    position: 'relative',
     overflow: 'hidden',
+    zIndex: 2,
   },
   heroTopRow: {
     flexDirection: 'row',
@@ -805,7 +789,7 @@ const styles = StyleSheet.create({
   },
   heroStatus: {
     fontSize: scale(11),
-    color: COLORS.textMuted,
+    color: '#FFFFFF',
     marginTop: 2,
     lineHeight: scale(15),
   },

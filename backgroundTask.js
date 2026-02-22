@@ -175,24 +175,19 @@ export const getStealthCloudMasterKey = async () => {
     // Ignore
   }
 
-  // Try to derive from credentials (this path is mainly for login flow)
+  // Try to derive from credentials WITHOUT triggering biometric.
+  // Biometric should only happen at login/app-launch, not during backup/sync.
   const email = await SecureStore.getItemAsync('user_email');
   let password = null;
-  // Password is stored with key 'user_password_v1' (SAVED_PASSWORD_KEY from autoUpload.js)
-  // On iOS it may be stored with requireAuthentication: true, so try without auth first
+  // Password may be stored with requireAuthentication: true (biometric-protected).
+  // On Android, even a plain getItemAsync can trigger biometric for such keys.
+  // Use requireAuthentication: false explicitly to avoid bio prompt.
   try {
-    password = await SecureStore.getItemAsync('user_password_v1');
+    password = await SecureStore.getItemAsync('user_password_v1', {
+      requireAuthentication: false
+    });
   } catch (e) {
-    // Ignore
-  }
-  if (!password) {
-    try {
-      password = await SecureStore.getItemAsync('user_password_v1', {
-        requireAuthentication: false
-      });
-    } catch (e) {
-      // Ignore
-    }
+    // Ignore — key may not be readable without biometric on this device
   }
 
   console.log('StealthCloud masterKey: email=', email ? 'present' : 'missing', 'password=', password ? 'present' : 'missing');
@@ -784,7 +779,7 @@ export const autoUploadStealthCloudUploadOneAsset = async ({
   logStep('STEP9', 'Storing full EXIF (fire-and-forget)');
   // Store full EXIF to server for universal cross-platform preservation (matches manual backup)
   // Fire-and-forget, non-blocking - store full EXIF to server
-  const isImageForExif = asset.mediaType === 'photo' || /\.(jpg|jpeg|png|heic|heif|gif|bmp|webp|tiff?)$/i.test(filename || '');
+  const isImageForExif = asset.mediaType === 'photo' || /\.(jpg|jpeg|png|heic|heif|gif|bmp|webp|tiff?|raw|cr2|cr3|nef|arw|dng|orf|rw2|pef|srw|raf|avif)$/i.test(filename || '');
   if (exactFileHash && isImageForExif) {
     try {
       let fullExif = null;

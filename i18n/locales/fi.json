@@ -52,7 +52,8 @@
 		"waitingForServer": "Odotamme palvelinta...",
 		"retryingConnection": "Yritän uudelleen yhteyttä...",
 		"stillConnecting": "Yhdistän edelleen...",
-		"almostThere": "Melkein perillä..."
+		"almostThere": "Melkein perillä...",
+		"confirmDeleteAll": "Confirm identity to delete all data"
 	},
 	"home": {
 		"backup": "Varmuuskopiointi",
@@ -274,7 +275,9 @@
 		"scanningAnalyzingProgressPhotos": "Skannaus: Analysoidaan {{current}}/{{total}} kuvaa",
 		"switchingServer": "Vaihdetaan palvelinta...",
 		"syncHashing": "Synkronointi: Valmistellaan {{current}} / {{total}}: {{filename}}",
-		"deleting": "Poistetaan..."
+		"deleting": "Poistetaan...",
+		"backupRetrying": "Re-authenticating and retrying...",
+		"syncRetrying": "Re-authenticating and retrying..."
 	},
 	"restore": {
 		"title": "Palauta valokuvat",
@@ -954,7 +957,9 @@
 		"ok": "OK",
 		"cancel": "Peruuta",
 		"delete": "Poista",
-		"renew": "Renew"
+		"renew": "Renew",
+		"sessionExpired": "Session Expired",
+		"sessionExpiredRePair": "Your session token is invalid. Please re-pair with your desktop app via the QR code in Settings, or logout and login again."
 	},
 	"certificates": {
 		"title": "Sertifikaatit",
