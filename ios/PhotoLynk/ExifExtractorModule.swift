@@ -362,4 +362,77 @@ class ExifExtractorModule: NSObject {
       }
     }
   }
+  
+  @objc
+  func getOriginalResource(_ assetId: String, resolver resolve: @escaping RCTPromiseResolveBlock, rejecter reject: @escaping RCTPromiseRejectBlock) {
+    DispatchQueue.global(qos: .userInitiated).async {
+      // Strip ph:// prefix if present
+      let cleanId = assetId.replacingOccurrences(of: "ph://", with: "")
+      
+      let fetchResult = PHAsset.fetchAssets(withLocalIdentifiers: [cleanId], options: nil)
+      guard let asset = fetchResult.firstObject else {
+        reject("E_NOT_FOUND", "Asset not found: \(assetId)", nil)
+        return
+      }
+      
+      let resources = PHAssetResource.assetResources(for: asset)
+      
+      // Look for alternatePhoto first (where DNG/RAW is stored), then fullSizePhoto, then photo
+      var targetResource: PHAssetResource? = nil
+      for resource in resources {
+        if resource.type == .alternatePhoto {
+          targetResource = resource
+          break
+        }
+      }
+      if targetResource == nil {
+        for resource in resources {
+          if resource.type == .fullSizePhoto {
+            targetResource = resource
+            break
+          }
+        }
+      }
+      if targetResource == nil {
+        // No alternate/fullSize — return nil so JS falls back to normal path
+        resolve(NSNull())
+        return
+      }
+      
+      let resource = targetResource!
+      let originalFilename = resource.originalFilename
+      let ext = (originalFilename as NSString).pathExtension.lowercased()
+      
+      // Only use this path for RAW formats
+      let rawExtensions = ["dng", "cr2", "cr3", "nef", "arw", "orf", "rw2", "pef", "srw", "raf"]
+      if !rawExtensions.contains(ext) {
+        // Not a RAW file — return nil so JS uses normal path
+        resolve(NSNull())
+        return
+      }
+      
+      // Export to temp file
+      let tmpDir = NSTemporaryDirectory()
+      let tmpPath = (tmpDir as NSString).appendingPathComponent("raw_export_\(cleanId).\(ext)")
+      let tmpURL = URL(fileURLWithPath: tmpPath)
+      
+      // Remove existing temp file
+      try? FileManager.default.removeItem(at: tmpURL)
+      
+      let options = PHAssetResourceRequestOptions()
+      options.isNetworkAccessAllowed = true
+      
+      PHAssetResourceManager.default().writeData(for: resource, toFile: tmpURL, options: options) { error in
+        if let error = error {
+          reject("E_EXPORT", "Failed to export RAW resource: \(error.localizedDescription)", nil)
+        } else {
+          resolve([
+            "filePath": tmpPath,
+            "filename": originalFilename,
+            "isRaw": true
+          ])
+        }
+      }
+    }
+  }
 }

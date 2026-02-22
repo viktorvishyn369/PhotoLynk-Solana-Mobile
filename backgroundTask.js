@@ -42,6 +42,26 @@ export const AUTO_UPLOAD_CURSOR_KEY = 'auto_upload_cursor_v1';
 
 // Resolve readable file path (stages asset if needed)
 export const resolveReadableFilePath = async ({ assetId, assetInfo }) => {
+  // iOS: try to get the original RAW/DNG resource from the photo library
+  // localUri returns the JPEG preview for RAW+JPEG assets; getOriginalResource
+  // uses PHAssetResource to extract the actual DNG/RAW bytes.
+  if (Platform.OS === 'ios' && assetId) {
+    try {
+      const { NativeModules } = require('react-native');
+      const ExifExtractor = NativeModules.ExifExtractor;
+      if (ExifExtractor?.getOriginalResource) {
+        const rawResult = await ExifExtractor.getOriginalResource(assetId);
+        if (rawResult && rawResult.filePath) {
+          console.log(`[Resolve] Got original RAW resource: ${rawResult.filename}`);
+          return { filePath: rawResult.filePath, tmpCopied: true, tmpUri: rawResult.filePath, isRaw: true, rawFilename: rawResult.filename };
+        }
+      }
+    } catch (e) {
+      // Non-critical — fall through to normal path
+      console.log('[Resolve] getOriginalResource failed (non-critical):', e?.message);
+    }
+  }
+
   let localUri = (assetInfo && (assetInfo.localUri || assetInfo.uri)) || null;
   
   // If no localUri, try to get it via getAssetInfoAsync (needed for Android)
