@@ -114,14 +114,14 @@ const InfoRow = ({ icon, label, value, onPress, glassModeEnabled }) => (
     activeOpacity={onPress ? 0.7 : 1}
   >
     <View style={styles.infoRowIcon}>
-      <Feather name={icon} size={scale(18)} color="#888888" />
+      <Feather name={icon} size={scale(18)} color="#8888A0" />
     </View>
     <View style={styles.infoRowContent}>
       <Text style={styles.infoRowLabel}>{label}</Text>
       <Text style={styles.infoRowValue} numberOfLines={1}>{value}</Text>
     </View>
     {onPress && (
-      <Feather name="copy" size={scale(16)} color="#666666" />
+      <Feather name="copy" size={scale(16)} color="#55556A" />
     )}
   </TouchableOpacity>
 );
@@ -140,7 +140,7 @@ const LinkRow = ({ icon, title, subtitle, onPress, glassModeEnabled }) => (
       <Text style={styles.linkRowTitle}>{title}</Text>
       {subtitle && <Text style={styles.linkRowSubtitle}>{subtitle}</Text>}
     </View>
-    <Feather name="external-link" size={scale(16)} color="#666666" />
+    <Feather name="external-link" size={scale(16)} color="#55556A" />
   </TouchableOpacity>
 );
 
@@ -265,17 +265,7 @@ export const InfoScreen = ({
   const usageData = getUsageData();
 
   return (
-    <View style={styles.container}>
-      {/* Header */}
-      <View style={styles.header}>
-        <TouchableOpacity onPress={onBack} style={styles.backButton}>
-          <Text style={styles.backButtonText}>{t('common.back')}</Text>
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>{t('info.title')}</Text>
-        <View style={{ width: scaleSpacing(60) }} />
-      </View>
-
-      <ScrollView
+    <ScrollView
         style={styles.scrollView}
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
@@ -285,19 +275,42 @@ export const InfoScreen = ({
         contentInsetAdjustmentBehavior="automatic"
       >
         <View style={styles.sectionsContainer}>
-        {/* App Info - Two column layout */}
+
+        {/* Resources — show at top for local/remote (info page is otherwise empty) */}
+        {serverType !== 'stealthcloud' && (
+          <View style={styles.resourcesSection}>
+            <Text style={[styles.sectionTitle, { marginTop: 0 }]}>{t('info.resources')}</Text>
+            <View style={styles.resourcesRow}>
+            <TouchableOpacity style={styles.resourceCard} onPress={handleOpenGitHub} activeOpacity={0.7}>
+              <View style={styles.resourceCardIcon}><Feather name="github" size={scale(18)} color="#03E1FF" /></View>
+              <Text style={styles.resourceCardTitle} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>{t('info.github')}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.resourceCard} onPress={handleOpenSupport} activeOpacity={0.7}>
+              <View style={[styles.resourceCardIcon, { backgroundColor: 'rgba(16, 185, 129, 0.15)' }]}><Feather name="mail" size={scale(18)} color="#10B981" /></View>
+              <Text style={styles.resourceCardTitle} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>{t('info.support')}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.resourceCard} onPress={handleOpenDeleteAccount} activeOpacity={0.7}>
+              <View style={[styles.resourceCardIcon, { backgroundColor: 'rgba(239, 68, 68, 0.15)' }]}><Feather name="trash-2" size={scale(18)} color="#EF4444" /></View>
+              <Text style={styles.resourceCardTitle} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>{t('info.deleteAccount')}</Text>
+            </TouchableOpacity>
+            </View>
+          </View>
+        )}
+
+        {/* App Info - hidden (version now in header, UUID kept for functionality) */}
+        <View style={{ display: 'none' }}>
         <Text style={styles.sectionTitle}>{t('info.app')}</Text>
         <Card glassModeEnabled={glassModeEnabled}>
           <View style={styles.appInfoGrid}>
             <View style={styles.appInfoItem}>
-              <Feather name="smartphone" size={scale(16)} color="#888888" />
+              <Feather name="smartphone" size={scale(16)} color="#8888A0" />
               <View>
                 <Text style={styles.appInfoLabel}>{appDisplayName}</Text>
                 <Text style={styles.appInfoSubtitle}>stealthlynk.io</Text>
               </View>
             </View>
             <View style={styles.appInfoItem}>
-              <Feather name="tag" size={scale(16)} color="#888888" />
+              <Feather name="tag" size={scale(16)} color="#8888A0" />
               <Text style={styles.appInfoLabel}>v{appVersion}</Text>
             </View>
           </View>
@@ -309,13 +322,14 @@ export const InfoScreen = ({
                 onPress={handleCopyDeviceId}
                 activeOpacity={0.7}
               >
-                <Feather name="hash" size={scale(16)} color="#888888" />
+                <Feather name="hash" size={scale(16)} color="#8888A0" />
                 <Text style={styles.deviceIdText} numberOfLines={1}>{deviceUuid}</Text>
-                <Feather name="copy" size={scale(14)} color="#666666" />
+                <Feather name="copy" size={scale(14)} color="#55556A" />
               </TouchableOpacity>
             </>
           )}
         </Card>
+        </View>
 
         {/* StealthCloud Storage */}
         {serverType === 'stealthcloud' && (
@@ -423,8 +437,8 @@ export const InfoScreen = ({
 
         </View>
 
-        {/* Resources - pushed to bottom */}
-        <View style={styles.resourcesSection}>
+        {/* Resources - pushed to bottom (stealthcloud only; local/remote shows at top) */}
+        {serverType === 'stealthcloud' && <View style={styles.resourcesSection}>
           <Text style={[styles.sectionTitle, { marginTop: 0 }]}>{t('info.resources')}</Text>
           <View style={styles.resourcesRow}>
           <TouchableOpacity
@@ -460,9 +474,8 @@ export const InfoScreen = ({
             <Text style={styles.resourceCardTitle} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>{t('info.deleteAccount')}</Text>
           </TouchableOpacity>
           </View>
-        </View>
+        </View>}
       </ScrollView>
-    </View>
   );
 };
 
@@ -470,7 +483,7 @@ export const InfoScreen = ({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0A0A0A',
+    backgroundColor: '#060608',
   },
   header: {
     flexDirection: 'row',
@@ -479,7 +492,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: scaleSpacing(20),
     paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 24) + 8 : Math.min(60, SCREEN_HEIGHT * 0.04 + 20),
     paddingBottom: Platform.OS === 'android' ? 8 : scaleSpacing(16),
-    backgroundColor: '#0A0A0A',
+    backgroundColor: '#060608',
   },
   headerTitle: {
     fontSize: scale(22),
@@ -514,18 +527,18 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: scale(12),
     fontWeight: '600',
-    color: '#888888',
+    color: '#8888A0',
     textTransform: 'uppercase',
-    letterSpacing: 1,
+    letterSpacing: 1.2,
     marginTop: scaleSpacing(16),
     marginBottom: scaleSpacing(8),
     marginLeft: scaleSpacing(4),
   },
   card: {
-    backgroundColor: '#1A1A1A',
+    backgroundColor: '#111114',
     borderRadius: scale(16),
     borderWidth: 1,
-    borderColor: '#2A2A2A',
+    borderColor: '#252530',
     overflow: 'hidden',
   },
   cardGlass: {
@@ -535,12 +548,12 @@ const styles = StyleSheet.create({
   },
   divider: {
     height: StyleSheet.hairlineWidth,
-    backgroundColor: '#2A2A2A',
+    backgroundColor: '#252530',
     marginLeft: scaleSpacing(56),
   },
   dividerFull: {
     height: StyleSheet.hairlineWidth,
-    backgroundColor: '#2A2A2A',
+    backgroundColor: '#252530',
   },
   // App Info Grid
   appInfoGrid: {
@@ -562,7 +575,7 @@ const styles = StyleSheet.create({
   appInfoSubtitle: {
     fontSize: scale(11),
     fontWeight: '400',
-    color: '#666666',
+    color: '#55556A',
     marginTop: scaleSpacing(1),
   },
   deviceIdRow: {
@@ -575,7 +588,7 @@ const styles = StyleSheet.create({
   deviceIdText: {
     flex: 1,
     fontSize: scale(13),
-    color: '#888888',
+    color: '#8888A0',
     fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
   },
   // Info Row
@@ -598,7 +611,7 @@ const styles = StyleSheet.create({
   },
   infoRowLabel: {
     fontSize: scale(13),
-    color: '#888888',
+    color: '#8888A0',
   },
   infoRowValue: {
     fontSize: scale(16),
@@ -617,10 +630,10 @@ const styles = StyleSheet.create({
     minWidth: scale(90),
     flexDirection: 'column',
     alignItems: 'center',
-    backgroundColor: '#1A1A1A',
+    backgroundColor: '#111114',
     borderRadius: scale(12),
     borderWidth: 1,
-    borderColor: '#2A2A2A',
+    borderColor: '#252530',
     paddingVertical: scaleSpacing(12),
     paddingHorizontal: scaleSpacing(8),
     gap: scaleSpacing(6),
@@ -649,7 +662,7 @@ const styles = StyleSheet.create({
   },
   loadingText: {
     fontSize: scale(14),
-    color: '#888888',
+    color: '#8888A0',
   },
   errorContainer: {
     flexDirection: 'row',
@@ -674,7 +687,7 @@ const styles = StyleSheet.create({
   },
   usageStatLabel: {
     fontSize: scale(12),
-    color: '#888888',
+    color: '#8888A0',
     marginBottom: scaleSpacing(4),
   },
   usageStatValue: {
@@ -726,13 +739,13 @@ const styles = StyleSheet.create({
   planCard: {
     width: is7InchOrLarger ? '23%' : '48%',
     marginBottom: scaleSpacing(6),
-    backgroundColor: '#1E1E1E',
+    backgroundColor: '#18181C',
     borderRadius: scale(10),
     paddingVertical: scaleSpacing(8),
     paddingHorizontal: scaleSpacing(6),
     alignItems: 'center',
     borderWidth: 1.5,
-    borderColor: '#333333',
+    borderColor: '#252530',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.15,
@@ -740,7 +753,7 @@ const styles = StyleSheet.create({
     elevation: 3,
   },
   planCardCurrent: {
-    backgroundColor: '#0D2A2E',
+    backgroundColor: 'rgba(3,225,255,0.08)',
     borderColor: '#03E1FF',
     borderWidth: 2,
   },
@@ -760,7 +773,7 @@ const styles = StyleSheet.create({
   planCardPrice: {
     fontSize: scale(12),
     fontWeight: '500',
-    color: '#AAAAAA',
+    color: '#8888A0',
     marginTop: scaleSpacing(3),
   },
   planCardPriceCurrent: {
@@ -768,7 +781,7 @@ const styles = StyleSheet.create({
   },
   planCardMeta: {
     fontSize: scale(9),
-    color: '#666666',
+    color: '#55556A',
     marginTop: scaleSpacing(2),
     fontWeight: '400',
   },
@@ -779,7 +792,7 @@ const styles = StyleSheet.create({
   },
   footerText: {
     fontSize: scale(13),
-    color: '#666666',
+    color: '#55556A',
   },
 });
 

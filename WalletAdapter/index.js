@@ -70,6 +70,23 @@ let currentAdapter = null;
 let connectedAddress = null;
 let isInitialized = false;
 
+// Subscribers for wallet change events
+const walletChangeListeners = new Set();
+
+export const onWalletChanged = (listener) => {
+  if (typeof listener !== 'function') return () => {};
+  walletChangeListeners.add(listener);
+  return () => walletChangeListeners.delete(listener);
+};
+
+const emitWalletChanged = (nextAddress, prevAddress) => {
+  try {
+    for (const l of walletChangeListeners) {
+      try { l(nextAddress, prevAddress); } catch (_) {}
+    }
+  } catch (_) {}
+};
+
 // ============================================================================
 // INITIALIZATION
 // ============================================================================
@@ -133,10 +150,14 @@ const restoreConnection = async () => {
     const storedAddress = await SecureStore.getItemAsync(WALLET_STORAGE_KEY);
     
     if (storedType && storedAddress) {
+      const prev = connectedAddress;
       currentWalletType = storedType;
       connectedAddress = storedAddress;
       currentAdapter = getAdapterForType(storedType);
       console.log('[WalletAdapter] Restored connection:', storedType, storedAddress);
+      if (storedAddress && storedAddress !== prev) {
+        emitWalletChanged(storedAddress, prev);
+      }
     }
   } catch (e) {
     console.log('[WalletAdapter] Could not restore connection:', e.message);
@@ -258,6 +279,7 @@ export const connectWallet = async (walletType) => {
   }
   
   try {
+    const prev = connectedAddress;
     const result = await adapter.connect();
     
     if (result.success) {
@@ -270,6 +292,10 @@ export const connectWallet = async (walletType) => {
       await SecureStore.setItemAsync(WALLET_STORAGE_KEY, result.address);
       
       console.log('[WalletAdapter] Connected:', result.address);
+
+      if (result.address && result.address !== prev) {
+        emitWalletChanged(result.address, prev);
+      }
     }
     
     return result;

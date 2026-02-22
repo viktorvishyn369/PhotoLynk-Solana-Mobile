@@ -91,9 +91,16 @@ android {
         applicationId 'com.photolynk.solana'
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 59
-        versionName "1.5.8"
+        versionCode 60
+        versionName "2.0.0"
         resConfigs "en", "en-rGB", "ar", "bg", "cs", "da", "de", "el", "es", "et", "fi", "fr", "hi", "hr", "hu", "in", "it", "ja", "ko", "lt", "lv", "nl", "no", "pl", "pt", "pt-rBR", "ro", "ru", "sv", "tr", "uk", "zh"
+        externalNativeBuild {
+            cmake {
+                arguments += "-DCMAKE_SHARED_LINKER_FLAGS=-Wl,--page-size=16384"
+                arguments += "-DCMAKE_EXE_LINKER_FLAGS=-Wl,--page-size=16384"
+                arguments += "-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON"
+            }
+        }
     }
     signingConfigs {
         debug {

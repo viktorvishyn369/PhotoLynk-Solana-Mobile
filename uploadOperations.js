@@ -12,11 +12,13 @@ import { normalizeFilenameForCompare, getMimeFromFilename, detectRealFormatFromM
 import { createConcurrencyLimiter } from './backgroundTask';
 import { buildLocalAssetIdSetPaged, fetchAllServerFilesPaged } from './mediaHelpers';
 import { PHOTO_ALBUM_NAME, LEGACY_PHOTO_ALBUM_NAME } from './backupManager';
-import { findFirstAlbumByTitle } from './autoUpload';
+import { findFirstAlbumByTitle, SAVED_PASSWORD_KEY } from './autoUpload';
 import { computePerceptualHash, computeExactFileHash, findPerceptualHashMatch } from './duplicateScanner';
 import { getCachedHash, setCachedHash, loadHashCache, flushHashCache } from './hashCache';
 import { extractFullExif } from './exifExtractor';
 import axios from 'axios';
+import * as SecureStore from 'expo-secure-store';
+import { getDeviceUUID } from './authHelpers';
 
 // dHash threshold for backup dedup (6 bits = ~9% tolerance for cross-platform differences)
 const BACKUP_DHASH_THRESHOLD = 3;
@@ -96,9 +98,30 @@ export const localRemoteBackupCore = async ({
     // Load hash cache for faster dedup (avoids re-hashing files)
     await loadHashCache();
 
-    // 1. Get Server List with hash metadata (for cross-device dedup)
-    const config = await getAuthHeaders();
+    // Re-authenticate against the target server to ensure token matches its JWT_SECRET.
+    // The stored auth_token may be from StealthCloud (different secret) if user switched modes.
     const SERVER_URL = getServerUrl();
+    let config = await getAuthHeaders();
+    try {
+      const storedEmail = await SecureStore.getItemAsync('user_email');
+      const storedPassword = await SecureStore.getItemAsync(SAVED_PASSWORD_KEY);
+      if (storedEmail && storedPassword) {
+        const deviceId = await getDeviceUUID(storedEmail, storedPassword);
+        const loginRes = await axios.post(`${SERVER_URL}/api/login`, {
+          email: storedEmail,
+          password: storedPassword,
+          device_uuid: deviceId,
+          device_name: Platform.OS + ' ' + Platform.Version,
+        }, { timeout: 10000 });
+        if (loginRes.data && loginRes.data.token) {
+          const freshToken = loginRes.data.token;
+          config = { headers: { Authorization: `Bearer ${freshToken}`, 'X-Device-UUID': deviceId } };
+          console.log('[Backup] Re-authenticated against target server');
+        }
+      }
+    } catch (reAuthErr) {
+      console.log('[Backup] Re-auth failed, using existing token:', reAuthErr.message);
+    }
     console.log('Using server URL for backup:', SERVER_URL);
     onStatus(t('status.fetchingServerFilesSimple', { fetched: 0 }));
     onProgress(0.01);
@@ -606,8 +629,29 @@ export const localRemoteBackupSelectedCore = async ({
     // Load hash cache for faster dedup (avoids re-hashing files)
     await loadHashCache();
     
-    const config = await getAuthHeaders();
+    // Re-authenticate against the target server (same as localRemoteBackupCore)
     const SERVER_URL = getServerUrl();
+    let config = await getAuthHeaders();
+    try {
+      const storedEmail = await SecureStore.getItemAsync('user_email');
+      const storedPassword = await SecureStore.getItemAsync(SAVED_PASSWORD_KEY);
+      if (storedEmail && storedPassword) {
+        const deviceId = await getDeviceUUID(storedEmail, storedPassword);
+        const loginRes = await axios.post(`${SERVER_URL}/api/login`, {
+          email: storedEmail,
+          password: storedPassword,
+          device_uuid: deviceId,
+          device_name: Platform.OS + ' ' + Platform.Version,
+        }, { timeout: 10000 });
+        if (loginRes.data && loginRes.data.token) {
+          const freshToken = loginRes.data.token;
+          config = { headers: { Authorization: `Bearer ${freshToken}`, 'X-Device-UUID': deviceId } };
+          console.log('[Backup] Re-authenticated against target server');
+        }
+      }
+    } catch (reAuthErr) {
+      console.log('[Backup] Re-auth failed, using existing token:', reAuthErr.message);
+    }
     
     onStatus?.(t('status.fetchingServerFilesSimple', { fetched: 0 }));
     onProgress?.(0.01);

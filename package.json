@@ -1,6 +1,6 @@
 {
   "name": "photolynk-solana",
-  "version": "1.5.8",
+  "version": "2.0.0",
   "main": "index.js",
   "scripts": {
     "start": "expo start",
@@ -51,6 +51,8 @@
     "expo-video-thumbnails": "~9.0.3",
     "heic-decode": "^2.1.0",
     "i18n-js": "^4.5.1",
+    "imagetracerjs": "^1.2.6",
+    "jpeg-js": "^0.4.4",
     "js-sha256": "^0.11.1",
     "make-plural": "^8.1.0",
     "node-fetch": "^2.7.0",
@@ -65,6 +67,7 @@
     "react-native-reanimated": "3.16.1",
     "react-native-safe-area-context": "4.12.0",
     "react-native-screens": "~4.4.0",
+    "react-native-svg": "15.8.0",
     "react-native-url-polyfill": "^2.0.0",
     "readable-stream": "^4.7.0",
     "tweetnacl": "^1.0.3",

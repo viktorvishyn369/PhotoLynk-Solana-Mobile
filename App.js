@@ -165,6 +165,7 @@ import { localRemoteBackupCore, localRemoteBackupSelectedCore } from './uploadOp
 import { startSimilarShotsReviewCore, buildDefaultSimilarSelection as buildDefaultSimilarSelectionCore, startExactDuplicatesScanCore } from './cleanDuplicatesOperations';
 import { buildResultMessage, checkTierAvailability } from './uiHelpers';
 import NFTOperations, { checkStealthCloudEligibility } from './nftOperations';
+import * as WalletAdapter from './WalletAdapter';
 import NFTPhotoPicker from './NFTPhotoPicker';
 import NFTGallery from './NFTGallery';
 import NFTTransferModal from './NFTTransferModal';
@@ -253,7 +254,6 @@ export default function App() {
         await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP);
       } catch (e) {}
     };
-
     lockPortrait();
     const sub = ScreenOrientation.addOrientationChangeListener(() => {
       if (mounted) lockPortrait();
@@ -264,6 +264,42 @@ export default function App() {
       try {
         ScreenOrientation.removeOrientationChangeListener(sub);
       } catch (e) {}
+    };
+  }, []);
+
+  // Immediately handle wallet changes (Seeker hardware wallet / MWA via WalletAdapter)
+  useEffect(() => {
+    // Ensure adapter initializes (restores previous connection and can emit change)
+    WalletAdapter.initializeWalletAdapter().catch(() => {});
+
+    const unsubscribe = WalletAdapter.onWalletChanged(async (nextAddress, prevAddress) => {
+      if (!nextAddress || nextAddress === prevAddress) return;
+      setQsWalletAddress(nextAddress || null);
+      // Only purge + rescan on actual wallet switch, not initial restore
+      // (NFTGallery handles the initial scan via autoScanBlockchain)
+      if (!prevAddress) return;
+      try {
+        await NFTOperations.purgeNFTStorage();
+      } catch (_) {}
+
+      try {
+        const serverUrl = getServerUrl();
+        let headers = null;
+        try {
+          const authConfig = await getAuthHeaders();
+          headers = authConfig?.headers || authConfig;
+        } catch (_) {}
+        await NFTOperations.discoverAndImportNFTs(nextAddress, serverUrl, headers);
+      } catch (_) {}
+
+      // Refresh gallery if open
+      try {
+        setNftGalleryRefreshKey(k => (k || 0) + 1);
+      } catch (_) {}
+    });
+
+    return () => {
+      try { unsubscribe?.(); } catch (_) {}
     };
   }, []);
 
@@ -279,7 +315,7 @@ export default function App() {
   const [localHost, setLocalHost] = useState('');
   const [remoteHost, setRemoteHost] = useState('');
   const [autoUploadEnabled, setAutoUploadEnabled] = useState(false);
-  const [fastModeEnabled, setFastModeEnabled] = useState(false);
+  const [fastModeEnabled, setFastModeEnabled] = useState(true);
   const [glassModeEnabled, setGlassModeEnabled] = useState(false);
   const [backupModeOpen, setBackupModeOpen] = useState(false);
   const [backupPickerOpen, setBackupPickerOpen] = useState(false);
@@ -364,6 +400,14 @@ export default function App() {
   const [nftTransferOpen, setNftTransferOpen] = useState(false);
   const [nftToTransfer, setNftToTransfer] = useState(null);
   const [nftMinting, setNftMinting] = useState(false);
+  const [nftGalleryRefreshKey, setNftGalleryRefreshKey] = useState(0);
+  const [pendingCertMint, setPendingCertMint] = useState(null); // mint to pre-select in CertificatesViewer
+  const [pendingNftMint, setPendingNftMint] = useState(null);  // mint to pre-select in NFTGallery
+
+  // Quick-stats state
+  const [qsWalletAddress, setQsWalletAddress] = useState(null);
+  const [qsNftCount, setQsNftCount] = useState(null);
+  const [qsLastBackupTime, setQsLastBackupTime] = useState(null);
 
   const backgroundWarnEligibleRef = useRef(false);
   const wasBackgroundedDuringWorkRef = useRef(false);
@@ -496,6 +540,26 @@ export default function App() {
             });
             const result = await response.json();
             if (result.success) {
+              // After successful pairing, login to the local server to get a valid JWT token
+              // Without this, the stored auth_token may be from StealthCloud (different JWT_SECRET)
+              try {
+                const localServerUrl = `http://${serverIp}:${parsed.port}`;
+                const deviceId = await getDeviceUUID(pairEmail, pairPassword);
+                const loginRes = await axios.post(`${localServerUrl}/api/login`, {
+                  email: pairEmail,
+                  password: pairPassword,
+                  device_uuid: deviceId,
+                  device_name: Platform.OS + ' ' + Platform.Version,
+                }, { timeout: 10000 });
+                if (loginRes.data && loginRes.data.token) {
+                  await SecureStore.setItemAsync('auth_token', loginRes.data.token);
+                  setTokenSafe(loginRes.data.token);
+                  setDeviceUuid(deviceId);
+                  console.log('[QR] Logged into local server, token stored');
+                }
+              } catch (loginErr) {
+                console.log('[QR] Local server login failed (non-critical):', loginErr.message);
+              }
               showDarkAlert(t('login.paired'), t('login.pairedWithDesktop', { ip: serverIp }));
               return;
             }
@@ -676,6 +740,10 @@ export default function App() {
         msg = del > 0 ? t('results.filesDeleted', { count: del }) : t('results.noDuplicatesFound');
       }
       showCompletionTickBriefly(msg);
+      if (type === 'backup' || type === 'sync') {
+        const now = new Date();
+        setQsLastBackupTime(now.getHours().toString().padStart(2,'0') + ':' + now.getMinutes().toString().padStart(2,'0'));
+      }
     }
   };
 
@@ -707,6 +775,13 @@ export default function App() {
   useEffect(() => { fastModeEnabledRef.current = !!fastModeEnabled; }, [fastModeEnabled]);
   useEffect(() => { tokenRef.current = token; }, [token]);
   useEffect(() => { serverTypeRef.current = serverType; }, [serverType]);
+
+  // Force fast mode ON for local/remote — only stealthcloud allows toggling
+  useEffect(() => {
+    if (serverType === 'local' || serverType === 'remote') {
+      setFastModeEnabledSafe(true);
+    }
+  }, [serverType]);
 
   // Throttle helpers - return current values based on fast mode setting
   const getThrottleBatchLimit = () => fastModeEnabledRef.current ? FAST_BATCH_LIMIT : THERMAL_BATCH_LIMIT;
@@ -742,12 +817,14 @@ export default function App() {
     try {
       const config = await getAuthHeaders();
       const base = getServerUrl();
+      console.log('[Info] Fetching usage from:', base, 'auth:', !!config?.headers?.Authorization);
       const res = await axios.get(`${base}/api/cloud/usage`, { ...config, timeout: 10000 });
       const data = res && res.data ? res.data : null;
+      console.log('[Info] Usage response:', data ? `quota=${data.quotaBytes || data.quota_bytes}, sub=${data.subscription?.status}` : 'null');
       setStealthUsage(data);
       return data;
     } catch (e) {
-      console.log('Failed to refresh usage:', e?.message);
+      console.log('[Info] Failed to refresh usage:', e?.response?.status, e?.message);
       return null;
     }
   };
@@ -1513,8 +1590,21 @@ export default function App() {
     try {
       const config = await getAuthHeaders();
       const base = getServerUrl();
-      const res = await axios.get(`${base}/api/cloud/usage`, { ...config, timeout: 10000 });
-      return res && res.data ? res.data : null;
+      // Retry once on 5xx / network error
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          const res = await axios.get(`${base}/api/cloud/usage`, { ...config, timeout: 10000 });
+          return res && res.data ? res.data : null;
+        } catch (retryErr) {
+          const st = retryErr.response?.status;
+          if (st && st >= 500 && attempt < 1) {
+            await new Promise(r => setTimeout(r, 2000));
+            continue;
+          }
+          throw retryErr;
+        }
+      }
+      return null;
     } catch (e) {
       return null;
     }
@@ -1522,6 +1612,8 @@ export default function App() {
 
   const ensureStealthCloudUploadAllowed = async () => {
     const usage = await fetchStealthCloudUsage();
+    // If usage fetch failed (server unreachable / 502), allow backup — server will enforce limits
+    if (!usage) return true;
     const st = usage && usage.subscription ? usage.subscription : null;
     const status = st && st.status ? String(st.status) : 'none';
     if (status === 'active' || status === 'trial') return true;
@@ -1542,8 +1634,7 @@ export default function App() {
           t('alerts.subscriptionExpired'),
           t('alerts.graceMessage', { days: GRACE_PERIOD_DAYS }),
           [
-            { text: t('alerts.syncNow'), onPress: () => openSyncModeChooser() },
-            { text: t('alerts.later') }
+            { text: t('alerts.syncNow'), onPress: () => openSyncModeChooser() }
           ]
         );
       }
@@ -1602,8 +1693,7 @@ export default function App() {
             t('alerts.expiredGraceMessage', { days: GRACE_PERIOD_DAYS }),
             [
               { text: t('alerts.syncNow'), onPress: () => openSyncModeChooser() },
-              { text: t('alerts.viewPlans'), onPress: () => setView('info') },
-              { text: t('alerts.later') }
+              { text: t('alerts.viewPlans'), onPress: () => setView('info') }
             ]
           );
         }
@@ -1817,11 +1907,34 @@ export default function App() {
               setLoadingSafe(true);
               setBackgroundWarnEligibleSafe(false);
               setWasBackgroundedDuringWorkSafe(false);
-              setStatus(t('status.deletingItems', { count: 0 }));
+              setStatus(t('status.deleting'));
 
               const SERVER_URL = getServerUrl();
-              const config = await getAuthHeaders();
-              const res = await axios.post(`${SERVER_URL}/api/cloud/purge`, {}, config);
+              let config = await getAuthHeaders();
+              // Re-auth against target server (stored token may be from a different server)
+              try {
+                const se = await SecureStore.getItemAsync('user_email');
+                const sp = await SecureStore.getItemAsync(SAVED_PASSWORD_KEY);
+                if (se && sp) {
+                  const did = await getDeviceUUID(se, sp);
+                  const lr = await axios.post(`${SERVER_URL}/api/login`, { email: se, password: sp, device_uuid: did, device_name: Platform.OS + ' ' + Platform.Version }, { timeout: 10000 });
+                  if (lr.data?.token) config = { headers: { Authorization: `Bearer ${lr.data.token}`, 'X-Device-UUID': did } };
+                }
+              } catch (_) {}
+              let res;
+              for (let attempt = 0; attempt < 3; attempt++) {
+                try {
+                  res = await axios.post(`${SERVER_URL}/api/cloud/purge`, {}, { ...config, timeout: 30000 });
+                  break;
+                } catch (retryErr) {
+                  const st = retryErr.response?.status;
+                  if (st && st >= 500 && attempt < 2) {
+                    await new Promise(r => setTimeout(r, 3000));
+                    continue;
+                  }
+                  throw retryErr;
+                }
+              }
               const deleted = res && res.data && res.data.deleted ? res.data.deleted : null;
               const chunks = deleted && typeof deleted.chunks === 'number' ? deleted.chunks : null;
               const manifests = deleted && typeof deleted.manifests === 'number' ? deleted.manifests : null;
@@ -1830,6 +1943,8 @@ export default function App() {
                 console.log('[StealthCloud] Purge deleted:', { chunks, manifests });
               }
               setStatus(t('status.cloudDataDeleted'));
+              setStealthUsage(prev => prev ? { ...prev, usedBytes: 0, used_bytes: 0 } : prev);
+              refreshStealthUsage();
               showDarkAlert(t('alerts.deleted'), msg);
             } catch (e) {
               const m = e && e.response && e.response.data && e.response.data.error
@@ -1865,11 +1980,34 @@ export default function App() {
               setLoadingSafe(true);
               setBackgroundWarnEligibleSafe(false);
               setWasBackgroundedDuringWorkSafe(false);
-              setStatus(t('status.deletingItems', { count: 0 }));
+              setStatus(t('status.deleting'));
 
               const SERVER_URL = getServerUrl();
-              const config = await getAuthHeaders();
-              const res = await axios.post(`${SERVER_URL}/api/files/purge`, {}, config);
+              let config = await getAuthHeaders();
+              // Re-auth against target server (stored token may be from a different server)
+              try {
+                const se = await SecureStore.getItemAsync('user_email');
+                const sp = await SecureStore.getItemAsync(SAVED_PASSWORD_KEY);
+                if (se && sp) {
+                  const did = await getDeviceUUID(se, sp);
+                  const lr = await axios.post(`${SERVER_URL}/api/login`, { email: se, password: sp, device_uuid: did, device_name: Platform.OS + ' ' + Platform.Version }, { timeout: 10000 });
+                  if (lr.data?.token) config = { headers: { Authorization: `Bearer ${lr.data.token}`, 'X-Device-UUID': did } };
+                }
+              } catch (_) {}
+              let res;
+              for (let attempt = 0; attempt < 3; attempt++) {
+                try {
+                  res = await axios.post(`${SERVER_URL}/api/files/purge`, {}, { ...config, timeout: 30000 });
+                  break;
+                } catch (retryErr) {
+                  const st = retryErr.response?.status;
+                  if (st && st >= 500 && attempt < 2) {
+                    await new Promise(r => setTimeout(r, 3000));
+                    continue;
+                  }
+                  throw retryErr;
+                }
+              }
               const deleted = res && res.data && res.data.deleted ? res.data.deleted : null;
               const files = deleted && typeof deleted.files === 'number' ? deleted.files : null;
               if (files !== null) {
@@ -2354,11 +2492,37 @@ export default function App() {
   };
   
   const handleNftTransferComplete = async (result) => {
+    const transferredNft = nftToTransfer;
     closeNftTransfer();
     showCompletionTickBriefly(t('results.nftTransferred'));
-    // Refresh gallery if open
+    // Remove transferred NFT and its certificate from local storage
+    if (transferredNft?.mintAddress) {
+      const mintAddrStored = transferredNft.mintAddress;
+      const mintAddrStripped = (mintAddrStored || '').replace('cnft_', '');
+      try {
+        // Remove both forms to handle cNFT ids stored as `cnft_<assetId>`
+        await NFTOperations.removeNFTFromStorage(mintAddrStored);
+        if (mintAddrStripped && mintAddrStripped !== mintAddrStored) {
+          await NFTOperations.removeNFTFromStorage(mintAddrStripped);
+        }
+        console.log('[Transfer] Removed NFT from storage:', mintAddrStored);
+      } catch (e) {
+        console.log('[Transfer] NFT removal error:', e.message);
+      }
+      try {
+        // Remove both forms to handle any legacy cert records stored with/without `cnft_` prefix
+        await NFTOperations.removeCertificateByMint(mintAddrStored);
+        if (mintAddrStripped && mintAddrStripped !== mintAddrStored) {
+          await NFTOperations.removeCertificateByMint(mintAddrStripped);
+        }
+        console.log('[Transfer] Removed cert from storage:', mintAddrStored);
+      } catch (e) {
+        console.log('[Transfer] Cert removal error:', e.message);
+      }
+    }
+    // Trigger gallery refresh so transferred NFT disappears immediately
     if (nftGalleryOpen) {
-      // Gallery will refresh on its own
+      setNftGalleryRefreshKey(k => (k || 0) + 1);
     }
   };
   
@@ -2381,50 +2545,40 @@ export default function App() {
       // Use the cost estimate passed from NFTPhotoPicker (already calculated with correct file size)
       const useCloud = storageOption === 'cloud';
       const useCompressed = nftType === 'compressed';
+      let fileSize = 0;
+      try { fileSize = (await FileSystem.getInfoAsync(filePath)).size || 0; } catch (_) {}
       const costEstimate = passedCostEstimate || await NFTOperations.estimateNFTMintCost(
-        (await FileSystem.getInfoAsync(filePath)).size || (2 * 1024 * 1024), 
+        fileSize || (500 * 1024), 
         storageOption, 
-        useCompressed
+        useCompressed,
+        edition || 'open'
       );
       
-      // Determine commission based on NFT type AND storage option
-      let commissionUsd;
-      if (useCompressed) {
-        commissionUsd = useCloud 
-          ? NFTOperations.NFT_FEES.APP_COMMISSION_CNFT_CLOUD_USD 
-          : NFTOperations.NFT_FEES.APP_COMMISSION_CNFT_IPFS_USD;
-      } else {
-        commissionUsd = useCloud 
-          ? NFTOperations.NFT_FEES.APP_COMMISSION_STANDARD_CLOUD_USD 
-          : NFTOperations.NFT_FEES.APP_COMMISSION_STANDARD_IPFS_USD;
-      }
+      // Check if connected wallet is the fee wallet (fee wallet doesn't pay PhotoLynk fees)
+      let isFeeWallet = false;
+      try {
+        const walletStatus = WalletAdapter.getConnectionStatus ? WalletAdapter.getConnectionStatus() : null;
+        isFeeWallet = walletStatus?.address === NFTOperations.NFT_COMMISSION_WALLET;
+      } catch (_) {}
+      
       const storageLabel = useCloud ? 'StealthCloud' : 'IPFS';
       const nftTypeLabel = useCompressed ? t('nftMint.compressedNft') : t('nftMint.standardNft');
       
-      // Build detailed cost breakdown matching NFTPhotoPicker
+      // Simplified total display (single line, no detailed breakdown)
       const breakdown = costEstimate.breakdown;
-      let costLines = [];
-      if (!useCloud && breakdown.arweaveImage.usd > 0) {
-        costLines.push(`• ${t('nftMint.imageUpload')}: $${breakdown.arweaveImage.usd.toFixed(3)}`);
+      let totalDisplay;
+      if (isFeeWallet) {
+        const adjustedSol = costEstimate.total.sol - (breakdown.appCommission?.sol || 0);
+        const adjustedUsd = adjustedSol * costEstimate.solPrice;
+        totalDisplay = `~$${adjustedUsd.toFixed(2)} (${adjustedSol.toFixed(6)} SOL)`;
+      } else {
+        totalDisplay = `~${costEstimate.total.usdFormatted} (${costEstimate.total.solFormatted} SOL)`;
       }
-      if (breakdown.arweaveMetadata.usd > 0) {
-        costLines.push(`• ${t('nftMint.metadataUpload')}: $${breakdown.arweaveMetadata.usd.toFixed(3)}`);
-      }
-      if (!useCompressed && breakdown.solanaRent.usd > 0) {
-        costLines.push(`• ${t('nftMint.solanaRent')}: $${breakdown.solanaRent.usd.toFixed(2)}`);
-      }
-      if (!useCompressed && breakdown.metaplexFee.usd > 0) {
-        costLines.push(`• ${t('nftMint.metaplexFee')}: $${breakdown.metaplexFee.usd.toFixed(2)}`);
-      }
-      if (breakdown.transactionFee.usd > 0) {
-        costLines.push(`• ${t('nftMint.networkFee')}: <$0.01`);
-      }
-      costLines.push(`• ${t('nftMint.photoLynkFee')}: $${breakdown.appCommission.usd.toFixed(2)}`);
       
       const confirmMint = await new Promise((resolve) => {
         setCustomAlert({
           title: t('nftMint.confirmMinting'),
-          message: `${nftTypeLabel} • ${storageLabel}\n\n${t('nftMint.total')}: ${costEstimate.total.usdFormatted} (${costEstimate.total.solFormatted} SOL)\n\n${t('nftMint.breakdown')}:\n${costLines.join('\n')}\n\n${t('nftMint.proceedWithMinting')}`,
+          message: `${nftTypeLabel} • ${storageLabel}\n\n${t('nftMint.estTotal')}: ${totalDisplay}\n\n${t('nftMint.proceedWithMinting')}`,
           buttons: [
             { text: t('common.cancel'), style: 'cancel', onPress: () => resolve(false) },
             { text: t('nftMint.mintNft'), onPress: () => resolve(true) },
@@ -2478,8 +2632,9 @@ export default function App() {
             'Creating thumbnail...': t('nftStatus.creatingThumbnail'),
             'Creating preview...': t('nftStatus.creatingThumbnail'),
             'Creating certificate image...': t('nftStatus.creatingThumbnail'),
-            'Applying watermark...': s,
-            'Encrypting image...': s,
+            'Compressing for on-chain...': t('nftStatus.compressingOnChain'),
+            'Applying watermark...': t('nftStatus.applyingWatermark'),
+            'Encrypting image...': t('nftStatus.encryptingImage'),
             'Computing integrity proof...': t('nftStatus.computingIntegrity'),
             'Building metadata...': t('nftStatus.buildingMetadata'),
             'Creating NFT on Solana...': t('nftStatus.creatingOnSolana'),
@@ -2504,24 +2659,30 @@ export default function App() {
       if (result.success) {
         setStatus(t('status.nftMinted'));
         
-        // Show success with different info for cNFT vs standard NFT
+        // Show success with different info for cNFT vs standard NFT, and storage-specific note
         const isCompressed = result.isCompressed || result.mintAddress?.startsWith('cnft_');
         const nftTypeLabel = isCompressed ? t('nftMint.compressedNft') : t('nftMint.standardNft');
         const addressLabel = isCompressed ? t('nftMint.assetId') : t('nftMint.mintAddress');
-        const explorerNote = isCompressed 
-          ? t('nftMint.viewInGalleryXray')
-          : t('nftMint.viewInGalleryExplorer');
+        const explorerNote = storageOption === 'onchain'
+          ? t('nftMint.viewInGalleryOnChain')
+          : isCompressed
+            ? t('nftMint.viewInGalleryXray')
+            : t('nftMint.viewInGalleryExplorer');
         
         showDarkAlert(
           t('nftMint.nftCreated', { type: nftTypeLabel }),
           `${t('nftMint.photoMintedOnSolana', { name })}\n\n${addressLabel}:\n${result.mintAddress?.slice(0, 20)}...\n\n${explorerNote}`
         );
       } else {
-        showDarkAlert(t('alerts.error'), result.error || t('alerts.error'));
+        const errMsg = result.error || t('alerts.error');
+        const translatedErr = errMsg.includes('too complex for on-chain') ? t('nftStatus.onChainTooComplex') : errMsg.includes('On-chain compression failed') ? t('nftStatus.onChainFailed', { reason: errMsg.replace(/^On-chain compression failed:\s*/, '') }) : errMsg;
+        showDarkAlert(t('alerts.error'), translatedErr);
       }
     } catch (e) {
       console.error('[NFT] Mint error:', e);
-      showDarkAlert(t('alerts.error'), e.message || t('alerts.error'));
+      const errMsg = e.message || t('alerts.error');
+      const translatedErr = errMsg.includes('too complex for on-chain') ? t('nftStatus.onChainTooComplex') : errMsg.includes('On-chain compression failed') ? t('nftStatus.onChainFailed', { reason: errMsg.replace(/^On-chain compression failed:\s*/, '') }) : errMsg;
+      showDarkAlert(t('alerts.error'), translatedErr);
     } finally {
       setNftMinting(false);
       setLoadingSafe(false);
@@ -2981,10 +3142,10 @@ export default function App() {
         console.log('[BGSync] NFT/cert sync error:', e?.message);
       }
     };
-    // Initial sync after short delay
-    const timeout = setTimeout(doSync, 5000);
-    // Poll every 60 seconds
-    interval = setInterval(doSync, 60000);
+    // Initial sync after delay (let gallery's own sync finish first to avoid concurrent memory pressure)
+    const timeout = setTimeout(doSync, 15000);
+    // Poll every 5 minutes (60s was too aggressive for 175+ NFTs + 44 certs per cycle)
+    interval = setInterval(doSync, 300000);
     return () => { clearTimeout(timeout); if (interval) clearInterval(interval); };
   }, [token]);
 
@@ -3611,8 +3772,11 @@ export default function App() {
     }
 
     const savedFastMode = await SecureStore.getItemAsync('fast_mode_enabled');
-    if (savedFastMode === 'true' || savedFastMode === 'false') {
-      setFastModeEnabledSafe(savedFastMode === 'true');
+    // Only restore user preference for stealthcloud; local/remote always fast
+    if (savedFastMode === 'false' && serverTypeRef.current === 'stealthcloud') {
+      setFastModeEnabledSafe(false);
+    } else {
+      setFastModeEnabledSafe(true);
     }
 
     const savedGlassMode = await SecureStore.getItemAsync('glass_mode_enabled');
@@ -3697,6 +3861,7 @@ export default function App() {
         }
         setTokenSafe(storedToken);
         if (storedUserId) setUserId(parseInt(storedUserId));
+        if (storedEmail && !email) setEmail(storedEmail);
         setStatus('');
         setView('home');
         return;
@@ -3723,6 +3888,7 @@ export default function App() {
     if (reauthResult.success) {
       if (reauthResult.deviceId) setDeviceUuid(reauthResult.deviceId);
       if (reauthResult.userId) setUserId(reauthResult.userId);
+      if (storedEmail && !email) setEmail(storedEmail);
 
       setStatus(t('status.securingSession'));
       await cacheStealthCloudMasterKey(storedEmail, reauthResult.savedPassword);
@@ -4580,7 +4746,7 @@ export default function App() {
   if (view === 'auth') {
     return (
       <SafeAreaView style={styles.container}>
-        <StatusBar barStyle="light-content" backgroundColor="#0A0A0A" />
+        <StatusBar barStyle="light-content" backgroundColor="#060608" />
         <LoginScreen
           appDisplayName={APP_DISPLAY_NAME}
           appIcon={require('./assets/splash-icon.png')}
@@ -4890,328 +5056,112 @@ export default function App() {
     );
   }
 
-  if (view === 'settings') {
-    return (
-      <>
-        <SettingsScreen
-          onBack={() => setView('home')}
-          serverType={serverType}
-          setServerType={setServerType}
-          localHost={localHost}
-          setLocalHost={setLocalHost}
-          remoteHost={remoteHost}
-          setRemoteHost={setRemoteHost}
-          getServerUrl={getServerUrl}
-          autoUploadEnabled={autoUploadEnabled}
-          persistAutoUploadEnabled={persistAutoUploadEnabled}
-          fastModeEnabled={fastModeEnabled}
-          persistFastModeEnabled={persistFastModeEnabled}
-          glassModeEnabled={glassModeEnabled}
-          persistGlassModeEnabled={persistGlassModeEnabled}
-          loading={loading}
-          logout={logout}
-          relogin={async (newServerType) => {
-            // Re-authenticate with new server settings using saved credentials
-            // Switch to home view first so user sees the loading spinner
-            setView('home');
-            setLoadingSafe(true);
-            setStatus(t('status.switchingServer') || 'Switching server...');
-            
-            // Clear stale StealthCloud usage data to prevent showing old status
-            setStealthUsage(null);
-            setStealthUsageError(null);
-            try {
-              // Restore saved credentials from SecureStore
-              const savedEmail = await SecureStore.getItemAsync('user_email');
-              const savedPasswordEmail = await SecureStore.getItemAsync(SAVED_PASSWORD_EMAIL_KEY);
-              let savedPassword = null;
-              
-              if (savedPasswordEmail) {
-                // Try to get password (with or without biometrics depending on how it was stored)
-                const storedWithBiometric = Platform.OS === 'ios' || 
-                  (await SecureStore.getItemAsync('password_stored_with_biometric')) === 'true';
-                
-                if (storedWithBiometric) {
-                  try {
-                    savedPassword = await SecureStore.getItemAsync(SAVED_PASSWORD_KEY, {
-                      requireAuthentication: true,
-                      authenticationPrompt: t('auth.unlockToSignIn')
-                    });
-                  } catch (e) {
-                    console.log('[Relogin] Biometric auth failed, trying without:', e?.message);
-                    savedPassword = await SecureStore.getItemAsync(SAVED_PASSWORD_KEY);
-                  }
-                } else {
-                  savedPassword = await SecureStore.getItemAsync(SAVED_PASSWORD_KEY);
-                }
-              }
-              
-              if (savedEmail && savedPassword) {
-                // Pass credentials directly to handleAuth (state updates are async)
-                if (newServerType) {
-                  try { setServerType(newServerType); } catch (e) {}
-                }
-                await handleAuth('login', { email: savedEmail, password: savedPassword, serverType: newServerType || serverType });
-                setView('home');
-              } else {
-                // No saved credentials - go to auth screen
-                console.log('[Relogin] No saved credentials found');
-                setView('auth');
-              }
-            } catch (e) {
-              console.log('[Relogin] Error:', e.message);
-              showDarkAlert(t('alerts.error'), e.message || t('alerts.connectionFailed'));
-            } finally {
-              setLoadingSafe(false);
-            }
-          }}
-          purgeStealthCloudData={purgeStealthCloudData}
-          purgeClassicServerData={purgeClassicServerData}
-          showDarkAlert={showDarkAlert}
-          onQrScan={async () => {
-            if (!cameraPermission?.granted) {
-              const result = await requestCameraPermission();
-              if (!result.granted) {
-                showDarkAlert(t('login.cameraPermissionTitle'), t('login.cameraPermissionMessage'));
-                return;
-              }
-            }
-            setQrScannerOpen(true);
-          }}
-          normalizeHostInput={normalizeHostInput}
-          SecureStore={SecureStore}
-          currentLanguage={currentLanguage}
-          onLanguageChange={handleLanguageChange}
-        />
-
-        {customAlert && (
-          <View style={[styles.overlay, { backgroundColor: 'rgba(0,0,0,0.97)' }]}> 
-            <View style={[styles.overlayCard, { backgroundColor: '#000000', maxWidth: isTablet ? 450 : 320 }]}> 
-              <Text style={[styles.overlayTitle, { fontSize: scale(18), marginBottom: scaleSpacing(8) }]}>{customAlert.title}</Text>
-              <Text style={{ color: '#FFFFFF', fontSize: scale(14), textAlign: 'center', marginBottom: scaleSpacing(20), lineHeight: scale(20) }}>{customAlert.message}</Text>
-              <View style={{ flexDirection: 'row', justifyContent: 'center', flexWrap: 'wrap', gap: scaleSpacing(12) }}>
-                {(customAlert.buttons || []).map((btn, idx) => (
-                  <TouchableOpacity
-                    key={idx}
-                    style={[styles.overlayBtnPrimary, { paddingVertical: scaleSpacing(10), paddingHorizontal: scaleSpacing(20), minWidth: isTablet ? 100 : 80 }]}
-                    onPress={() => { closeDarkAlert(); if (btn.onPress) btn.onPress(); }}>
-                    <Text style={styles.overlayBtnPrimaryText}>{btn.text}</Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            </View>
-          </View>
-        )}
-
-        {qrScannerOpen && (
-          <View style={{position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: '#000'}}>
-            {cameraPermission?.granted ? (
-              <CameraView
-                style={{flex: 1}}
-                facing="back"
-                autofocus="on"
-                zoom={0}
-                barcodeScannerSettings={{
-                  barcodeTypes: ['qr'],
-                  interval: 100,
-                }}
-                onBarcodeScanned={(result) => {
-                  if (result && result.data) {
-                    handleQRCodeScanned(result.data);
-                  }
-                }}
-              />
-            ) : (
-              <View style={{flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#000'}}>
-                <Text style={{color: '#888', textAlign: 'center', padding: scaleSpacing(20), fontSize: scale(14)}}>
-                  {t('permissions.cameraRequired')}
-                </Text>
-                <TouchableOpacity
-                  style={{backgroundColor: '#03E1FF', paddingHorizontal: scaleSpacing(20), paddingVertical: scaleSpacing(10), borderRadius: scaleSpacing(8)}}
-                  onPress={requestCameraPermission}>
-                  <Text style={{color: '#000000', fontWeight: '700', fontSize: scale(14)}}>{t('permissions.grant')}</Text>
-                </TouchableOpacity>
-              </View>
-            )}
-            {/* Overlay UI on top of camera - only show when permission granted */}
-            {cameraPermission?.granted ? (
-              <View style={{position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, pointerEvents: 'box-none'}}>
-                {/* Top bar with title */}
-                <View style={{paddingTop: Platform.OS === 'ios' ? scaleSpacing(60) : scaleSpacing(40), paddingHorizontal: scaleSpacing(20), backgroundColor: 'rgba(0,0,0,0.5)'}}>
-                  <Text style={{color: '#fff', fontSize: scale(18), fontWeight: '600', textAlign: 'center'}}>
-                    {t('qrScanner.title')}
-                  </Text>
-                  <Text style={{color: '#aaa', fontSize: scale(13), textAlign: 'center', marginTop: scaleSpacing(4)}}>
-                    {t('qrScanner.instruction')}
-                  </Text>
-                </View>
-                {/* Center scanning frame */}
-                <View style={{flex: 1, justifyContent: 'center', alignItems: 'center'}}>
-                  <View style={{width: isTablet ? 280 : 240, height: isTablet ? 280 : 240, borderWidth: 2, borderColor: '#03E1FF', borderRadius: scaleSpacing(16)}} />
-                </View>
-                {/* Bottom bar with cancel button */}
-                <View style={{paddingBottom: Platform.OS === 'android' ? ANDROID_NAV_BAR_HEIGHT + scaleSpacing(16) : scaleSpacing(50), paddingHorizontal: scaleSpacing(20), backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center'}}>
-                  <TouchableOpacity
-                    style={{paddingVertical: scaleSpacing(14), paddingHorizontal: scaleSpacing(50), backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: scaleSpacing(12), borderWidth: 1, borderColor: 'rgba(255,255,255,0.3)'}}
-                    onPress={() => setQrScannerOpen(false)}>
-                    <Text style={{color: '#fff', fontSize: scale(16), fontWeight: '600'}}>{t('common.cancel')}</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            ) : (
-              <View style={{position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, pointerEvents: 'box-none'}}>
-                {/* Top bar with title - full screen permission view */}
-                <View style={{paddingTop: Platform.OS === 'ios' ? scaleSpacing(60) : scaleSpacing(40), paddingHorizontal: scaleSpacing(20)}}>
-                  <Text style={{color: '#fff', fontSize: scale(18), fontWeight: '600', textAlign: 'center'}}>
-                    {t('qrScanner.title')}
-                  </Text>
-                  <Text style={{color: '#aaa', fontSize: scale(13), textAlign: 'center', marginTop: scaleSpacing(4)}}>
-                    {t('qrScanner.instruction')}
-                  </Text>
-                </View>
-                {/* Bottom bar with cancel button */}
-                <View style={{position: 'absolute', bottom: 0, left: 0, right: 0, paddingBottom: Platform.OS === 'android' ? ANDROID_NAV_BAR_HEIGHT + scaleSpacing(16) : scaleSpacing(50), paddingHorizontal: scaleSpacing(20), alignItems: 'center'}}>
-                  <TouchableOpacity
-                    style={{paddingVertical: scaleSpacing(14), paddingHorizontal: scaleSpacing(50), backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: scaleSpacing(12), borderWidth: 1, borderColor: 'rgba(255,255,255,0.3)'}}
-                    onPress={() => setQrScannerOpen(false)}>
-                    <Text style={{color: '#fff', fontSize: scale(16), fontWeight: '600'}}>{t('common.cancel')}</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            )}
-          </View>
-        )}
-      </>
-    );
-  }
-
-  if (view === 'info') {
-    return (
-      <>
-        <InfoScreen
-          onBack={() => setView('home')}
-          appDisplayName={APP_DISPLAY_NAME}
-          appVersion="1.5.8"
-          deviceUuid={deviceUuid}
-          serverType={serverType}
-          stealthUsage={stealthUsage}
-          stealthUsageLoading={stealthUsageLoading}
-          stealthUsageError={stealthUsageError}
-          availablePlans={availablePlans}
-          purchaseLoading={purchaseLoading}
-          glassModeEnabled={glassModeEnabled}
-          showDarkAlert={showDarkAlert}
-          openPaywall={openPaywall}
-          STEALTH_PLAN_TIERS={STEALTH_PLAN_TIERS}
-        />
-
-        {customAlert && (
-          <View style={[styles.overlay, { backgroundColor: 'rgba(0,0,0,0.97)' }]}>
-            <View style={[styles.overlayCard, { backgroundColor: '#000000', maxWidth: isTablet ? 450 : 320 }]}>
-              <Text style={[styles.overlayTitle, { fontSize: scale(18), marginBottom: scaleSpacing(8) }]}>{customAlert.title}</Text>
-              <Text style={{ color: '#FFFFFF', fontSize: scale(14), textAlign: 'center', marginBottom: scaleSpacing(20), lineHeight: scale(20) }}>{customAlert.message}</Text>
-              <View style={{ flexDirection: 'row', justifyContent: 'center', gap: scaleSpacing(12), flexWrap: 'wrap' }}>
-                {(customAlert.buttons || []).map((btn, idx) => (
-                  <TouchableOpacity
-                    key={idx}
-                    style={[styles.overlayBtnPrimary, { paddingVertical: scaleSpacing(10), paddingHorizontal: scaleSpacing(16), minWidth: isTablet ? 100 : 70 }]}
-                    onPress={() => {
-                      closeDarkAlert();
-                      if (btn.onPress) btn.onPress();
-                    }}>
-                    <Text style={styles.overlayBtnPrimaryText} numberOfLines={1}>{btn.text}</Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            </View>
-          </View>
-        )}
-
-        {paywallTierGb && (
-          <View style={[styles.overlay, glassModeEnabled && styles.overlayGlass]}>
-            <View style={[styles.overlayCard, glassModeEnabled && styles.overlayCardGlass, { backgroundColor: glassModeEnabled ? 'rgba(30, 30, 30, 0.9)' : '#1E1E1E', maxWidth: isTablet ? 480 : 340 }]}>
-              {(() => {
-                const gb = paywallTierGb;
-                const plan = availablePlans.find(p => p.tierGb === gb);
-                const priceStr = plan ? plan.priceString : '—';
-                const currentPlan = stealthUsage?.planGb || stealthUsage?.plan_gb;
-                const isCurrent = currentPlan === gb;
-                const canSubscribe = !purchaseLoading && plan && priceStr && priceStr !== '—';
-                const title = gb === 1000 ? t('subscription.storage1000Monthly') : t('subscription.storageGbMonthly', { gb });
-
-                return (
-                  <>
-                    <Text style={[styles.overlayTitle, { fontSize: scale(18), marginBottom: scaleSpacing(8) }]}>{title}</Text>
-                    <Text style={{ color: '#CCC', fontSize: scale(14), textAlign: 'center', marginBottom: scaleSpacing(14), lineHeight: scale(20) }}>
-                      {priceStr !== '—' ? t('subscription.pricePerMonth', { price: priceStr }) : t('subscription.pricingUnavailable')}
-                    </Text>
-                    <View style={{ flexDirection: 'row', justifyContent: 'center', gap: scaleSpacing(12), flexWrap: 'wrap' }}>
-                      <TouchableOpacity
-                        style={[styles.overlayBtnPrimary, glassModeEnabled && styles.overlayBtnPrimaryGlass, { paddingVertical: scaleSpacing(10), paddingHorizontal: scaleSpacing(24), minWidth: isTablet ? 110 : 90, opacity: purchaseLoading ? 0.6 : 1 }]}
-                        onPress={closePaywall}
-                        disabled={purchaseLoading}
-                      >
-                        <Text style={styles.overlayBtnPrimaryText}>{t('common.close')}</Text>
-                      </TouchableOpacity>
-
-                      <TouchableOpacity
-                        style={[styles.overlayBtnPrimary, glassModeEnabled && styles.overlayBtnPrimaryGlass, { paddingVertical: scaleSpacing(10), paddingHorizontal: scaleSpacing(24), minWidth: isTablet ? 130 : 110, opacity: canSubscribe ? 1 : 0.5 }]}
-                        onPress={() => {
-                          if (!canSubscribe) return;
-                          closePaywall();
-                          handlePurchase(gb);
-                        }}
-                        disabled={!canSubscribe}
-                      >
-                        <Text style={styles.overlayBtnPrimaryText}>{isCurrent ? t('subscription.currentPlan') : t('subscription.subscribe')}</Text>
-                      </TouchableOpacity>
-                    </View>
-
-                    {false && (
-                      <TouchableOpacity
-                        style={[styles.restorePurchasesBtn, { marginTop: scaleSpacing(14) }]}
-                        onPress={() => {
-                          closePaywall();
-                          handleRestorePurchases();
-                        }}
-                        disabled={purchaseLoading}
-                      >
-                        <Text style={styles.restorePurchasesText}>{t('subscription.restorePurchases')}</Text>
-                      </TouchableOpacity>
-                    )}
-                    <Text style={{ color: '#888', fontSize: scale(11), textAlign: 'center', marginTop: scaleSpacing(12), lineHeight: scale(16) }}>
-                      {t('subscription.autoRenewNote')}
-                    </Text>
-                    <View style={{ flexDirection: 'row', justifyContent: 'center', gap: scaleSpacing(16), marginTop: scaleSpacing(8) }}>
-                      <TouchableOpacity onPress={() => Linking.openURL('https://viktorvishyn369.github.io/PhotoLynk/terms.html')}>
-                        <Text style={{ color: '#03E1FF', fontSize: scale(11), textDecorationLine: 'underline' }}>{t('subscription.termsOfUse')}</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity onPress={() => Linking.openURL('https://viktorvishyn369.github.io/PhotoLynk/privacy-policy.html')}>
-                        <Text style={{ color: '#03E1FF', fontSize: scale(11), textDecorationLine: 'underline' }}>{t('subscription.privacyPolicy')}</Text>
-                      </TouchableOpacity>
-                    </View>
-                  </>
-                );
-              })()}
-            </View>
-          </View>
-        )}
-      </>
-    );
-  }
-
   return (
     <View style={styles.container}>
       <HomeScreen
         appDisplayName={APP_DISPLAY_NAME}
+        appVersion="2.0.0"
         serverType={serverType}
         status={status}
         progress={progress}
         progressAction={progressAction}
         loading={loading}
         glassModeEnabled={glassModeEnabled}
-        onOpenInfo={() => setView('info')}
-        onOpenSettings={() => setView('settings')}
+        qsEmail={email}
+        qsWalletAddress={qsWalletAddress}
+        qsNftCount={qsNftCount}
+        qsLastBackupTime={qsLastBackupTime}
+        onTabChange={(tab) => setView(tab === 'info' ? 'info' : 'home')}
+        infoContent={
+          <InfoScreen
+            appDisplayName={APP_DISPLAY_NAME}
+            appVersion="2.0.0"
+            deviceUuid={deviceUuid}
+            serverType={serverType}
+            stealthUsage={stealthUsage}
+            stealthUsageLoading={stealthUsageLoading}
+            stealthUsageError={stealthUsageError}
+            availablePlans={availablePlans}
+            purchaseLoading={purchaseLoading}
+            glassModeEnabled={glassModeEnabled}
+            showDarkAlert={showDarkAlert}
+            openPaywall={openPaywall}
+            STEALTH_PLAN_TIERS={STEALTH_PLAN_TIERS}
+          />
+        }
+        settingsContent={
+          <SettingsScreen
+            serverType={serverType}
+            setServerType={setServerType}
+            localHost={localHost}
+            setLocalHost={setLocalHost}
+            remoteHost={remoteHost}
+            setRemoteHost={setRemoteHost}
+            getServerUrl={getServerUrl}
+            autoUploadEnabled={autoUploadEnabled}
+            persistAutoUploadEnabled={persistAutoUploadEnabled}
+            fastModeEnabled={fastModeEnabled}
+            persistFastModeEnabled={persistFastModeEnabled}
+            glassModeEnabled={glassModeEnabled}
+            persistGlassModeEnabled={persistGlassModeEnabled}
+            loading={loading}
+            logout={logout}
+            relogin={async (newServerType) => {
+              setLoadingSafe(true);
+              setStatus(t('status.switchingServer') || 'Switching server...');
+              setStealthUsage(null);
+              setStealthUsageError(null);
+              try {
+                const savedEmail = await SecureStore.getItemAsync('user_email');
+                const savedPasswordEmail = await SecureStore.getItemAsync(SAVED_PASSWORD_EMAIL_KEY);
+                let savedPassword = null;
+                if (savedPasswordEmail) {
+                  const storedWithBiometric = Platform.OS === 'ios' || 
+                    (await SecureStore.getItemAsync('password_stored_with_biometric')) === 'true';
+                  if (storedWithBiometric) {
+                    try {
+                      savedPassword = await SecureStore.getItemAsync(SAVED_PASSWORD_KEY, {
+                        requireAuthentication: true,
+                        authenticationPrompt: t('auth.unlockToSignIn')
+                      });
+                    } catch (e) {
+                      savedPassword = await SecureStore.getItemAsync(SAVED_PASSWORD_KEY);
+                    }
+                  } else {
+                    savedPassword = await SecureStore.getItemAsync(SAVED_PASSWORD_KEY);
+                  }
+                }
+                if (savedEmail && savedPassword) {
+                  if (newServerType) { try { setServerType(newServerType); } catch (e) {} }
+                  await handleAuth('login', { email: savedEmail, password: savedPassword, serverType: newServerType || serverType });
+                } else {
+                  setView('auth');
+                }
+              } catch (e) {
+                showDarkAlert(t('alerts.error'), e.message || t('alerts.connectionFailed'));
+              } finally {
+                setLoadingSafe(false);
+              }
+            }}
+            purgeStealthCloudData={purgeStealthCloudData}
+            purgeClassicServerData={purgeClassicServerData}
+            showDarkAlert={showDarkAlert}
+            onQrScan={async () => {
+              if (!cameraPermission?.granted) {
+                const result = await requestCameraPermission();
+                if (!result.granted) {
+                  showDarkAlert(t('login.cameraPermissionTitle'), t('login.cameraPermissionMessage'));
+                  return;
+                }
+              }
+              setQrScannerOpen(true);
+            }}
+            normalizeHostInput={normalizeHostInput}
+            SecureStore={SecureStore}
+            currentLanguage={currentLanguage}
+            onLanguageChange={handleLanguageChange}
+          />
+        }
         onLogout={() => logout()}
         onCleanBestMatches={async () => { await cleanDeviceDuplicates(); }}
         onCleanSimilar={async () => { await startSimilarShotsReview(); }}
@@ -5226,6 +5176,89 @@ export default function App() {
         onViewNFTs={openNftGallery}
         onViewCertificates={() => setNftCertsOpen(true)}
       />
+
+      {qrScannerOpen && (
+        <View style={{position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: '#000', zIndex: 9999}}>
+          {cameraPermission?.granted ? (
+            <CameraView
+              style={{flex: 1}}
+              facing="back"
+              autofocus="on"
+              zoom={0}
+              barcodeScannerSettings={{
+                barcodeTypes: ['qr'],
+                interval: 100,
+              }}
+              onBarcodeScanned={(result) => {
+                if (result && result.data) {
+                  handleQRCodeScanned(result.data);
+                }
+              }}
+            />
+          ) : (
+            <View style={{flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#000'}}>
+              <Text style={{color: '#888', textAlign: 'center', padding: scaleSpacing(20), fontSize: scale(14)}}>
+                {t('permissions.cameraRequired')}
+              </Text>
+              <TouchableOpacity
+                style={{backgroundColor: '#03E1FF', paddingHorizontal: scaleSpacing(20), paddingVertical: scaleSpacing(10), borderRadius: scaleSpacing(8)}}
+                onPress={requestCameraPermission}>
+                <Text style={{color: '#000000', fontWeight: '700', fontSize: scale(14)}}>{t('permissions.grant')}</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+          {cameraPermission?.granted ? (
+            <View style={{position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, pointerEvents: 'box-none'}}>
+              <View style={{paddingTop: Platform.OS === 'ios' ? scaleSpacing(60) : scaleSpacing(40), paddingHorizontal: scaleSpacing(20), backgroundColor: 'rgba(0,0,0,0.5)'}}>
+                <Text style={{color: '#fff', fontSize: scale(18), fontWeight: '600', textAlign: 'center'}}>
+                  {t('qrScanner.title')}
+                </Text>
+                <Text style={{color: '#aaa', fontSize: scale(13), textAlign: 'center', marginTop: scaleSpacing(4)}}>
+                  {t('qrScanner.instruction')}
+                </Text>
+              </View>
+              <View style={{flex: 1, justifyContent: 'center', alignItems: 'center'}}>
+                <View style={{width: isTablet ? 280 : 240, height: isTablet ? 280 : 240, borderWidth: 2, borderColor: '#03E1FF', borderRadius: scaleSpacing(16)}} />
+              </View>
+              <View style={{paddingBottom: Platform.OS === 'android' ? ANDROID_NAV_BAR_HEIGHT + scaleSpacing(16) : scaleSpacing(50), paddingHorizontal: scaleSpacing(20), backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center'}}>
+                <TouchableOpacity
+                  style={{paddingVertical: scaleSpacing(14), paddingHorizontal: scaleSpacing(50), backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: scaleSpacing(12), borderWidth: 1, borderColor: 'rgba(255,255,255,0.3)'}}
+                  onPress={() => setQrScannerOpen(false)}>
+                  <Text style={{color: '#fff', fontSize: scale(16), fontWeight: '600'}}>{t('common.cancel')}</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          ) : (
+            <View style={{position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, pointerEvents: 'box-none'}}>
+              <View style={{paddingTop: Platform.OS === 'ios' ? scaleSpacing(60) : scaleSpacing(40), paddingHorizontal: scaleSpacing(20)}}>
+                <Text style={{color: '#fff', fontSize: scale(18), fontWeight: '600', textAlign: 'center'}}>
+                  {t('qrScanner.title')}
+                </Text>
+                <Text style={{color: '#aaa', fontSize: scale(13), textAlign: 'center', marginTop: scaleSpacing(4)}}>
+                  {t('qrScanner.instruction')}
+                </Text>
+              </View>
+              <View style={{position: 'absolute', bottom: 0, left: 0, right: 0, paddingBottom: Platform.OS === 'android' ? ANDROID_NAV_BAR_HEIGHT + scaleSpacing(16) : scaleSpacing(50), paddingHorizontal: scaleSpacing(20), alignItems: 'center'}}>
+                <TouchableOpacity
+                  style={{paddingVertical: scaleSpacing(14), paddingHorizontal: scaleSpacing(50), backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: scaleSpacing(12), borderWidth: 1, borderColor: 'rgba(255,255,255,0.3)'}}
+                  onPress={() => setQrScannerOpen(false)}>
+                  <Text style={{color: '#fff', fontSize: scale(16), fontWeight: '600'}}>{t('common.cancel')}</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
+        </View>
+      )}
+
+      {loading && !progressAction && (
+        <View style={[styles.overlay, { backgroundColor: '#000', zIndex: 9998 }]}>
+          <View style={{ alignItems: 'center', justifyContent: 'center' }}>
+            <GradientSpinner size={isTablet ? 90 : 70} />
+            <Text style={{ color: '#fff', fontSize: scale(16), fontWeight: '600', marginTop: scaleSpacing(20) }}>{status || t('alerts.pleaseWait')}</Text>
+            <Text style={{ color: '#888', fontSize: scale(13), marginTop: scaleSpacing(8) }}>{t('alerts.pleaseWait')}</Text>
+          </View>
+        </View>
+      )}
 
       {cleanupModeOpen && (
         <View style={[styles.overlay, glassModeEnabled && styles.overlayGlass]}>
@@ -6127,7 +6160,7 @@ export default function App() {
       })()}
 
       {customAlert && (
-        <View style={[styles.overlay, { backgroundColor: 'rgba(0,0,0,0.97)' }]}>
+        <View style={[styles.overlay, { backgroundColor: 'rgba(0,0,0,0.97)', zIndex: 9999 }]}>
           <View style={[styles.overlayCard, { backgroundColor: '#000000', maxWidth: isTablet ? 450 : 320 }]}>
             <Text style={[styles.overlayTitle, { fontSize: scale(18), marginBottom: scaleSpacing(8) }]}>{customAlert.title}</Text>
             <Text style={{ color: '#FFFFFF', fontSize: scale(14), textAlign: 'center', marginBottom: scaleSpacing(20), lineHeight: scale(20) }}>{customAlert.message}</Text>
@@ -6144,6 +6177,76 @@ export default function App() {
                 </TouchableOpacity>
               ))}
             </View>
+          </View>
+        </View>
+      )}
+
+      {paywallTierGb && (
+        <View style={[styles.overlay, glassModeEnabled && styles.overlayGlass]}>
+          <View style={[styles.overlayCard, glassModeEnabled && styles.overlayCardGlass, { backgroundColor: glassModeEnabled ? 'rgba(30, 30, 30, 0.9)' : '#1E1E1E', maxWidth: isTablet ? 480 : 340 }]}>
+            {(() => {
+              const gb = paywallTierGb;
+              const plan = availablePlans.find(p => p.tierGb === gb);
+              const priceStr = plan ? plan.priceString : '—';
+              const currentPlan = stealthUsage?.planGb || stealthUsage?.plan_gb;
+              const isCurrent = currentPlan === gb;
+              const canSubscribe = !purchaseLoading && plan && priceStr && priceStr !== '—';
+              const title = gb === 1000 ? t('subscription.storage1000Monthly') : t('subscription.storageGbMonthly', { gb });
+
+              return (
+                <>
+                  <Text style={[styles.overlayTitle, { fontSize: scale(18), marginBottom: scaleSpacing(8) }]}>{title}</Text>
+                  <Text style={{ color: '#CCC', fontSize: scale(14), textAlign: 'center', marginBottom: scaleSpacing(14), lineHeight: scale(20) }}>
+                    {priceStr !== '—' ? t('subscription.pricePerMonth', { price: priceStr }) : t('subscription.pricingUnavailable')}
+                  </Text>
+                  <View style={{ flexDirection: 'row', justifyContent: 'center', gap: scaleSpacing(12), flexWrap: 'wrap' }}>
+                    <TouchableOpacity
+                      style={[styles.overlayBtnPrimary, glassModeEnabled && styles.overlayBtnPrimaryGlass, { paddingVertical: scaleSpacing(10), paddingHorizontal: scaleSpacing(24), minWidth: isTablet ? 110 : 90, opacity: purchaseLoading ? 0.6 : 1 }]}
+                      onPress={closePaywall}
+                      disabled={purchaseLoading}
+                    >
+                      <Text style={styles.overlayBtnPrimaryText}>{t('common.close')}</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={[styles.overlayBtnPrimary, glassModeEnabled && styles.overlayBtnPrimaryGlass, { paddingVertical: scaleSpacing(10), paddingHorizontal: scaleSpacing(24), minWidth: isTablet ? 130 : 110, opacity: canSubscribe ? 1 : 0.5 }]}
+                      onPress={() => {
+                        if (!canSubscribe) return;
+                        closePaywall();
+                        handlePurchase(gb);
+                      }}
+                      disabled={!canSubscribe}
+                    >
+                      <Text style={styles.overlayBtnPrimaryText}>{isCurrent ? t('subscription.currentPlan') : t('subscription.subscribe')}</Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  {false && (
+                    <TouchableOpacity
+                      style={[styles.restorePurchasesBtn, { marginTop: scaleSpacing(14) }]}
+                      onPress={() => {
+                        closePaywall();
+                        handleRestorePurchases();
+                      }}
+                      disabled={purchaseLoading}
+                    >
+                      <Text style={styles.restorePurchasesText}>{t('subscription.restorePurchases')}</Text>
+                    </TouchableOpacity>
+                  )}
+                  <Text style={{ color: '#888', fontSize: scale(11), textAlign: 'center', marginTop: scaleSpacing(12), lineHeight: scale(16) }}>
+                    {t('subscription.autoRenewNote')}
+                  </Text>
+                  <View style={{ flexDirection: 'row', justifyContent: 'center', gap: scaleSpacing(16), marginTop: scaleSpacing(8) }}>
+                    <TouchableOpacity onPress={() => Linking.openURL('https://viktorvishyn369.github.io/PhotoLynk/terms.html')}>
+                      <Text style={{ color: '#03E1FF', fontSize: scale(11), textDecorationLine: 'underline' }}>{t('subscription.termsOfUse')}</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity onPress={() => Linking.openURL('https://viktorvishyn369.github.io/PhotoLynk/privacy-policy.html')}>
+                      <Text style={{ color: '#03E1FF', fontSize: scale(11), textDecorationLine: 'underline' }}>{t('subscription.privacyPolicy')}</Text>
+                    </TouchableOpacity>
+                  </View>
+                </>
+              );
+            })()}
           </View>
         </View>
       )}
@@ -6165,12 +6268,30 @@ export default function App() {
         onTransferNFT={handleNftTransfer}
         serverUrl={getServerUrl()}
         getAuthHeaders={getAuthHeaders}
+        refreshKey={nftGalleryRefreshKey}
+        onShowCertificate={(mintAddress) => {
+          setNftGalleryOpen(false);
+          setPendingCertMint(mintAddress);
+          setNftCertsOpen(true);
+        }}
+        pendingSelectMint={pendingNftMint}
+        onPendingSelectConsumed={() => setPendingNftMint(null)}
+        onNftCountChange={(count) => setQsNftCount(count)}
       />
 
       {/* Certificates Viewer */}
       <CertificatesViewer
         visible={nftCertsOpen}
         onClose={() => setNftCertsOpen(false)}
+        serverUrl={getServerUrl()}
+        getAuthHeaders={getAuthHeaders}
+        onShowNFT={(mintAddress) => {
+          setNftCertsOpen(false);
+          setPendingNftMint(mintAddress);
+          setNftGalleryOpen(true);
+        }}
+        pendingSelectMint={pendingCertMint}
+        onPendingSelectConsumed={() => setPendingCertMint(null)}
       />
 
       {/* NFT Transfer Modal */}

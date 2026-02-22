@@ -22,6 +22,7 @@ import {
   StatusBar,
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import { t } from './i18n';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
@@ -61,7 +62,7 @@ const ServerOption = ({ icon, label, badge, isSelected, onPress }) => (
     activeOpacity={0.7}
   >
     <View style={[styles.serverOptionIcon, isSelected && styles.serverOptionIconSelected]}>
-      <Feather name={icon} size={scale(18)} color={isSelected ? '#FFFFFF' : '#888888'} />
+      <Feather name={icon} size={scale(18)} color={isSelected ? '#FFFFFF' : '#8888A0'} />
     </View>
     <Text style={[styles.serverOptionLabel, isSelected && styles.serverOptionLabelSelected]}>
       {label}
@@ -96,12 +97,12 @@ const InputField = ({ icon, placeholder, value, onChangeText, secureTextEntry, k
   return (
     <View style={[styles.inputContainer, style]}>
       <View style={styles.inputIcon}>
-        <Feather name={icon} size={scale(18)} color="#666666" />
+        <Feather name={icon} size={scale(18)} color="#55556A" />
       </View>
       <TextInput
         style={styles.input}
         placeholder=""
-        placeholderTextColor="#666666"
+        placeholderTextColor="#55556A"
         value={value}
         onChangeText={onChangeText}
         secureTextEntry={secureTextEntry}
@@ -120,7 +121,7 @@ const InputField = ({ icon, placeholder, value, onChangeText, secureTextEntry, k
   );
 };
 
-// Primary Button
+// Primary Button with gradient
 const PrimaryButton = ({ title, onPress, loading, disabled, icon }) => (
   <TouchableOpacity
     style={[styles.primaryButton, (loading || disabled) && styles.primaryButtonDisabled]}
@@ -128,14 +129,20 @@ const PrimaryButton = ({ title, onPress, loading, disabled, icon }) => (
     disabled={loading || disabled}
     activeOpacity={0.8}
   >
-    {loading ? (
-      <ActivityIndicator size="small" color="#000000" />
-    ) : (
-      <>
-        {icon && <Feather name={icon} size={scale(18)} color="#000000" style={{ marginRight: scaleSpacing(8) }} />}
-        <Text style={styles.primaryButtonText}>{title}</Text>
-      </>
-    )}
+    <LinearGradient
+      colors={['#03E1FF', '#00B4CC']}
+      start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
+      style={styles.primaryButtonGradient}
+    >
+      {loading ? (
+        <ActivityIndicator size="small" color="#000000" />
+      ) : (
+        <>
+          {icon && <Feather name={icon} size={scale(16)} color="#000000" style={{ marginRight: scaleSpacing(6) }} />}
+          <Text style={styles.primaryButtonText}>{title}</Text>
+        </>
+      )}
+    </LinearGradient>
   </TouchableOpacity>
 );
 
@@ -158,30 +165,24 @@ const LinkButton = ({ title, onPress, color }) => (
   </TouchableOpacity>
 );
 
-// Plan Card Component
-const PlanCard = ({ gb, price, isSelected, disabled, soldOut, onPress }) => (
+// Plan Row Component — compact inline radio style
+const PlanRow = ({ gb, price, isSelected, disabled, soldOut, onPress }) => (
   <TouchableOpacity
-    style={[
-      styles.planCard,
-      isSelected && styles.planCardSelected,
-      disabled && styles.planCardDisabled,
-    ]}
+    style={[styles.planRow, isSelected && styles.planRowSelected, disabled && { opacity: 0.4 }]}
     onPress={onPress}
     disabled={disabled}
-    activeOpacity={0.8}
+    activeOpacity={0.7}
   >
-    <Text style={[styles.planCardGb, isSelected && styles.planCardGbSelected]}>
+    <View style={[styles.planRadio, isSelected && styles.planRadioSelected]}>
+      {isSelected && <View style={styles.planRadioDot} />}
+    </View>
+    <Text style={[styles.planRowGb, isSelected && styles.planRowGbSelected]}>
       {gb === 1000 ? '1 TB' : `${gb} GB`}
     </Text>
-    <Text style={[styles.planCardPrice, isSelected && styles.planCardPriceSelected]}>
-      {price || '—'}
+    <Text style={[styles.planRowPrice, isSelected && styles.planRowPriceSelected]}>
+      {price ? `${price}/${t('login.perMonth')}` : '—'}
     </Text>
-    <Text style={styles.planCardMeta}>{t('login.perMonth')}</Text>
-    {soldOut && (
-      <View style={styles.soldOutBadge}>
-        <Text style={styles.soldOutText}>SOLD OUT</Text>
-      </View>
-    )}
+    {soldOut && <Text style={styles.planRowSoldOut}>SOLD OUT</Text>}
   </TouchableOpacity>
 );
 
@@ -226,11 +227,7 @@ export const LoginScreen = ({
   plansLoading,
   purchaseLoading,
 }) => {
-  // State for collapsed other servers section
-  const [showOtherServers, setShowOtherServers] = useState(serverType !== 'stealthcloud');
-
-  // Auto-expand if non-stealthcloud server is selected
-  const isOtherServerSelected = serverType === 'local' || serverType === 'remote';
+  const [showOtherServers, setShowOtherServers] = useState(false);
 
   const handleOpenTerms = () => {
     Linking.openURL('https://viktorvishyn369.github.io/PhotoLynk/terms.html');
@@ -269,20 +266,31 @@ export const LoginScreen = ({
           <>
         <Text style={styles.sectionTitle}>{t('login.chooseServer')}</Text>
         <Card>
-          {/* StealthCloud - always shown as primary option */}
           <ServerOption
             icon="cloud"
             label={t('settings.stealthcloud')}
             badge={t('login.stealthcloudBadge')}
             isSelected={serverType === 'stealthcloud'}
-            onPress={() => {
-              setServerType('stealthcloud');
-              setShowOtherServers(false);
-            }}
+            onPress={() => setServerType('stealthcloud')}
           />
-          
-          {/* Other Servers - Collapsible (hidden on first run to guide users to StealthCloud) */}
-          {!isFirstRun && (
+          {authMode === 'login' ? (
+            <>
+              <View style={styles.divider} />
+              <ServerOption
+                icon="wifi"
+                label={t('login.localNetwork')}
+                isSelected={serverType === 'local'}
+                onPress={() => setServerType('local')}
+              />
+              <View style={styles.divider} />
+              <ServerOption
+                icon="globe"
+                label={t('settings.remoteServer')}
+                isSelected={serverType === 'remote'}
+                onPress={() => setServerType('remote')}
+              />
+            </>
+          ) : authMode === 'register' && (
             <>
               <View style={styles.divider} />
               <TouchableOpacity
@@ -291,18 +299,16 @@ export const LoginScreen = ({
                 activeOpacity={0.7}
               >
                 <View style={styles.otherServersToggleLeft}>
-                  <Feather name="server" size={scale(16)} color="#666666" />
+                  <Feather name="server" size={scale(16)} color="#55556A" />
                   <Text style={styles.otherServersToggleText}>{t('login.otherServers')}</Text>
                 </View>
-                <Feather 
-                  name={showOtherServers || isOtherServerSelected ? "chevron-up" : "chevron-down"} 
-                  size={scale(18)} 
-                  color="#666666" 
+                <Feather
+                  name={showOtherServers ? 'chevron-up' : 'chevron-down'}
+                  size={scale(18)}
+                  color="#55556A"
                 />
               </TouchableOpacity>
-              
-              {/* Expanded other servers */}
-              {(showOtherServers || isOtherServerSelected) && (
+              {showOtherServers && (
                 <>
                   <View style={styles.divider} />
                   <ServerOption
@@ -327,7 +333,7 @@ export const LoginScreen = ({
         )}
 
         {/* Server-specific config - Hide in forgot mode */}
-        {authMode !== 'forgot' && serverType === 'stealthcloud' && (
+        {authMode === 'login' && serverType === 'stealthcloud' && (
           <View style={styles.serverHint}>
             <Feather name="shield" size={scale(16)} color="#03E1FF" />
             <Text style={styles.serverHintText}>
@@ -347,26 +353,24 @@ export const LoginScreen = ({
                   <ActivityIndicator size="small" color="#03E1FF" />
                 )}
               </View>
-              <View style={styles.planGrid}>
-                {STEALTH_PLAN_TIERS.map((gb) => {
-                  const st = getStealthCloudTierStatus(gb);
-                  const disabled = st.canCreate === false || purchaseLoading;
-                  const selected = selectedStealthPlanGb === gb;
-                  const plan = availablePlans.find(p => p.tierGb === gb);
-                  const priceStr = plan ? plan.priceString : null;
-                  return (
-                    <PlanCard
-                      key={String(gb)}
-                      gb={gb}
-                      price={priceStr}
-                      isSelected={selected}
-                      disabled={disabled}
-                      soldOut={st.canCreate === false}
-                      onPress={() => !disabled && setSelectedStealthPlanGb(gb)}
-                    />
-                  );
-                })}
-              </View>
+              {STEALTH_PLAN_TIERS.map((gb) => {
+                const st = getStealthCloudTierStatus(gb);
+                const disabled = st.canCreate === false || purchaseLoading;
+                const selected = selectedStealthPlanGb === gb;
+                const plan = availablePlans.find(p => p.tierGb === gb);
+                const priceStr = plan ? plan.priceString : null;
+                return (
+                  <PlanRow
+                    key={String(gb)}
+                    gb={gb}
+                    price={priceStr}
+                    isSelected={selected}
+                    disabled={disabled}
+                    soldOut={st.canCreate === false}
+                    onPress={() => !disabled && setSelectedStealthPlanGb(gb)}
+                  />
+                );
+              })}
               {stealthCapacityError && (
                 <Text style={styles.planHint}>{t('login.capacityCheckUnavailable')}</Text>
               )}
@@ -563,9 +567,12 @@ export const LoginScreen = ({
           )}
         </View>
 
+        {/* Spacer — pushes footer down when content is short */}
+        <View style={{ flexGrow: 1, minHeight: scaleSpacing(20) }} />
+
         {/* Footer */}
         <View style={styles.footer}>
-          <Feather name="shield" size={scale(14)} color="#666666" />
+          <Feather name="shield" size={scale(14)} color="#55556A" />
           <Text style={styles.footerText}>{t('login.footerText')}</Text>
         </View>
       </ScrollView>
@@ -577,38 +584,38 @@ export const LoginScreen = ({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0A0A0A',
+    backgroundColor: '#060608',
   },
   scrollView: {
     flex: 1,
   },
   scrollContent: {
     flexGrow: 1,
-    justifyContent: 'center',
     paddingHorizontal: scaleSpacing(20),
-    paddingTop: scaleSpacing(40),
-    paddingBottom: Platform.OS === 'android' ? ANDROID_NAV_BAR_HEIGHT + scaleSpacing(40) : scaleSpacing(40),
+    paddingTop: Platform.OS === 'ios' ? scaleSpacing(20) : (StatusBar.currentHeight || 24) + scaleSpacing(12),
+    paddingBottom: Platform.OS === 'android' ? ANDROID_NAV_BAR_HEIGHT + scaleSpacing(30) : scaleSpacing(30),
   },
   // Header
   header: {
-    marginBottom: scaleSpacing(12),
+    alignItems: 'center',
+    marginBottom: scaleSpacing(8),
+    paddingTop: scaleSpacing(10),
   },
   headerRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
     gap: scaleSpacing(14),
   },
   headerTitleWrap: {
     alignItems: 'flex-start',
   },
   appIcon: {
-    width: isTablet ? 70 : 56,
-    height: isTablet ? 70 : 56,
-    borderRadius: isTablet ? 16 : 12,
+    width: isTablet ? 64 : 48,
+    height: isTablet ? 64 : 48,
+    borderRadius: isTablet ? 14 : 10,
   },
   title: {
-    fontSize: scale(28),
+    fontSize: scale(24),
     fontWeight: '700',
     color: '#FFFFFF',
   },
@@ -618,32 +625,32 @@ const styles = StyleSheet.create({
   },
   subtitle: {
     fontSize: scale(12),
-    color: '#888888',
+    color: '#8888A0',
     marginTop: scaleSpacing(2),
   },
   // Section
   sectionTitle: {
-    fontSize: scale(13),
+    fontSize: scale(12),
     fontWeight: '600',
-    color: '#888888',
+    color: '#8888A0',
     textTransform: 'uppercase',
     letterSpacing: 1,
-    marginTop: scaleSpacing(24),
-    marginBottom: scaleSpacing(12),
+    marginTop: scaleSpacing(18),
+    marginBottom: scaleSpacing(8),
     marginLeft: scaleSpacing(4),
   },
   // Card
   card: {
-    backgroundColor: '#1A1A1A',
+    backgroundColor: '#10101A',
     borderRadius: scale(16),
     borderWidth: 1,
-    borderColor: '#2A2A2A',
+    borderColor: '#1A1A24',
     overflow: 'hidden',
     padding: scaleSpacing(4),
   },
   divider: {
     height: StyleSheet.hairlineWidth,
-    backgroundColor: '#2A2A2A',
+    backgroundColor: '#1A1A24',
     marginLeft: scaleSpacing(56),
   },
   // Server Option
@@ -663,13 +670,13 @@ const styles = StyleSheet.create({
     width: scaleSpacing(40),
     height: scaleSpacing(40),
     borderRadius: scaleSpacing(10),
-    backgroundColor: '#2A2A2A',
+    backgroundColor: '#1A1A24',
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: scaleSpacing(12),
   },
   serverOptionIconSelected: {
-    backgroundColor: 'rgba(59, 130, 246, 0.2)',
+    backgroundColor: 'rgba(3, 225, 255, 0.15)',
   },
   serverOptionLabel: {
     flex: 1,
@@ -727,23 +734,23 @@ const styles = StyleSheet.create({
   },
   otherServersToggleText: {
     fontSize: scale(14),
-    color: '#666666',
+    color: '#55556A',
     fontWeight: '500',
   },
   serverHintText: {
     flex: 1,
     fontSize: scale(13),
-    color: '#888888',
+    color: '#8888A0',
     lineHeight: scale(18),
   },
   // Input
   inputContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#0A0A0A',
+    backgroundColor: '#060608',
     borderRadius: scaleSpacing(12),
     borderWidth: 1,
-    borderColor: '#2A2A2A',
+    borderColor: '#1A1A24',
   },
   inputIcon: {
     width: scaleSpacing(48),
@@ -756,6 +763,7 @@ const styles = StyleSheet.create({
     paddingRight: scaleSpacing(16),
     fontSize: scale(13),
     color: '#FFFFFF',
+    backgroundColor: '#060608',
   },
   placeholderWrapper: {
     position: 'absolute',
@@ -768,11 +776,11 @@ const styles = StyleSheet.create({
   placeholderText: {
     marginLeft: scaleSpacing(48),
     fontSize: scale(13),
-    color: '#666666',
+    color: '#55556A',
   },
   placeholderHint: {
     fontSize: scale(11),
-    color: '#666666',
+    color: '#55556A',
   },
   inputRow: {
     flexDirection: 'row',
@@ -780,7 +788,7 @@ const styles = StyleSheet.create({
   },
   inputHint: {
     fontSize: scale(12),
-    color: '#666666',
+    color: '#55556A',
     marginTop: scaleSpacing(8),
     marginLeft: scaleSpacing(4),
   },
@@ -788,7 +796,7 @@ const styles = StyleSheet.create({
     width: scaleSpacing(48),
     height: scaleSpacing(48),
     borderRadius: scaleSpacing(12),
-    backgroundColor: '#2A2A2A',
+    backgroundColor: '#1A1A24',
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -802,71 +810,67 @@ const styles = StyleSheet.create({
   },
   planHeaderText: {
     fontSize: scale(13),
-    color: '#888888',
+    color: '#8888A0',
   },
-  planGrid: {
+  planRow: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'space-between',
-    paddingHorizontal: scaleSpacing(6),
-    paddingVertical: scaleSpacing(6),
-  },
-  planCard: {
-    // 2 cards per row on phones, 4 on 7+ inch tablets
-    width: is7InchOrLarger ? '23%' : '48%',
-    marginBottom: scaleSpacing(6),
-    backgroundColor: '#2A2A2A',
-    borderRadius: scaleSpacing(10),
-    padding: scaleSpacing(10),
     alignItems: 'center',
+    paddingVertical: scaleSpacing(10),
+    paddingHorizontal: scaleSpacing(12),
+    borderRadius: scaleSpacing(8),
+    marginHorizontal: scaleSpacing(4),
+    marginBottom: scaleSpacing(2),
+  },
+  planRowSelected: {
+    backgroundColor: 'rgba(3, 225, 255, 0.08)',
+  },
+  planRadio: {
+    width: scaleSpacing(20),
+    height: scaleSpacing(20),
+    borderRadius: scaleSpacing(10),
     borderWidth: 2,
-    borderColor: 'transparent',
+    borderColor: '#35354A',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: scaleSpacing(12),
   },
-  planCardSelected: {
+  planRadioSelected: {
     borderColor: '#03E1FF',
-    backgroundColor: 'rgba(3, 225, 255, 0.15)',
   },
-  planCardDisabled: {
-    opacity: 0.5,
+  planRadioDot: {
+    width: scaleSpacing(10),
+    height: scaleSpacing(10),
+    borderRadius: scaleSpacing(5),
+    backgroundColor: '#03E1FF',
   },
-  planCardGb: {
-    fontSize: scale(15),
-    fontWeight: 'bold',
-    color: '#FFFFFF',
+  planRowGb: {
+    fontSize: scale(14),
+    fontWeight: '700',
+    color: '#F0F0F5',
+    minWidth: scale(50),
   },
-  planCardGbSelected: {
+  planRowGbSelected: {
     color: '#03E1FF',
   },
-  planCardPrice: {
+  planRowPrice: {
+    flex: 1,
     fontSize: scale(12),
-    color: '#888888',
-    marginTop: scaleSpacing(2),
+    color: '#8888A0',
+    textAlign: 'right',
   },
-  planCardPriceSelected: {
-    color: '#FFFFFF',
+  planRowPriceSelected: {
+    color: '#F0F0F5',
   },
-  planCardMeta: {
-    fontSize: scale(10),
-    color: '#666666',
-    marginTop: scaleSpacing(1),
-  },
-  soldOutBadge: {
-    position: 'absolute',
-    top: scaleSpacing(4),
-    right: scaleSpacing(4),
-    backgroundColor: '#D4A017',
-    paddingHorizontal: scaleSpacing(4),
-    paddingVertical: scaleSpacing(1),
-    borderRadius: scaleSpacing(3),
-  },
-  soldOutText: {
-    color: '#000000',
-    fontSize: scale(8),
+  planRowSoldOut: {
+    fontSize: scale(9),
     fontWeight: '700',
+    color: '#D4A017',
+    marginLeft: scaleSpacing(8),
+    letterSpacing: 0.5,
   },
   planHint: {
     fontSize: scale(12),
-    color: '#666666',
+    color: '#55556A',
     textAlign: 'center',
     paddingHorizontal: scaleSpacing(12),
     paddingBottom: scaleSpacing(12),
@@ -886,7 +890,7 @@ const styles = StyleSheet.create({
   // Forgot
   forgotHint: {
     fontSize: scale(14),
-    color: '#888888',
+    color: '#8888A0',
     lineHeight: scale(20),
     marginBottom: scaleSpacing(8),
   },
@@ -902,7 +906,7 @@ const styles = StyleSheet.create({
     height: scaleSpacing(24),
     borderRadius: scaleSpacing(6),
     borderWidth: 2,
-    borderColor: '#444444',
+    borderColor: '#35354A',
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -913,7 +917,7 @@ const styles = StyleSheet.create({
   termsText: {
     flex: 1,
     fontSize: scale(13),
-    color: '#888888',
+    color: '#8888A0',
     lineHeight: scale(20),
   },
   termsLink: {
@@ -922,22 +926,32 @@ const styles = StyleSheet.create({
   },
   // Action Buttons
   actionButtons: {
-    marginTop: scaleSpacing(24),
-    gap: scaleSpacing(12),
+    marginTop: scaleSpacing(20),
+    gap: scaleSpacing(10),
   },
   primaryButton: {
-    flexDirection: 'row',
-    backgroundColor: '#03E1FF',
-    paddingVertical: scaleSpacing(16),
     borderRadius: scaleSpacing(12),
+    overflow: 'hidden',
+    shadowColor: '#03E1FF',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 12,
+    elevation: 8,
+  },
+  primaryButtonGradient: {
+    flexDirection: 'row',
+    paddingVertical: scaleSpacing(14),
     alignItems: 'center',
     justifyContent: 'center',
+    borderRadius: scaleSpacing(12),
   },
   primaryButtonDisabled: {
     opacity: 0.5,
+    shadowOpacity: 0,
+    elevation: 0,
   },
   primaryButtonText: {
-    fontSize: scale(16),
+    fontSize: scale(15),
     fontWeight: '700',
     color: '#000000',
   },
@@ -947,7 +961,7 @@ const styles = StyleSheet.create({
   },
   secondaryButtonText: {
     fontSize: scale(15),
-    color: '#888888',
+    color: '#8888A0',
     fontWeight: '600',
   },
   authLinks: {
@@ -965,12 +979,12 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: scaleSpacing(32),
+    marginTop: scaleSpacing(24),
     gap: scaleSpacing(8),
   },
   footerText: {
     fontSize: scale(12),
-    color: '#666666',
+    color: '#55556A',
   },
 });
 

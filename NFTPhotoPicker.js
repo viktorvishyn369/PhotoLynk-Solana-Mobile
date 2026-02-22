@@ -23,15 +23,18 @@ import {
   Switch,
 } from 'react-native';
 import * as MediaLibrary from 'expo-media-library';
+import * as FileSystem from 'expo-file-system';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as SecureStore from 'expo-secure-store';
 import { Feather } from '@expo/vector-icons';
 import { t } from './i18n';
-import { estimateNFTMintCost, isCNFTAvailable, NFT_FEES, isPromoActive, getPromoDaysRemaining } from './nftOperations';
+import { estimateNFTMintCost, computeLimitedEditionFee, isCNFTAvailable, NFT_FEES, isPromoActive, getPromoDaysRemaining, NFT_EDITION, NFT_LICENSE_OPTIONS, EDITION_ROYALTY_BPS, NFT_COMMISSION_WALLET } from './nftOperations';
 
 const NFT_WELCOME_SHOWN_KEY = 'nft_welcome_shown';
 
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
+const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
+const SCREEN_HEIGHT_FULL = Dimensions.get('screen').height;
+const ANDROID_NAV_BAR_HEIGHT = Platform.OS === 'android' ? Math.max(0, SCREEN_HEIGHT_FULL - SCREEN_HEIGHT) : 0;
 const THUMBNAIL_SIZE = (SCREEN_WIDTH - 48) / 3; // 3 columns with padding
 const LARGE_THUMBNAIL_SIZE = (SCREEN_WIDTH - 32) / 2; // 2 columns for NFT picker
 const IS_SMALL_SCREEN = SCREEN_WIDTH < 430;
@@ -107,6 +110,12 @@ const NFTPhotoPicker = ({
   const [stripExif, setStripExif] = useState(false); // Privacy option to remove EXIF
   const [storageOption, setStorageOption] = useState('ipfs'); // 'ipfs' or 'cloud'
   const [nftType, setNftType] = useState('compressed'); // 'compressed' or 'standard'
+  // Edition options
+  const [edition, setEdition] = useState(NFT_EDITION.OPEN);
+  const [license, setLicense] = useState('arr');
+  const [watermark, setWatermark] = useState(false);
+  const [encrypt, setEncrypt] = useState(false);
+  const [showLicensePicker, setShowLicensePicker] = useState(false);
   const [cloudEligible, setCloudEligible] = useState(false);
   const [cloudReason, setCloudReason] = useState('');
   const [checkingCloud, setCheckingCloud] = useState(false);
@@ -117,6 +126,7 @@ const NFTPhotoPicker = ({
   const [showWelcome, setShowWelcome] = useState(false);
   const [dontShowWelcomeAgain, setDontShowWelcomeAgain] = useState(false);
   const [welcomeChecked, setWelcomeChecked] = useState(false);
+  const [expandedDetail, setExpandedDetail] = useState(null); // 'public' | 'private' | 'cert' | null
   
   const flatListRef = useRef(null);
   
@@ -169,13 +179,19 @@ const NFTPhotoPicker = ({
       setStripExif(false);
       setStorageOption('ipfs');
       setNftType('compressed');
+      setEdition(NFT_EDITION.OPEN);
+      setLicense('arr');
+      setWatermark(false);
+      setEncrypt(false);
+      setShowLicensePicker(false);
       setCloudEligible(false);
       setCloudReason('');
+      setWelcomeChecked(false);
       setEstimatedCost(null);
     }
   }, [visible]);
   
-  // Check StealthCloud eligibility when picker opens
+  // Check StealthCloud eligibility when picker opens — default to cloud if eligible
   useEffect(() => {
     if (visible && checkCloudEligibility) {
       setCheckingCloud(true);
@@ -183,6 +199,8 @@ const NFTPhotoPicker = ({
         .then(result => {
           setCloudEligible(result.eligible);
           setCloudReason(result.reason || '');
+          // Cloud eligible but don't auto-switch — default stays IPFS
+          // User can manually select StealthCloud if they want encryption
         })
         .catch(() => {
           setCloudEligible(false);
@@ -192,29 +210,55 @@ const NFTPhotoPicker = ({
     }
   }, [visible, checkCloudEligibility]);
   
-  // Estimate cost when options change
+  // Limited Edition: original photo embedded on-chain as data URI in metadata → uploaded to IPFS
+  // Hashes + RFC 3161 + C2PA also in metadata. Encryption IS available (user choice).
+  const isLimited = edition === NFT_EDITION.LIMITED;
+  // StealthCloud requires encryption — force on and lock
+  const isCloudSelected = storageOption === 'cloud';
+  // Lock encryption/watermark only for Open Edition + onchain (SVG vector, not meaningful to encrypt)
+  // Limited Edition keeps encryption available — the embedded original image can be encrypted
+  const isOnchainLocked = !isLimited && edition === NFT_EDITION.OPEN && storageOption === 'onchain';
   useEffect(() => {
-    if (showMintConfirm && selectedPhoto) {
-      setLoadingCost(true);
-      const fileSize = selectedPhoto.fileSize || 2 * 1024 * 1024; // Estimate 2MB if unknown
-      const useCompressed = nftType === 'compressed';
-      estimateNFTMintCost(fileSize, storageOption, useCompressed)
+    if (isLimited) {
+      setStorageOption('onchain');
+    }
+  }, [isLimited]);
+  useEffect(() => {
+    if (isCloudSelected) {
+      setEncrypt(true); // StealthCloud: encryption mandatory
+    } else if (isOnchainLocked) {
+      setEncrypt(false);
+      setWatermark(false);
+    }
+  }, [isCloudSelected, isOnchainLocked]);
+
+  // Estimate cost when options change (debounced to avoid 429 RPC spam)
+  useEffect(() => {
+    if (!selectedPhoto) return;
+    setLoadingCost(true);
+    const fileSize = selectedPhoto.fileSize || 0;
+    console.log('[NFTPicker] Cost estimate fileSize:', fileSize, 'bytes =', Math.round(fileSize / 1024), 'KB, edition:', edition);
+    const useCompressed = nftType === 'compressed';
+    const timer = setTimeout(() => {
+      estimateNFTMintCost(fileSize || 500 * 1024, storageOption, useCompressed, edition)
         .then(cost => setEstimatedCost(cost))
         .catch(e => {
           console.log('[NFTPicker] Cost estimation failed:', e.message);
           setEstimatedCost(null);
         })
         .finally(() => setLoadingCost(false));
-    }
-  }, [showMintConfirm, selectedPhoto, storageOption, nftType]);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [selectedPhoto, storageOption, nftType, edition]);
 
-  // Card estimates for both types (used for desktop-like UI)
+  // Card estimates for both types (debounced to avoid 429 RPC spam)
   useEffect(() => {
-    if (showMintConfirm && selectedPhoto) {
-      const fileSize = selectedPhoto.fileSize || 2 * 1024 * 1024;
+    if (!selectedPhoto) return;
+    const fileSize = selectedPhoto.fileSize || 500 * 1024;
+    const timer = setTimeout(() => {
       Promise.all([
-        estimateNFTMintCost(fileSize, storageOption, true).catch(() => null),
-        estimateNFTMintCost(fileSize, storageOption, false).catch(() => null),
+        estimateNFTMintCost(fileSize, storageOption, true, edition).catch(() => null),
+        estimateNFTMintCost(fileSize, storageOption, false, edition).catch(() => null),
       ])
         .then(([cnft, standard]) => {
           setCompressedEstimate(cnft);
@@ -224,8 +268,9 @@ const NFTPhotoPicker = ({
           setCompressedEstimate(null);
           setStandardEstimate(null);
         });
-    }
-  }, [showMintConfirm, selectedPhoto, storageOption]);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [selectedPhoto, storageOption, edition]);
   
   // Load photos from media library
   const loadPhotos = async (after = null) => {
@@ -250,10 +295,15 @@ const NFTPhotoPicker = ({
         sortBy: [MediaLibrary.SortBy.creationTime],
       });
       
+      // Filter out photos from PhotoLynkDeleted folder (Android: check URI path)
+      const filtered = Platform.OS === 'android'
+        ? result.assets.filter(a => !a.uri?.includes('PhotoLynkDeleted'))
+        : result.assets;
+      
       if (after) {
-        setPhotos(prev => [...prev, ...result.assets]);
+        setPhotos(prev => [...prev, ...filtered]);
       } else {
-        setPhotos(result.assets);
+        setPhotos(filtered);
       }
       
       setEndCursor(result.endCursor);
@@ -380,6 +430,25 @@ const NFTPhotoPicker = ({
     const baseName = photo.filename?.replace(/\.[^/.]+$/, '') || 'Photo';
     setNftName(`${baseName} NFT`);
     
+    // Fetch real fileSize from asset info so cost estimates are accurate
+    try {
+      const info = await MediaLibrary.getAssetInfoAsync(photo.id);
+      let realSize = info.fileSize || info.size || photo.fileSize || 0;
+      // Fallback: use FileSystem to get actual file size if MediaLibrary didn't provide it
+      if (!realSize && (info.localUri || info.uri)) {
+        try {
+          const fsInfo = await FileSystem.getInfoAsync(info.localUri || info.uri);
+          if (fsInfo.exists && fsInfo.size) realSize = fsInfo.size;
+        } catch (_) {}
+      }
+      console.log('[NFTPicker] Photo fileSize:', realSize, 'bytes =', Math.round(realSize / 1024), 'KB, from:', info.fileSize ? 'MediaLibrary' : 'FileSystem');
+      if (realSize && realSize !== photo.fileSize) {
+        setSelectedPhoto({ ...photo, fileSize: realSize });
+      }
+    } catch (e) {
+      console.log('[NFTPicker] fileSize fetch failed:', e?.message);
+    }
+    
     // Load EXIF data in background
     const exifData = await loadExifForPhoto(photo);
     setSelectedPhotoExif(exifData);
@@ -423,7 +492,12 @@ const NFTPhotoPicker = ({
       storageOption: storageOption,
       nftType: nftType, // 'compressed' or 'standard'
       serverConfig: serverConfig,
-      costEstimate: estimatedCost, // Pass the pre-calculated cost to avoid recalculation
+      costEstimate: estimatedCost,
+      // Edition parameters
+      edition,
+      license,
+      watermark,
+      encrypt,
     });
     
     onClose?.();
@@ -455,7 +529,7 @@ const NFTPhotoPicker = ({
               ? new Date(item.creationTime).toLocaleDateString()
               : item.modificationTime && item.modificationTime > 0
                 ? new Date(item.modificationTime).toLocaleDateString()
-                : 'No date'}
+                : t('nftMint.noDate')}
           </Text>
         </View>
       </TouchableOpacity>
@@ -498,7 +572,7 @@ const NFTPhotoPicker = ({
               <View style={styles.mintPanelHeader}>
                 <View style={styles.mintPanelHeaderLeft}>
                   <Feather name="hexagon" size={18} color={COLORS.primary} />
-                  <Text style={styles.mintPanelTitle}>NFT Memories</Text>
+                  <Text style={styles.mintPanelTitle}>{t('nftMint.nftCollection')}</Text>
                 </View>
                 <TouchableOpacity onPress={() => setShowMintConfirm(false)} style={styles.mintPanelCloseBtn}>
                   <Feather name="x" size={20} color={COLORS.textSecondary} />
@@ -513,22 +587,84 @@ const NFTPhotoPicker = ({
                   style={styles.mintPromoBanner}
                   fallbackColor={COLORS.secondary}
                 >
-                  <Text style={styles.mintPromoText}>🎉 Launch Special - {getPromoDaysRemaining()} Days Left! Up to 90% off!</Text>
+                  <Text style={styles.mintPromoText}>🎉 {t('nftMint.launchSpecialBanner', { days: getPromoDaysRemaining() })}</Text>
                 </GradientBox>
               )}
 
-              <Text style={styles.mintSectionLabel}>NFT TYPE</Text>
+              {/* 1. Edition (Open / Limited) */}
+              <Text style={styles.mintSectionLabel}>{t('nftMint.editionLabel')}</Text>
+              <View style={[styles.mintCardRow, IS_SMALL_SCREEN && styles.mintCardRowStack]}>
+                <TouchableOpacity
+                  style={[styles.mintOptionCard, edition === NFT_EDITION.OPEN && styles.mintOptionCardActive]}
+                  onPress={() => setEdition(NFT_EDITION.OPEN)}
+                  activeOpacity={0.85}
+                >
+                  <Feather name="image" size={18} color={edition === NFT_EDITION.OPEN ? COLORS.primary : COLORS.textSecondary} style={{ marginBottom: 4 }} />
+                  <Text style={styles.mintOptionTitle} numberOfLines={1}>{t('nftMint.openEdition')}</Text>
+                  <Text style={styles.mintOptionSubtitle}>{t('nftMint.photoOnBlockchain')}</Text>
+                  {/* <Text style={styles.mintOptionPrice}>{t('nftMint.openEditionFee')}</Text> */}
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.mintOptionCard, edition === NFT_EDITION.LIMITED && styles.mintOptionCardActive]}
+                  onPress={() => setEdition(NFT_EDITION.LIMITED)}
+                  activeOpacity={0.85}
+                >
+                  <Feather name="award" size={18} color={edition === NFT_EDITION.LIMITED ? COLORS.accent : COLORS.textSecondary} style={{ marginBottom: 4 }} />
+                  <Text style={styles.mintOptionTitle} numberOfLines={1}>{t('nftMint.limitedEdition')}</Text>
+                  <Text style={styles.mintOptionSubtitle}>{t('nftMint.copyrightCertificate')}</Text>
+                  {/* <Text style={styles.mintOptionPrice}>{t('nftMint.limitedEditionFee')}</Text> */}
+                </TouchableOpacity>
+              </View>
+
+              {edition === NFT_EDITION.LIMITED && (
+                <View style={styles.mintInfoBanner}>
+                  <Feather name="info" size={13} color={COLORS.accent} />
+                  <Text style={styles.mintInfoText}>{t('nftMint.limitedEditionInfo')}</Text>
+                </View>
+              )}
+
+              {/* 2. License */}
+              <TouchableOpacity style={styles.mintPrivacyRow} onPress={() => setShowLicensePicker(!showLicensePicker)} activeOpacity={0.85}>
+                <View style={styles.mintPrivacyLeft}>
+                  <Feather name="file-text" size={14} color={COLORS.primary} />
+                  <Text style={styles.mintPrivacyText}>{t('nftMint.licenseLabel')}</Text>
+                </View>
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <Text style={[styles.mintPrivacyText, { color: COLORS.textSecondary, marginRight: 4 }]}>
+                    {NFT_LICENSE_OPTIONS.find(l => l.id === license)?.short || 'ARR'}
+                  </Text>
+                  <Feather name={showLicensePicker ? 'chevron-up' : 'chevron-down'} size={14} color={COLORS.textSecondary} />
+                </View>
+              </TouchableOpacity>
+
+              {showLicensePicker && (
+                <View style={styles.mintLicenseList}>
+                  {NFT_LICENSE_OPTIONS.map(opt => (
+                    <TouchableOpacity
+                      key={opt.id}
+                      style={[styles.mintLicenseItem, license === opt.id && styles.mintLicenseItemActive]}
+                      onPress={() => { setLicense(opt.id); setShowLicensePicker(false); }}
+                      activeOpacity={0.85}
+                    >
+                      <Text style={[styles.mintLicenseItemText, license === opt.id && { color: COLORS.primary }]}>{t(`nftMint.license_${opt.id.replace(/-/g,'_')}`) || opt.label}</Text>
+                      {license === opt.id && <Feather name="check" size={14} color={COLORS.primary} />}
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              )}
+
+              {/* 3. NFT Type (Compressed / Standard) */}
+              <Text style={styles.mintSectionLabel}>{t('nftMint.nftType')}</Text>
               <View style={[styles.mintCardRow, IS_SMALL_SCREEN && styles.mintCardRowStack]}>
                 <TouchableOpacity
                   style={[styles.mintOptionCard, nftType === 'compressed' && styles.mintOptionCardActive]}
                   onPress={() => setNftType('compressed')}
                   activeOpacity={0.85}
                 >
-                  <Text style={styles.mintOptionTitle} numberOfLines={2}>Compressed (cNFT)</Text>
-                  <Text style={styles.mintOptionSubtitle}>99.99% cheaper</Text>
-                  <Text style={styles.mintOptionPrice}>
-                    {compressedEstimate?.total?.usdFormatted || (storageOption === 'cloud' ? '~$0.02' : '~$0.05')}
-                  </Text>
+                  <Text style={styles.mintOptionTitle} numberOfLines={1}>{t('nftMint.compressedCNft')}</Text>
+                  <Text style={styles.mintOptionSubtitle}>{t('nftMint.compressedCheaper')}</Text>
+                  {/* <Text style={styles.mintOptionPrice}>{compressedEstimate ? compressedEstimate.total.usdFormatted : '~$0.02'}</Text> */}
                 </TouchableOpacity>
 
                 <TouchableOpacity
@@ -536,16 +672,26 @@ const NFTPhotoPicker = ({
                   onPress={() => setNftType('standard')}
                   activeOpacity={0.85}
                 >
-                  <Text style={styles.mintOptionTitle} numberOfLines={2}>Standard NFT</Text>
-                  <Text style={styles.mintOptionSubtitle}>Traditional</Text>
-                  <Text style={styles.mintOptionPrice}>
-                    {standardEstimate?.total?.usdFormatted || (storageOption === 'cloud' ? '~$0.20' : '~$0.50')}
-                  </Text>
+                  <Text style={styles.mintOptionTitle} numberOfLines={1}>{t('nftMint.standardNft')}</Text>
+                  <Text style={styles.mintOptionSubtitle}>{t('nftMint.standardTraditional')}</Text>
+                  {/* <Text style={styles.mintOptionPrice}>{standardEstimate ? standardEstimate.total.usdFormatted : '~$0.20'}</Text> */}
                 </TouchableOpacity>
               </View>
 
-              <Text style={styles.mintSectionLabel}>IMAGE STORAGE</Text>
+              {/* 4. Image Storage (IPFS / StealthCloud / On-chain) */}
+              {!isLimited && (
+              <>
+              <Text style={styles.mintSectionLabel}>{t('nftMint.imageStorageLabel')}</Text>
               <View style={[styles.mintCardRow, IS_SMALL_SCREEN && styles.mintCardRowStack]}>
+                <TouchableOpacity
+                  style={[styles.mintOptionCard, storageOption === 'ipfs' && styles.mintOptionCardActive]}
+                  onPress={() => setStorageOption('ipfs')}
+                  activeOpacity={0.85}
+                >
+                  <Text style={styles.mintOptionTitle} numberOfLines={1} ellipsizeMode="tail">IPFS</Text>
+                  <Text style={styles.mintOptionSubtitle}>{t('nftMint.ipfsSub')}</Text>
+                </TouchableOpacity>
+
                 <TouchableOpacity
                   style={[
                     styles.mintOptionCard,
@@ -557,61 +703,56 @@ const NFTPhotoPicker = ({
                   activeOpacity={0.85}
                 >
                   <Text style={styles.mintOptionTitle} numberOfLines={1} ellipsizeMode="tail">StealthCloud</Text>
-                  <Text style={styles.mintOptionSubtitle}>
-                    Free storage • ${(nftType === 'compressed' ? NFT_FEES.APP_COMMISSION_CNFT_CLOUD_USD : NFT_FEES.APP_COMMISSION_STANDARD_CLOUD_USD).toFixed(2)} fee
-                  </Text>
+                  <Text style={styles.mintOptionSubtitle}>{t('nftMint.cloudSub')}</Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity
-                  style={[styles.mintOptionCard, storageOption === 'ipfs' && styles.mintOptionCardActive]}
-                  onPress={() => setStorageOption('ipfs')}
+                  style={[styles.mintOptionCard, storageOption === 'onchain' && styles.mintOptionCardActive]}
+                  onPress={() => setStorageOption('onchain')}
                   activeOpacity={0.85}
                 >
-                  <Text style={styles.mintOptionTitle} numberOfLines={1} ellipsizeMode="tail">IPFS</Text>
-                  <Text style={styles.mintOptionSubtitle}>
-                    Decentralized • ${(nftType === 'compressed' ? NFT_FEES.APP_COMMISSION_CNFT_IPFS_USD : NFT_FEES.APP_COMMISSION_STANDARD_IPFS_USD).toFixed(2)} fee
-                  </Text>
+                  <Text style={styles.mintOptionTitle} numberOfLines={1} ellipsizeMode="tail">{t('nftMint.embeddedTitle')}</Text>
+                  <Text style={styles.mintOptionSubtitle}>{t('nftMint.embeddedSub')}</Text>
                 </TouchableOpacity>
               </View>
+              </>)
+              }
 
+              {/* 5. Encrypt & Watermark */}
+              <TouchableOpacity
+                style={[styles.mintPrivacyRow, isOnchainLocked && !isCloudSelected && { opacity: 0.4 }]}
+                onPress={() => !isOnchainLocked && !isCloudSelected && setEncrypt(!encrypt)}
+                activeOpacity={isCloudSelected ? 1 : 0.85}
+                disabled={isOnchainLocked || isCloudSelected}
+              >
+                <View style={styles.mintPrivacyLeft}>
+                  <Feather name="lock" size={14} color={encrypt ? COLORS.accent : COLORS.textSecondary} />
+                  <Text style={styles.mintPrivacyText}>
+                    {t('nftMint.encryptImage')}{isCloudSelected ? ` (${t('nftMint.encryptRequired')})` : ''}
+                  </Text>
+                </View>
+                <Switch value={encrypt} onValueChange={isCloudSelected ? undefined : setEncrypt} disabled={isOnchainLocked || isCloudSelected} />
+              </TouchableOpacity>
+
+              <TouchableOpacity style={[styles.mintPrivacyRow, isOnchainLocked && { opacity: 0.4 }]} onPress={() => !isOnchainLocked && setWatermark(!watermark)} activeOpacity={0.85} disabled={isOnchainLocked}>
+                <View style={styles.mintPrivacyLeft}>
+                  <Feather name="droplet" size={14} color={watermark ? COLORS.accent : COLORS.textSecondary} />
+                  <Text style={styles.mintPrivacyText}>{t('nftMint.addWatermark')}</Text>
+                </View>
+                <Switch value={watermark} onValueChange={setWatermark} disabled={isOnchainLocked} />
+              </TouchableOpacity>
+
+              {/* 6. Estimated cost */}
               <View style={styles.mintBreakdownBox}>
                 <View style={styles.mintBreakdownRow}>
-                  <Text style={styles.mintBreakdownLabel}>App fee (you pay)</Text>
+                  <Text style={styles.mintBreakdownLabel}>{t('nftMint.estTotal')}</Text>
                   <Text style={styles.mintBreakdownValue}>
-                    {estimatedCost
-                      ? `$${estimatedCost.breakdown.appCommission.usd.toFixed(2)} (${estimatedCost.breakdown.appCommission.sol.toFixed(6)} SOL)`
-                      : '—'}
+                    {estimatedCost ? `~${estimatedCost.total.usdFormatted}` : '—'}
                   </Text>
-                </View>
-                <View style={styles.mintBreakdownRow}>
-                  <Text style={styles.mintBreakdownLabel}>Network (est.)</Text>
-                  <Text style={styles.mintBreakdownValue}>
-                    {estimatedCost
-                      ? `${(
-                          estimatedCost.breakdown.transactionFee.sol +
-                          estimatedCost.breakdown.solanaRent.sol +
-                          estimatedCost.breakdown.metaplexFee.sol
-                        ).toFixed(6)} SOL`
-                      : '—'}
-                  </Text>
-                </View>
-                <View style={styles.mintBreakdownRow}>
-                  <Text style={styles.mintBreakdownLabel}>Storage (est.)</Text>
-                  <Text style={styles.mintBreakdownValue}>
-                    {estimatedCost
-                      ? `$${(
-                          estimatedCost.breakdown.arweaveImage.usd +
-                          estimatedCost.breakdown.arweaveMetadata.usd
-                        ).toFixed(2)}`
-                      : '—'}
-                  </Text>
-                </View>
-                <View style={styles.mintBreakdownRow}>
-                  <Text style={styles.mintBreakdownLabel}>SOL/USD</Text>
-                  <Text style={styles.mintBreakdownValue}>{estimatedCost ? `$${estimatedCost.solPrice.toFixed(2)}` : '—'}</Text>
                 </View>
               </View>
 
+              {/* 7. Selected photo + Name + Description */}
               {selectedPhoto && (
                 <View style={styles.mintSelectedPhotoRow}>
                   <View style={styles.mintSelectedPhotoThumb}>
@@ -623,7 +764,7 @@ const NFTPhotoPicker = ({
                   </View>
                   <View style={styles.mintSelectedPhotoMeta}>
                     <Text style={styles.mintSelectedPhotoName} numberOfLines={1}>
-                      {selectedPhoto.filename || 'Selected photo'}
+                      {selectedPhoto.filename || t('nftMint.selectedPhoto')}
                     </Text>
                     <Text style={styles.mintSelectedPhotoSub} numberOfLines={1}>
                       {selectedPhoto.width}x{selectedPhoto.height}
@@ -640,6 +781,7 @@ const NFTPhotoPicker = ({
                 placeholderTextColor={COLORS.textSecondary}
                 maxLength={50}
               />
+              {/* Description hidden — kept for future use
               <TextInput
                 style={styles.mintInput}
                 value={nftDescription}
@@ -648,6 +790,7 @@ const NFTPhotoPicker = ({
                 placeholderTextColor={COLORS.textSecondary}
                 maxLength={200}
               />
+              */}
 
               <TouchableOpacity style={styles.mintPrivacyRow} onPress={() => setStripExif(!stripExif)} activeOpacity={0.85}>
                 <View style={styles.mintPrivacyLeft}>
@@ -657,6 +800,7 @@ const NFTPhotoPicker = ({
                 <Switch value={stripExif} onValueChange={setStripExif} />
               </TouchableOpacity>
 
+              {/* 8. Actions */}
               <View style={styles.mintActionsRow}>
                 <TouchableOpacity style={styles.mintCancelBtn} onPress={() => setShowMintConfirm(false)}>
                   <Text style={styles.mintCancelText}>{t('common.cancel')}</Text>
@@ -731,7 +875,7 @@ const NFTPhotoPicker = ({
             ListEmptyComponent={
               <View style={styles.emptyContainer}>
                 <Feather name="image" size={48} color={COLORS.textSecondary} />
-                <Text style={styles.emptyText}>No photos found</Text>
+                <Text style={styles.emptyText}>{t('nftMint.noPhotosFound')}</Text>
               </View>
             }
           />
@@ -740,59 +884,133 @@ const NFTPhotoPicker = ({
         {/* Mint confirmation modal */}
         {renderMintConfirmModal()}
         
-        {/* Welcome popup for first-time users */}
-        <Modal
-          visible={showWelcome}
-          transparent
-          animationType="fade"
-          onRequestClose={handleWelcomeDismiss}
-        >
+        {/* Welcome popup for first-time users — absolute View avoids Android nav bar cutoff */}
+        {showWelcome && (
           <View style={styles.welcomeOverlay}>
             <View style={styles.welcomeModal}>
               {/* Header */}
               <View style={styles.welcomeHeader}>
-                <View style={styles.welcomeIconContainer}>
-                  <Feather name="image" size={24} color={COLORS.primary} />
-                </View>
                 <Text style={styles.welcomeTitle}>{t('nftWelcome.title')}</Text>
+                <TouchableOpacity onPress={handleWelcomeDismiss} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                  <Feather name="x" size={18} color="#52525b" />
+                </TouchableOpacity>
               </View>
-              
-              {/* What is NFT */}
-              <View style={styles.welcomeSection}>
-                <View style={styles.welcomeSectionHeader}>
-                  <Feather name="help-circle" size={14} color={COLORS.primary} />
-                  <Text style={styles.welcomeSectionTitle}>{t('nftWelcome.whatIsNft')}</Text>
+              <Text style={styles.welcomeSubtitle}>{t('nftWelcome.subtitle')}</Text>
+
+              <ScrollView style={styles.welcomeScroll} showsVerticalScrollIndicator={false} bounces={false}>
+
+              {/* Scenario label */}
+              <Text style={styles.welcomeLabel}>{t('nftWelcome.scenarioLabel')}</Text>
+
+              {/* Example 1: Public */}
+              <View style={styles.welcomeExample}>
+                <View style={styles.welcomeExHead}>
+                  <View style={[styles.welcomeExTag, { backgroundColor: 'rgba(34,197,94,0.15)' }]}>
+                    <Text style={[styles.welcomeExTagText, { color: '#4ade80' }]}>{t('nftWelcome.publicTag')}</Text>
+                  </View>
+                  <Text style={styles.welcomeExName}>{t('nftWelcome.publicName')}</Text>
                 </View>
-                <Text style={styles.welcomeSectionText}>{t('nftWelcome.whatIsNftDesc')}</Text>
-              </View>
-              
-              {/* Public Warning */}
-              <View style={styles.welcomeSection}>
-                <View style={styles.welcomeSectionHeader}>
-                  <Feather name="alert-triangle" size={14} color={COLORS.warning} />
-                  <Text style={styles.welcomeSectionTitle}>{t('nftWelcome.publicWarning')}</Text>
+                <Text style={styles.welcomeExDesc}>{t('nftWelcome.publicDesc')}</Text>
+                <View style={styles.welcomeChipRow}>
+                  <View style={styles.welcomeChipGreen}><Text style={styles.welcomeChipGreenText}>{t('nftWelcome.publicChip1')}</Text></View>
+                  <View style={styles.welcomeChipGreen}><Text style={styles.welcomeChipGreenText}>{t('nftWelcome.publicChip2')}</Text></View>
+                  <View style={styles.welcomeChipAmber}><Text style={styles.welcomeChipAmberText}>{t('nftWelcome.publicChip3')}</Text></View>
                 </View>
-                <Text style={styles.welcomeSectionText}>{t('nftWelcome.publicWarningDesc')}</Text>
+                <TouchableOpacity style={styles.welcomeDetailToggle} onPress={() => setExpandedDetail(expandedDetail === 'public' ? null : 'public')} activeOpacity={0.7}>
+                  <Text style={styles.welcomeDetailToggleText}>{t('nftWelcome.details')}</Text>
+                  <Feather name={expandedDetail === 'public' ? 'chevron-down' : 'chevron-right'} size={12} color="#52525b" />
+                </TouchableOpacity>
+                {expandedDetail === 'public' && (
+                  <View style={styles.welcomeDetailBody}>
+                    <Text style={styles.welcomeProText}>+ {t('nftWelcome.publicPro1')}</Text>
+                    <Text style={styles.welcomeProText}>+ {t('nftWelcome.publicPro2')}</Text>
+                    <Text style={styles.welcomeProText}>+ {t('nftWelcome.publicPro3')}</Text>
+                    <Text style={styles.welcomeProText}>+ {t('nftWelcome.publicPro4')}</Text>
+                    <Text style={styles.welcomeConText}>– {t('nftWelcome.publicCon1')}</Text>
+                    <Text style={styles.welcomeConText}>– {t('nftWelcome.publicCon2')}</Text>
+                  </View>
+                )}
               </View>
-              
-              {/* Size Recommendation */}
-              <View style={styles.welcomeSection}>
-                <View style={styles.welcomeSectionHeader}>
-                  <Feather name="maximize-2" size={14} color={COLORS.accent} />
-                  <Text style={styles.welcomeSectionTitle}>{t('nftWelcome.sizeRecommendation')}</Text>
+
+              {/* Example 2: Private */}
+              <View style={styles.welcomeExample}>
+                <View style={styles.welcomeExHead}>
+                  <View style={[styles.welcomeExTag, { backgroundColor: 'rgba(99,102,241,0.15)' }]}>
+                    <Text style={[styles.welcomeExTagText, { color: '#818cf8' }]}>{t('nftWelcome.privateTag')}</Text>
+                  </View>
+                  <Text style={styles.welcomeExName}>{t('nftWelcome.privateName')}</Text>
                 </View>
-                <Text style={styles.welcomeSectionText}>{t('nftWelcome.sizeRecommendationDesc')}</Text>
-              </View>
-              
-              {/* Loading Note */}
-              <View style={styles.welcomeSection}>
-                <View style={styles.welcomeSectionHeader}>
-                  <Feather name="wifi" size={14} color={COLORS.textSecondary} />
-                  <Text style={styles.welcomeSectionTitle}>{t('nftWelcome.loadingNote')}</Text>
+                <Text style={styles.welcomeExDesc}>{t('nftWelcome.privateDesc')}</Text>
+                <View style={styles.welcomeChipRow}>
+                  <View style={styles.welcomeChipGreen}><Text style={styles.welcomeChipGreenText}>{t('nftWelcome.privateChip1')}</Text></View>
+                  <View style={styles.welcomeChipGreen}><Text style={styles.welcomeChipGreenText}>{t('nftWelcome.privateChip2')}</Text></View>
+                  <View style={styles.welcomeChipGreen}><Text style={styles.welcomeChipGreenText}>{t('nftWelcome.privateChip3')}</Text></View>
                 </View>
-                <Text style={styles.welcomeSectionText}>{t('nftWelcome.loadingNoteDesc')}</Text>
+                <TouchableOpacity style={styles.welcomeDetailToggle} onPress={() => setExpandedDetail(expandedDetail === 'private' ? null : 'private')} activeOpacity={0.7}>
+                  <Text style={styles.welcomeDetailToggleText}>{t('nftWelcome.details')}</Text>
+                  <Feather name={expandedDetail === 'private' ? 'chevron-down' : 'chevron-right'} size={12} color="#52525b" />
+                </TouchableOpacity>
+                {expandedDetail === 'private' && (
+                  <View style={styles.welcomeDetailBody}>
+                    <Text style={styles.welcomeProText}>+ {t('nftWelcome.privatePro1')}</Text>
+                    <Text style={styles.welcomeProText}>+ {t('nftWelcome.privatePro2')}</Text>
+                    <Text style={styles.welcomeProText}>+ {t('nftWelcome.privatePro3')}</Text>
+                    <Text style={styles.welcomeProText}>+ {t('nftWelcome.privatePro4')}</Text>
+                    <Text style={styles.welcomeConText}>– {t('nftWelcome.privateCon1')}</Text>
+                    <Text style={styles.welcomeConText}>– {t('nftWelcome.privateCon2')}</Text>
+                  </View>
+                )}
               </View>
-              
+
+              {/* Example 3: Certificate */}
+              <View style={styles.welcomeExample}>
+                <View style={styles.welcomeExHead}>
+                  <View style={[styles.welcomeExTag, { backgroundColor: 'rgba(245,158,11,0.15)' }]}>
+                    <Text style={[styles.welcomeExTagText, { color: '#fbbf24' }]}>{t('nftWelcome.certTag')}</Text>
+                  </View>
+                  <Text style={styles.welcomeExName}>{t('nftWelcome.certName')}</Text>
+                </View>
+                <Text style={styles.welcomeExDesc}>{t('nftWelcome.certDesc')}</Text>
+                <View style={styles.welcomeChipRow}>
+                  <View style={styles.welcomeChipGreen}><Text style={styles.welcomeChipGreenText}>{t('nftWelcome.certChip1')}</Text></View>
+                  <View style={styles.welcomeChipGreen}><Text style={styles.welcomeChipGreenText}>{t('nftWelcome.certChip2')}</Text></View>
+                  <View style={styles.welcomeChipGreen}><Text style={styles.welcomeChipGreenText}>{t('nftWelcome.certChip3')}</Text></View>
+                </View>
+                <TouchableOpacity style={styles.welcomeDetailToggle} onPress={() => setExpandedDetail(expandedDetail === 'cert' ? null : 'cert')} activeOpacity={0.7}>
+                  <Text style={styles.welcomeDetailToggleText}>{t('nftWelcome.details')}</Text>
+                  <Feather name={expandedDetail === 'cert' ? 'chevron-down' : 'chevron-right'} size={12} color="#52525b" />
+                </TouchableOpacity>
+                {expandedDetail === 'cert' && (
+                  <View style={styles.welcomeDetailBody}>
+                    <Text style={styles.welcomeProText}>+ {t('nftWelcome.certPro1')}</Text>
+                    <Text style={styles.welcomeProText}>+ {t('nftWelcome.certPro2')}</Text>
+                    <Text style={styles.welcomeProText}>+ {t('nftWelcome.certPro3')}</Text>
+                    <Text style={styles.welcomeProText}>+ {t('nftWelcome.certPro4')}</Text>
+                    <Text style={styles.welcomeProText}>+ {t('nftWelcome.certPro5')}</Text>
+                    <Text style={styles.welcomeConText}>– {t('nftWelcome.certCon1')}</Text>
+                    <Text style={styles.welcomeConText}>– {t('nftWelcome.certCon2')}</Text>
+                  </View>
+                )}
+              </View>
+
+              {/* Key facts */}
+              <Text style={styles.welcomeLabel}>{t('nftWelcome.keyFactsLabel')}</Text>
+
+              <View style={styles.welcomeNote}>
+                <Text style={styles.welcomeNoteText}><Text style={styles.welcomeNoteBold}>{t('nftWelcome.factImageTitle')}</Text> {t('nftWelcome.factImageDesc')}</Text>
+              </View>
+              <View style={[styles.welcomeNote, { marginTop: 4 }]}>
+                <Text style={styles.welcomeNoteText}><Text style={styles.welcomeNoteBold}>{t('nftWelcome.factExifTitle')}</Text> {t('nftWelcome.factExifDesc')}</Text>
+              </View>
+              <View style={[styles.welcomeNote, { marginTop: 4 }]}>
+                <Text style={styles.welcomeNoteText}><Text style={styles.welcomeNoteBold}>{t('nftWelcome.factEncryptionTitle')}</Text> {t('nftWelcome.factEncryptionDesc')}</Text>
+              </View>
+              <View style={[styles.welcomeNote, { marginTop: 4, marginBottom: 4 }]}>
+                <Text style={styles.welcomeNoteText}><Text style={styles.welcomeNoteBold}>{t('nftWelcome.factPublicTitle')}</Text> {t('nftWelcome.factPublicDesc')}</Text>
+              </View>
+
+              </ScrollView>
+
               {/* Don't show again toggle */}
               <TouchableOpacity 
                 style={styles.welcomeToggle}
@@ -814,7 +1032,7 @@ const NFTPhotoPicker = ({
               </TouchableOpacity>
             </View>
           </View>
-        </Modal>
+        )}
       </View>
     </Modal>
   );
@@ -988,6 +1206,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     padding: 16,
+    paddingBottom: 16 + ANDROID_NAV_BAR_HEIGHT,
   },
   mintPanel: {
     backgroundColor: COLORS.surface,
@@ -1194,6 +1413,50 @@ const styles = StyleSheet.create({
     color: COLORS.text,
     fontSize: 12,
     fontWeight: '600',
+  },
+  mintInfoBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    borderRadius: 12,
+    backgroundColor: 'rgba(34, 197, 94, 0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(34, 197, 94, 0.25)',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    marginBottom: 14,
+  },
+  mintInfoText: {
+    flex: 1,
+    color: COLORS.textSecondary,
+    fontSize: 11,
+    lineHeight: 16,
+  },
+  mintLicenseList: {
+    borderRadius: 12,
+    backgroundColor: 'rgba(0,0,0,0.35)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.10)',
+    marginBottom: 14,
+    marginTop: -8,
+    overflow: 'hidden',
+  },
+  mintLicenseItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 11,
+    paddingHorizontal: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.06)',
+  },
+  mintLicenseItemActive: {
+    backgroundColor: 'rgba(153, 69, 255, 0.12)',
+  },
+  mintLicenseItemText: {
+    color: COLORS.text,
+    fontSize: 13,
+    fontWeight: '500',
   },
   mintActionsRow: {
     flexDirection: 'row',
@@ -1426,72 +1689,173 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     fontSize: 14,
   },
-  // Welcome popup styles - compact to fit screen without scrolling
+  // Welcome popup styles — professional scenario-based design
   welcomeOverlay: {
-    flex: 1,
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
     backgroundColor: 'rgba(0,0,0,0.85)',
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 16,
+    padding: 20,
+    paddingBottom: 20 + ANDROID_NAV_BAR_HEIGHT,
+    zIndex: 999,
   },
   welcomeModal: {
-    backgroundColor: COLORS.surface,
-    borderRadius: 16,
+    backgroundColor: '#111',
+    borderRadius: 14,
     padding: 16,
     width: '100%',
-    maxWidth: 360,
+    maxWidth: 380,
+    maxHeight: SCREEN_HEIGHT - 60 - ANDROID_NAV_BAR_HEIGHT,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
   },
   welcomeHeader: {
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  welcomeIconContainer: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: `${COLORS.primary}20`,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  welcomeTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: COLORS.text,
-    textAlign: 'center',
-  },
-  welcomeSection: {
-    marginBottom: 10,
-  },
-  welcomeSectionHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 3,
+    justifyContent: 'space-between',
+    marginBottom: 4,
   },
-  welcomeSectionTitle: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: COLORS.text,
-    marginLeft: 6,
+  welcomeTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#fff',
   },
-  welcomeSectionText: {
+  welcomeSubtitle: {
     fontSize: 11,
-    color: COLORS.textSecondary,
+    color: '#71717a',
     lineHeight: 15,
-    paddingLeft: 22,
+    marginBottom: 12,
+  },
+  welcomeScroll: {
+    flexGrow: 0,
+  },
+  welcomeLabel: {
+    fontSize: 9,
+    fontWeight: '600',
+    color: '#52525b',
+    letterSpacing: 0.6,
+    marginTop: 12,
+    marginBottom: 6,
+  },
+  welcomeExample: {
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.06)',
+    borderRadius: 8,
+    padding: 10,
+    marginBottom: 6,
+  },
+  welcomeExHead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+    marginBottom: 4,
+  },
+  welcomeExTag: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 3,
+  },
+  welcomeExTagText: {
+    fontSize: 9,
+    fontWeight: '600',
+    letterSpacing: 0.3,
+  },
+  welcomeExName: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#e4e4e7',
+  },
+  welcomeExDesc: {
+    fontSize: 10.5,
+    color: '#a1a1aa',
+    lineHeight: 15,
+    marginBottom: 5,
+  },
+  welcomeChipRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 4,
+  },
+  welcomeChipGreen: {
+    backgroundColor: 'rgba(34,197,94,0.1)',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 3,
+  },
+  welcomeChipGreenText: {
+    fontSize: 9,
+    color: '#4ade80',
+  },
+  welcomeChipAmber: {
+    backgroundColor: 'rgba(245,158,11,0.1)',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 3,
+  },
+  welcomeChipAmberText: {
+    fontSize: 9,
+    color: '#fbbf24',
+  },
+  welcomeDetailToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingTop: 6,
+    marginTop: 6,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255,255,255,0.05)',
+  },
+  welcomeDetailToggleText: {
+    fontSize: 10,
+    color: '#52525b',
+  },
+  welcomeDetailBody: {
+    paddingTop: 5,
+  },
+  welcomeProText: {
+    fontSize: 10,
+    color: '#71717a',
+    lineHeight: 14,
+    marginBottom: 2,
+  },
+  welcomeConText: {
+    fontSize: 10,
+    color: '#71717a',
+    lineHeight: 14,
+    marginBottom: 2,
+  },
+  welcomeNote: {
+    backgroundColor: 'rgba(255,255,255,0.02)',
+    borderRadius: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  welcomeNoteText: {
+    fontSize: 10,
+    color: '#52525b',
+    lineHeight: 14,
+  },
+  welcomeNoteBold: {
+    color: '#a1a1aa',
+    fontWeight: '600',
   },
   welcomeToggle: {
     flexDirection: 'row',
     alignItems: 'center',
     marginTop: 10,
-    marginBottom: 12,
+    marginBottom: 10,
   },
   welcomeCheckbox: {
-    width: 20,
-    height: 20,
+    width: 18,
+    height: 18,
     borderRadius: 4,
-    borderWidth: 2,
-    borderColor: COLORS.border,
+    borderWidth: 1.5,
+    borderColor: '#3f3f46',
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 8,
@@ -1501,17 +1865,17 @@ const styles = StyleSheet.create({
     borderColor: COLORS.primary,
   },
   welcomeToggleText: {
-    fontSize: 13,
-    color: COLORS.textSecondary,
+    fontSize: 12,
+    color: '#52525b',
   },
   welcomeButton: {
     backgroundColor: COLORS.primary,
     borderRadius: 10,
-    paddingVertical: 12,
+    paddingVertical: 10,
     alignItems: 'center',
   },
   welcomeButtonText: {
-    fontSize: 15,
+    fontSize: 13,
     fontWeight: '600',
     color: '#fff',
   },

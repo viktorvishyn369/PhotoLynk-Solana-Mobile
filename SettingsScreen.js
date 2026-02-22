@@ -100,7 +100,7 @@ const ServerOption = ({ icon, label, description, isSelected, onPress, glassMode
     disabled={disabled}
   >
     <View style={[styles.serverOptionIcon, isSelected && styles.serverOptionIconSelected]}>
-      <Feather name={icon} size={scale(20)} color={isSelected ? '#FFFFFF' : '#888888'} />
+      <Feather name={icon} size={scale(20)} color={isSelected ? '#FFFFFF' : '#8888A0'} />
     </View>
     <View style={styles.serverOptionContent}>
       <Text style={[styles.serverOptionLabel, isSelected && styles.serverOptionLabelSelected]}>
@@ -117,7 +117,7 @@ const ServerOption = ({ icon, label, description, isSelected, onPress, glassMode
 const ToggleSetting = ({ icon, title, subtitle, value, onValueChange, glassModeEnabled }) => (
   <View style={[styles.settingRow, glassModeEnabled && styles.settingRowGlass]}>
     <View style={styles.settingIcon}>
-      <Feather name={icon} size={scale(20)} color="#888888" />
+      <Feather name={icon} size={scale(20)} color="#8888A0" />
     </View>
     <View style={styles.settingContent}>
       <Text style={styles.settingTitle}>{title}</Text>
@@ -204,13 +204,15 @@ export const SettingsScreen = ({
     await SecureStore.setItemAsync('server_type', type);
     setServerType(type);
     
-    if (type === 'stealthcloud') {
-      // Re-authenticate with StealthCloud using saved credentials instead of logging out
-      if (relogin) {
+    if (relogin) {
+      if (type === 'stealthcloud') {
         await relogin('stealthcloud');
+      } else if (type === 'local' && localHost) {
+        await relogin('local');
+      } else if (type === 'remote' && remoteHost) {
+        await relogin('remote');
       }
     }
-    // For local/remote, user still needs to save settings to trigger relogin
   };
 
   const handleSaveSettings = async () => {
@@ -227,17 +229,7 @@ export const SettingsScreen = ({
   };
 
   return (
-    <View style={styles.container}>
-      {/* Header */}
-      <View style={styles.header}>
-        <TouchableOpacity onPress={onBack} style={styles.backButton}>
-          <Text style={styles.backButtonText}>{t('common.back')}</Text>
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>{t('settings.title')}</Text>
-        <View style={{ width: scaleSpacing(60) }} />
-      </View>
-
-      <ScrollView
+    <ScrollView
         style={styles.scrollView}
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
@@ -382,14 +374,16 @@ export const SettingsScreen = ({
               <View style={styles.divider} />
             </>
           )}
-          <ToggleSetting
-            icon="zap"
-            title={t('settings.fastMode')}
-            subtitle={fastModeEnabled ? t('settings.fastModeOnDesc') : t('settings.fastModeOffDesc')}
-            value={fastModeEnabled}
-            onValueChange={persistFastModeEnabled}
-            glassModeEnabled={glassModeEnabled}
-          />
+          {serverType === 'stealthcloud' && (
+            <ToggleSetting
+              icon="zap"
+              title={t('settings.fastMode')}
+              subtitle={fastModeEnabled ? t('settings.fastModeOnDesc') : t('settings.fastModeOffDesc')}
+              value={fastModeEnabled}
+              onValueChange={persistFastModeEnabled}
+              glassModeEnabled={glassModeEnabled}
+            />
+          )}
           {/* Glass Effect toggle hidden for future use
           <View style={styles.divider} />
           <ToggleSetting
@@ -450,7 +444,6 @@ export const SettingsScreen = ({
           </Card>
         </View>
       </ScrollView>
-    </View>
   );
 };
 
@@ -458,7 +451,7 @@ export const SettingsScreen = ({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0A0A0A',
+    backgroundColor: '#060608',
   },
   header: {
     flexDirection: 'row',
@@ -467,7 +460,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: scaleSpacing(20),
     paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 24) + 8 : Math.min(60, SCREEN_HEIGHT * 0.04 + 20),
     paddingBottom: Platform.OS === 'android' ? 8 : scaleSpacing(16),
-    backgroundColor: '#0A0A0A',
+    backgroundColor: '#060608',
   },
   headerTitle: {
     fontSize: scale(22),
@@ -502,18 +495,18 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: scale(12),
     fontWeight: '600',
-    color: '#888888',
+    color: '#8888A0',
     textTransform: 'uppercase',
-    letterSpacing: 1,
+    letterSpacing: 1.2,
     marginTop: scaleSpacing(16),
     marginBottom: scaleSpacing(8),
     marginLeft: scaleSpacing(4),
   },
   card: {
-    backgroundColor: '#1A1A1A',
+    backgroundColor: '#111114',
     borderRadius: scale(16),
     borderWidth: 1,
-    borderColor: '#2A2A2A',
+    borderColor: '#252530',
     overflow: 'hidden',
   },
   cardGlass: {
@@ -527,7 +520,7 @@ const styles = StyleSheet.create({
   },
   divider: {
     height: StyleSheet.hairlineWidth,
-    backgroundColor: '#2A2A2A',
+    backgroundColor: '#252530',
     marginLeft: scaleSpacing(56),
   },
   // Server Options
@@ -553,7 +546,7 @@ const styles = StyleSheet.create({
     width: scaleSpacing(36),
     height: scaleSpacing(36),
     borderRadius: scaleSpacing(9),
-    backgroundColor: '#2A2A2A',
+    backgroundColor: '#18181C',
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: scaleSpacing(10),
@@ -574,7 +567,7 @@ const styles = StyleSheet.create({
   },
   serverOptionDesc: {
     fontSize: scale(13),
-    color: '#888888',
+    color: '#8888A0',
     marginTop: scaleSpacing(2),
   },
   checkmark: {
@@ -608,7 +601,7 @@ const styles = StyleSheet.create({
   },
   settingSubtitle: {
     fontSize: scale(13),
-    color: '#666666',
+    color: '#55556A',
     marginTop: 2,
   },
   // Input
@@ -620,7 +613,7 @@ const styles = StyleSheet.create({
   inputLabel: {
     fontSize: scale(13),
     fontWeight: '500',
-    color: '#888888',
+    color: '#8888A0',
     marginBottom: scaleSpacing(8),
   },
   inputRow: {
@@ -631,18 +624,18 @@ const styles = StyleSheet.create({
   textInput: {
     flex: 1,
     height: scaleSpacing(48),
-    backgroundColor: '#0A0A0A',
+    backgroundColor: '#060608',
     borderRadius: scaleSpacing(10),
     paddingHorizontal: scaleSpacing(16),
     fontSize: scale(16),
     color: '#FFFFFF',
     borderWidth: 1,
-    borderColor: '#2A2A2A',
+    borderColor: '#252530',
   },
   qrButton: {
     width: scaleSpacing(48),
     height: scaleSpacing(48),
-    backgroundColor: '#2A2A2A',
+    backgroundColor: '#18181C',
     borderRadius: scaleSpacing(10),
     justifyContent: 'center',
     alignItems: 'center',
@@ -650,8 +643,8 @@ const styles = StyleSheet.create({
   // Action Button
   actionButton: {
     marginHorizontal: scaleSpacing(14),
-    marginVertical: scaleSpacing(12),
-    paddingVertical: scaleSpacing(12),
+    marginVertical: scaleSpacing(10),
+    paddingVertical: scaleSpacing(10),
     backgroundColor: '#03E1FF',
     borderRadius: scaleSpacing(10),
     alignItems: 'center',
@@ -673,7 +666,7 @@ const styles = StyleSheet.create({
   },
   actionButtonSubtitle: {
     fontSize: scale(12),
-    color: '#888888',
+    color: '#8888A0',
     marginTop: 2,
   },
   // Connection Info
@@ -686,7 +679,7 @@ const styles = StyleSheet.create({
   },
   connectionText: {
     fontSize: scale(13),
-    color: '#666666',
+    color: '#55556A',
   },
   // Language Note
   languageNote: {
@@ -696,7 +689,7 @@ const styles = StyleSheet.create({
   },
   languageNoteText: {
     fontSize: scale(11),
-    color: '#666666',
+    color: '#55556A',
     fontStyle: 'italic',
   },
   // Auto Upload Note
@@ -707,7 +700,7 @@ const styles = StyleSheet.create({
   },
   autoUploadNoteText: {
     fontSize: scale(10),
-    color: '#888888',
+    color: '#8888A0',
     lineHeight: scale(14),
   },
 });

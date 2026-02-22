@@ -1823,7 +1823,9 @@ PODS:
     - ReactCommon/turbomodule/bridging
     - ReactCommon/turbomodule/core
     - Yoga
-  - SDWebImage/Core (5.21.5)
+  - RNSVG (15.8.0):
+    - React-Core
+  - SDWebImage/Core (5.21.6)
   - SDWebImageWebPCoder (0.15.0):
     - libwebp (~> 1.0)
     - SDWebImage/Core (~> 5.17)
@@ -1933,6 +1935,7 @@ DEPENDENCIES:
   - RNGestureHandler (from `../node_modules/react-native-gesture-handler`)
   - RNReanimated (from `../node_modules/react-native-reanimated`)
   - RNScreens (from `../node_modules/react-native-screens`)
+  - RNSVG (from `../node_modules/react-native-svg`)
   - UMAppLoader (from `../node_modules/unimodules-app-loader/ios`)
   - Yoga (from `../node_modules/react-native/ReactCommon/yoga`)
 
@@ -2134,6 +2137,8 @@ EXTERNAL SOURCES:
     :path: "../node_modules/react-native-reanimated"
   RNScreens:
     :path: "../node_modules/react-native-screens"
+  RNSVG:
+    :path: "../node_modules/react-native-svg"
   UMAppLoader:
     :path: "../node_modules/unimodules-app-loader/ios"
   Yoga:
@@ -2235,7 +2240,8 @@ SPEC CHECKSUMS:
   RNGestureHandler: 32336458ef842088a459ccfcc10b583186de2633
   RNReanimated: 39e9001841ccea006e7ec2fe3dd36adde7ded419
   RNScreens: 295d9c0aaeb7f680d03d7e9b476569a4959aae89
-  SDWebImage: e9c98383c7572d713c1a0d7dd2783b10599b9838
+  RNSVG: 8542aa11770b27563714bbd8494a8436385fc85f
+  SDWebImage: 1bb6a1b84b6fe87b972a102bdc77dd589df33477
   SDWebImageWebPCoder: 0e06e365080397465cc73a7a9b472d8a3bd0f377
   SocketRocket: d4aabe649be1e368d1318fdf28a022d714d65748
   UMAppLoader: 7e7e0eaa7854ffd652c00a68c443afb28c3bedba
