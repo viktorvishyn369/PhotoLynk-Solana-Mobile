@@ -411,28 +411,38 @@ class ExifExtractorModule: NSObject {
         return
       }
       
-      // Export to temp file
+      // Export to temp file using requestData (writeData has known PHPhotosErrorDomain -1 bug)
       let tmpDir = NSTemporaryDirectory()
-      let tmpPath = (tmpDir as NSString).appendingPathComponent("raw_export_\(cleanId).\(ext)")
+      let uuid = UUID().uuidString
+      let tmpPath = (tmpDir as NSString).appendingPathComponent("raw_export_\(uuid).\(ext)")
       let tmpURL = URL(fileURLWithPath: tmpPath)
       
-      // Remove existing temp file
+      // Remove existing temp file just in case
       try? FileManager.default.removeItem(at: tmpURL)
       
       let options = PHAssetResourceRequestOptions()
       options.isNetworkAccessAllowed = true
       
-      PHAssetResourceManager.default().writeData(for: resource, toFile: tmpURL, options: options) { error in
+      var accumulatedData = Data()
+      
+      PHAssetResourceManager.default().requestData(for: resource, options: options, dataReceivedHandler: { chunk in
+        accumulatedData.append(chunk)
+      }, completionHandler: { error in
         if let error = error {
           reject("E_EXPORT", "Failed to export RAW resource: \(error.localizedDescription)", nil)
         } else {
-          resolve([
-            "filePath": tmpPath,
-            "filename": originalFilename,
-            "isRaw": true
-          ])
+          do {
+            try accumulatedData.write(to: tmpURL)
+            resolve([
+              "filePath": tmpPath,
+              "filename": originalFilename,
+              "isRaw": true
+            ])
+          } catch {
+            reject("E_WRITE", "Failed to write RAW data to temp file: \(error.localizedDescription)", nil)
+          }
         }
-      }
+      })
     }
   }
 }
