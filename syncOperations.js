@@ -1092,7 +1092,20 @@ export const stealthCloudRestoreCore = async ({
       }
 
       // Save to media library
-      await MediaLibrary.saveToLibraryAsync(outUri);
+      // iOS: use native saveRawToLibrary for RAW/DNG to prevent conversion to JPEG
+      const isRawFormat = /\.(dng|cr2|cr3|nef|arw|orf|rw2|pef|srw|raf)$/i.test(filename || '');
+      if (Platform.OS === 'ios' && isRawFormat && ExifExtractor?.saveRawToLibrary) {
+        try {
+          const rawPath = outUri.startsWith('file://') ? outUri.replace('file://', '') : outUri;
+          await ExifExtractor.saveRawToLibrary(rawPath);
+          console.log(`[Sync] Saved RAW to library via native module: ${filename}`);
+        } catch (rawErr) {
+          console.warn(`[Sync] saveRawToLibrary failed, falling back to saveToLibraryAsync: ${rawErr?.message}`);
+          await MediaLibrary.saveToLibraryAsync(outUri);
+        }
+      } else {
+        await MediaLibrary.saveToLibraryAsync(outUri);
+      }
       await FileSystem.deleteAsync(outUri, { idempotent: true });
       
       restored++;
@@ -1416,7 +1429,20 @@ export const localRemoteRestoreCore = async ({
               await FileSystem.deleteAsync(finalUri, { idempotent: true });
               await FileSystem.moveAsync({ from: localUri, to: finalUri });
             }
-            await MediaLibrary.saveToLibraryAsync(finalUri);
+            // iOS: use native saveRawToLibrary for RAW/DNG to prevent conversion to JPEG
+            const isRawFile = /\.(dng|cr2|cr3|nef|arw|orf|rw2|pef|srw|raf)$/i.test(originalName || '');
+            if (Platform.OS === 'ios' && isRawFile && ExifExtractor?.saveRawToLibrary) {
+              try {
+                const rawPath = finalUri.startsWith('file://') ? finalUri.replace('file://', '') : finalUri;
+                await ExifExtractor.saveRawToLibrary(rawPath);
+                console.log(`[Sync] Saved RAW to library via native module: ${originalName}`);
+              } catch (rawErr) {
+                console.warn(`[Sync] saveRawToLibrary failed, falling back: ${rawErr?.message}`);
+                await MediaLibrary.saveToLibraryAsync(finalUri);
+              }
+            } else {
+              await MediaLibrary.saveToLibraryAsync(finalUri);
+            }
             await FileSystem.deleteAsync(finalUri, { idempotent: true });
           });
           await quickYield(); // Yield after save

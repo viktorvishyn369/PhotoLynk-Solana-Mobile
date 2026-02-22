@@ -2,6 +2,7 @@ import Foundation
 import UIKit
 import ImageIO
 import MobileCoreServices
+import Photos
 import React
 
 @objc(ExifExtractor)
@@ -307,6 +308,56 @@ class ExifExtractorModule: NSObject {
           resolve(["success": true])
         } else {
           reject("E_WRITE", "Failed to write image with EXIF", nil)
+        }
+      }
+    }
+  }
+  
+  @objc
+  func saveRawToLibrary(_ rawPath: String, resolver resolve: @escaping RCTPromiseResolveBlock, rejecter reject: @escaping RCTPromiseRejectBlock) {
+    DispatchQueue.global(qos: .userInitiated).async {
+      let cleanPath = rawPath.replacingOccurrences(of: "file://", with: "")
+      let rawURL = URL(fileURLWithPath: cleanPath)
+      
+      guard FileManager.default.fileExists(atPath: cleanPath) else {
+        reject("E_NOT_FOUND", "RAW file not found: \(cleanPath)", nil)
+        return
+      }
+      
+      // Generate JPEG preview from the RAW file
+      guard let imageSource = CGImageSourceCreateWithURL(rawURL as CFURL, nil),
+            let cgImage = CGImageSourceCreateImageAtIndex(imageSource, 0, nil) else {
+        reject("E_LOAD", "Cannot load RAW image: \(cleanPath)", nil)
+        return
+      }
+      
+      let uiImage = UIImage(cgImage: cgImage)
+      guard let jpegData = uiImage.jpegData(compressionQuality: 0.9) else {
+        reject("E_JPEG", "Cannot create JPEG preview from RAW", nil)
+        return
+      }
+      
+      PHPhotoLibrary.requestAuthorization { status in
+        guard status == .authorized || status == .limited else {
+          reject("E_AUTH", "Photo library access denied", nil)
+          return
+        }
+        
+        PHPhotoLibrary.shared().performChanges({
+          let creationRequest = PHAssetCreationRequest.forAsset()
+          let creationOptions = PHAssetResourceCreationOptions()
+          creationOptions.shouldMoveFile = false
+          
+          // Add JPEG as the primary photo (for Photos app display)
+          creationRequest.addResource(with: .photo, data: jpegData, options: nil)
+          // Add the original RAW/DNG as alternate photo (preserved byte-for-byte)
+          creationRequest.addResource(with: .alternatePhoto, fileURL: rawURL, options: creationOptions)
+        }) { success, error in
+          if success {
+            resolve(["success": true])
+          } else {
+            reject("E_SAVE", "Failed to save RAW to library: \(error?.localizedDescription ?? "unknown")", nil)
+          }
         }
       }
     }
