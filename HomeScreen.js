@@ -111,7 +111,7 @@ const TAB_BAR_HEIGHT = scale(56);
 const TAB_BAR_TOTAL = TAB_BAR_HEIGHT + (Platform.OS === 'android' ? ANDROID_NAV_BAR_HEIGHT : 0);
 
 // ─── ANIMATED PRESSABLE (scale on press) ────────────────────────────
-const AnimatedPressable = ({ children, style, onPress, disabled, activeOpacity = 0.9 }) => {
+const AnimatedPressable = ({ children, style, onPress, onLongPress, delayLongPress, disabled, activeOpacity = 0.9 }) => {
   const scaleAnim = useRef(new Animated.Value(1)).current;
   const handlePressIn = useCallback(() => {
     Animated.spring(scaleAnim, { toValue: 0.965, useNativeDriver: true, speed: 50, bounciness: 4 }).start();
@@ -128,7 +128,7 @@ const AnimatedPressable = ({ children, style, onPress, disabled, activeOpacity =
   if (alignSelf !== undefined) outerStyle.alignSelf = alignSelf;
   const needsStretch = alignSelf === 'stretch';
   return (
-    <TouchableOpacity style={outerStyle} onPress={onPress} disabled={disabled} activeOpacity={activeOpacity}
+    <TouchableOpacity style={outerStyle} onPress={onPress} onLongPress={onLongPress} delayLongPress={delayLongPress} disabled={disabled} activeOpacity={activeOpacity}
       onPressIn={handlePressIn} onPressOut={handlePressOut}>
       <Animated.View style={[innerStyle, needsStretch && { flex: 1 }, { transform: [{ scale: scaleAnim }] }]}>{children}</Animated.View>
     </TouchableOpacity>
