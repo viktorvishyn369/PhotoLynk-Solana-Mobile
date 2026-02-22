@@ -175,6 +175,7 @@ import LanguageSelector, { LanguageButton } from './LanguageSelector';
 import {
   loadHashCache,
   flushHashCache,
+  clearHashCache,
   runBackgroundPreAnalysis,
   abortPreAnalysis,
   isPreAnalysisRunning,
@@ -4978,6 +4979,27 @@ export default function App() {
     }
   };
 
+  // Secret long-press handlers to clear stuck history/cache
+  const secretClearBackupHistory = async () => {
+    try {
+      await clearHashCache();
+      console.log('[Secret] Cleared hash cache');
+      showDarkAlert('Cache Cleared', 'Backup hash cache has been reset. Next backup will re-scan all files.');
+    } catch (e) {
+      console.warn('[Secret] Failed to clear hash cache:', e?.message);
+    }
+  };
+
+  const secretClearSyncHistory = async () => {
+    try {
+      await clearRestoreHistory();
+      console.log('[Secret] Cleared restore history');
+      showDarkAlert('History Cleared', 'Sync/restore history has been reset. Next sync will re-download all files.');
+    } catch (e) {
+      console.warn('[Secret] Failed to clear restore history:', e?.message);
+    }
+  };
+
   if (view === 'loading') {
     return (
       <View style={{ flex: 1, backgroundColor: '#000', alignItems: 'center', justifyContent: 'center' }}>
@@ -5409,8 +5431,10 @@ export default function App() {
         onCleanBestMatches={async () => { await cleanDeviceDuplicates(); }}
         onCleanSimilar={async () => { await startSimilarShotsReview(); }}
         onBackupAll={async () => { await backupPhotos(); }}
+        onLongPressBackup={secretClearBackupHistory}
         onBackupSelected={() => { openBackupPicker(); }}
         onSyncAll={async () => { await restorePhotos(); }}
+        onLongPressSync={secretClearSyncHistory}
         onSyncSelected={() => { openSyncPicker(); }}
         showCompletionTick={showCompletionTick}
         completionMessage={completionMessage}

@@ -179,8 +179,10 @@ export const HomeScreen = ({
   onCleanBestMatches,
   onCleanSimilar,
   onBackupAll,
+  onLongPressBackup,
   onBackupSelected,
   onSyncAll,
+  onLongPressSync,
   onSyncSelected,
   showCompletionTick,
   completionMessage,
@@ -342,7 +344,7 @@ export const HomeScreen = ({
       {/* Backup — gradient button with glow */}
       <View style={styles.actionRow}>
         <AnimatedPressable style={[styles.primaryBtn, loading && styles.disabled, isAndroid ? { elevation: 2 } : { shadowColor: COLORS.primary, shadowOpacity: 0.3, shadowRadius: 12, shadowOffset: { width: 0, height: 4 } }]}
-          onPress={onBackupAll} disabled={loading}>
+          onPress={onBackupAll} onLongPress={onLongPressBackup} delayLongPress={2000} disabled={loading}>
           <LinearGradient colors={['rgba(3,225,255,0.15)', 'rgba(3,225,255,0.06)']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.primaryBtnGrad}>
             <View style={styles.primaryBtnIcon}>
               <Feather name="upload-cloud" size={scale(24)} color="#FFF" />
@@ -364,7 +366,7 @@ export const HomeScreen = ({
       {/* Sync — gradient button with glow */}
       <View style={styles.actionRow}>
         <AnimatedPressable style={[styles.primaryBtn, loading && styles.disabled, isAndroid ? { elevation: 2 } : { shadowColor: COLORS.secondary, shadowOpacity: 0.3, shadowRadius: 12, shadowOffset: { width: 0, height: 4 } }]}
-          onPress={onSyncAll} disabled={loading}>
+          onPress={onSyncAll} onLongPress={onLongPressSync} delayLongPress={2000} disabled={loading}>
           <LinearGradient colors={['rgba(0,255,163,0.15)', 'rgba(0,255,163,0.06)']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.primaryBtnGrad}>
             <View style={styles.primaryBtnIcon}>
               <Feather name="download-cloud" size={scale(24)} color="#FFF" />
