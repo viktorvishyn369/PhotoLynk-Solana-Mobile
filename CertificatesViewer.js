@@ -442,14 +442,14 @@ const CertificatesViewer = ({ visible, onClose, serverUrl, getAuthHeaders, onSho
             <TouchableOpacity
               activeOpacity={0.6}
               onPress={() => {
-                const cmd = `python3 -c "import struct,hashlib; d=open('FILE','rb').read(); i=d.find(b'\\xff\\xe1'); l=struct.unpack('>H',d[i+2:i+4])[0]; print(hashlib.sha256(d[i+4:i+2+l]).hexdigest())"`;
+                const cmd = 'npm install exifreader && node verify-exif-hash.js <file>';
                 Clipboard.setString(cmd);
                 showDarkAlert(t('alerts.copied') || 'Copied', t('alerts.commandCopied') || 'Command copied to clipboard');
               }}
               style={styles.verifyCodeCopyable}
             >
               <Text style={styles.verifyCodeBlock} selectable>
-                {`python3 -c "import struct,hashlib; d=open('FILE','rb').read(); i=d.find(b'\\xff\\xe1'); l=struct.unpack('>H',d[i+2:i+4])[0]; print(hashlib.sha256(d[i+4:i+2+l]).hexdigest())"`}
+                {'npm install exifreader && node verify-exif-hash.js <file>'}
               </Text>
               <Feather name="copy" size={12} color="#f59e0b" />
             </TouchableOpacity>
