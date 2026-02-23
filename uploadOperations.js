@@ -12,13 +12,11 @@ import { normalizeFilenameForCompare, getMimeFromFilename, detectRealFormatFromM
 import { createConcurrencyLimiter } from './backgroundTask';
 import { buildLocalAssetIdSetPaged, fetchAllServerFilesPaged } from './mediaHelpers';
 import { PHOTO_ALBUM_NAME, LEGACY_PHOTO_ALBUM_NAME } from './backupManager';
-import { findFirstAlbumByTitle, SAVED_PASSWORD_KEY } from './autoUpload';
+import { findFirstAlbumByTitle } from './autoUpload';
 import { computePerceptualHash, computeExactFileHash, findPerceptualHashMatch } from './duplicateScanner';
 import { getCachedHash, setCachedHash, loadHashCache, flushHashCache } from './hashCache';
 import { extractFullExif } from './exifExtractor';
 import axios from 'axios';
-import * as SecureStore from 'expo-secure-store';
-import { getDeviceUUID } from './authHelpers';
 
 // dHash threshold for backup dedup (6 bits = ~9% tolerance for cross-platform differences)
 const BACKUP_DHASH_THRESHOLD = 3;
@@ -98,30 +96,9 @@ export const localRemoteBackupCore = async ({
     // Load hash cache for faster dedup (avoids re-hashing files)
     await loadHashCache();
 
-    // Re-authenticate against the target server to ensure token matches its JWT_SECRET.
-    // The stored auth_token may be from StealthCloud (different secret) if user switched modes.
+    // Use existing auth headers — App.js handles 403 retry with refreshAuthToken()
     const SERVER_URL = getServerUrl();
-    let config = await getAuthHeaders();
-    try {
-      const storedEmail = await SecureStore.getItemAsync('user_email');
-      const storedPassword = await SecureStore.getItemAsync(SAVED_PASSWORD_KEY, { requireAuthentication: false });
-      if (storedEmail && storedPassword) {
-        const deviceId = await getDeviceUUID(storedEmail, storedPassword);
-        const loginRes = await axios.post(`${SERVER_URL}/api/login`, {
-          email: storedEmail,
-          password: storedPassword,
-          device_uuid: deviceId,
-          device_name: Platform.OS + ' ' + Platform.Version,
-        }, { timeout: 10000 });
-        if (loginRes.data && loginRes.data.token) {
-          const freshToken = loginRes.data.token;
-          config = { headers: { Authorization: `Bearer ${freshToken}`, 'X-Device-UUID': deviceId } };
-          console.log('[Backup] Re-authenticated against target server');
-        }
-      }
-    } catch (reAuthErr) {
-      console.log('[Backup] Re-auth failed, using existing token:', reAuthErr.message);
-    }
+    const config = await getAuthHeaders();
     console.log('Using server URL for backup:', SERVER_URL);
     onStatus(t('status.fetchingServerFilesSimple', { fetched: 0 }));
     onProgress(0.01);
@@ -328,15 +305,15 @@ export const localRemoteBackupCore = async ({
         const filePath = resolved && resolved.filePath ? resolved.filePath : null;
 
         if (!filePath) {
-          console.warn(`Skipping ${asset.filename}: no URI`);
+          console.warn(`Skipping ${asset?.filename || 'unknown'}: no URI`);
           failedCount++;
-          failedFiles.push(asset.filename);
+          failedFiles.push(asset?.filename || 'unknown');
           return;
         }
 
         // iOS fix: Use the actual filename from assetInfo, not the UUID
         // If getOriginalResource returned a RAW file, use the RAW filename
-        let actualFilename = (resolved.isRaw && resolved.rawFilename) ? resolved.rawFilename : (assetInfo.filename || asset.filename);
+        let actualFilename = (resolved.isRaw && resolved.rawFilename) ? resolved.rawFilename : (assetInfo?.filename || asset?.filename || 'file');
         const isVideo = /\.(mov|mp4|m4v|avi|mkv|webm|3gp)$/i.test(actualFilename);
         
         // Detect real format from magic bytes and fix extension if mismatched
@@ -500,7 +477,7 @@ export const localRemoteBackupCore = async ({
       } catch (fileError) {
         // If connection failed and app was backgrounded, wait and retry once
         if (fileError.message?.includes('Failed to connect') && appStateRef?.current !== 'active') {
-          console.log(`⏸ Upload paused (backgrounded): ${asset.filename}, waiting to retry...`);
+          console.log(`⏸ Upload paused (backgrounded): ${asset?.filename || 'unknown'}, waiting to retry...`);
           while (appStateRef?.current !== 'active') {
             await sleep(1000);
           }
@@ -520,23 +497,23 @@ export const localRemoteBackupCore = async ({
               console.log(`✓ Uploaded (retry): ${actualFilename}`);
             } else {
               failedCount++;
-              failedFiles.push(asset.filename);
+              failedFiles.push(asset?.filename || 'unknown');
             }
           } catch (retryErr) {
-            console.error(`✗ Retry failed for ${asset.filename}:`, retryErr.message);
+            console.error(`✗ Retry failed for ${asset?.filename || 'unknown'}:`, retryErr.message);
             failedCount++;
-            failedFiles.push(asset.filename);
+            failedFiles.push(asset?.filename || 'unknown');
           }
         } else {
-          console.error(`✗ Failed to upload ${asset.filename}:`, fileError.message);
+          console.error(`✗ Failed to upload ${asset?.filename || 'unknown'}:`, fileError.message);
           failedCount++;
-          failedFiles.push(asset.filename);
+          failedFiles.push(asset?.filename || 'unknown');
         }
       } finally {
         processedCount++;
         // Upload phase: 20-100% progress
         const uploadProgress = 0.2 + (processedCount / toUpload.length) * 0.8;
-        const displayFilename = asset.filename || 'file';
+        const displayFilename = asset?.filename || 'file';
         throttledStatus(onStatus, t('status.backingUp', { current: processedCount, total: toUpload.length, filename: formatFilenameForStatus(displayFilename) }));
         throttledProgress(onProgress, uploadProgress);
       }
@@ -630,29 +607,9 @@ export const localRemoteBackupSelectedCore = async ({
     // Load hash cache for faster dedup (avoids re-hashing files)
     await loadHashCache();
     
-    // Re-authenticate against the target server (same as localRemoteBackupCore)
+    // Use existing auth headers — App.js handles 403 retry with refreshAuthToken()
     const SERVER_URL = getServerUrl();
-    let config = await getAuthHeaders();
-    try {
-      const storedEmail = await SecureStore.getItemAsync('user_email');
-      const storedPassword = await SecureStore.getItemAsync(SAVED_PASSWORD_KEY, { requireAuthentication: false });
-      if (storedEmail && storedPassword) {
-        const deviceId = await getDeviceUUID(storedEmail, storedPassword);
-        const loginRes = await axios.post(`${SERVER_URL}/api/login`, {
-          email: storedEmail,
-          password: storedPassword,
-          device_uuid: deviceId,
-          device_name: Platform.OS + ' ' + Platform.Version,
-        }, { timeout: 10000 });
-        if (loginRes.data && loginRes.data.token) {
-          const freshToken = loginRes.data.token;
-          config = { headers: { Authorization: `Bearer ${freshToken}`, 'X-Device-UUID': deviceId } };
-          console.log('[Backup] Re-authenticated against target server');
-        }
-      }
-    } catch (reAuthErr) {
-      console.log('[Backup] Re-auth failed, using existing token:', reAuthErr.message);
-    }
+    const config = await getAuthHeaders();
     
     onStatus?.(t('status.fetchingServerFilesSimple', { fetched: 0 }));
     onProgress?.(0.01);
@@ -774,7 +731,7 @@ export const localRemoteBackupSelectedCore = async ({
           break;
         }
         const assetInfo = await MediaLibrary.getAssetInfoAsync(asset.id);
-        const displayFilename = assetInfo.filename || asset.filename || 'file';
+        const displayFilename = assetInfo?.filename || asset?.filename || 'file';
 
         // Upload phase: 20-100% progress
         const uploadProgress = 0.2 + ((i + 1) / toUpload.length) * 0.8;
@@ -788,7 +745,7 @@ export const localRemoteBackupSelectedCore = async ({
         }
 
         // If getOriginalResource returned a RAW file, use the RAW filename
-        let actualFilename = (resolved.isRaw && resolved.rawFilename) ? resolved.rawFilename : (assetInfo.filename || asset.filename);
+        let actualFilename = (resolved.isRaw && resolved.rawFilename) ? resolved.rawFilename : (assetInfo?.filename || asset?.filename || 'file');
         const isVideo = /\.(mov|mp4|m4v|avi|mkv|webm|3gp)$/i.test(actualFilename);
         
         // Detect real format from magic bytes and fix extension if mismatched

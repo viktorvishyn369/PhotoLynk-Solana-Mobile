@@ -29,6 +29,7 @@ import {
   KeyboardAvoidingView,
   Modal,
 } from 'react-native';
+import * as ReactNative from 'react-native';
 import Clipboard from '@react-native-clipboard/clipboard';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import FontAwesome5 from '@expo/vector-icons/FontAwesome5';
@@ -328,6 +329,7 @@ export default function App() {
   const [backupPickerSelected, setBackupPickerSelected] = useState({});
   const [backupPickerPreview, setBackupPickerPreview] = useState(null);
   const backupPickerThumbFixingRef = useRef(new Map());
+  const backupPickerOpenRef = useRef(false);
   const backupPickerThumbCacheRef = useRef(new Map());
   const backupPickerMetaInFlightRef = useRef(new Set());
   const backupPickerMetaLimiterRef = useRef(createConcurrencyLimiter(3));
@@ -1723,17 +1725,14 @@ export default function App() {
     const permission = await requestMediaLibraryPermission();
     if (!permission || permission.status !== 'granted') {
       showDarkAlert(t('alerts.permissionNeeded'), t('alerts.permissionNeededMessage'));
+      setLoadingSafe(false);
+      setProgressAction(null);
       return;
     }
 
-    await cancelInFlightOperations();
+    // Loading state already set by backupSelectedAssets — no cancelInFlightOperations here
     const opId = currentOperationIdRef.current;
-    setLoadingSafe(true);
     setBackgroundWarnEligibleSafe(true);
-    setWasBackgroundedDuringWorkSafe(false);
-    setProgress(0);
-    setProgressAction('backup');
-    setStatus(t('status.backupPreparing'));
 
     if (Platform.OS === 'ios') {
       const ap = await getMediaLibraryAccessPrivileges(permission);
@@ -1844,20 +1843,22 @@ export default function App() {
     }
 
     await cancelInFlightOperations();
+    setLoadingSafe(true);
+    setBackgroundWarnEligibleSafe(false);
+    setWasBackgroundedDuringWorkSafe(false);
+    setProgress(0);
+    setProgressAction('backup');
+    setStatus(t('status.backupPreparing'));
+
     if (!(await ensureAutoUploadPolicyAllowsWork({ userInitiated: true }))) {
+      setLoadingSafe(false);
+      setProgressAction(null);
       return;
     }
 
     if (serverType === 'stealthcloud') {
       return stealthCloudBackupSelected({ assets: list });
     }
-
-    setLoadingSafe(true);
-    setBackgroundWarnEligibleSafe(false); // Don't warn during permission prompts
-    setWasBackgroundedDuringWorkSafe(false);
-    setProgress(0);
-    setProgressAction('backup');
-    setStatus(t('status.backupPreparing'));
 
     // Enable background warning only after we start actual work (permission already granted inside core)
     setTimeout(() => { if (loadingRef.current) setBackgroundWarnEligibleSafe(true); }, 2000);
@@ -2117,9 +2118,40 @@ export default function App() {
 
   const setWasBackgroundedDuringWorkSafe = (value) => { wasBackgroundedDuringWorkRef.current = value; setWasBackgroundedDuringWork(value); };
 
-  const resetBackupPickerState = () => { backupPickerDeletedIdsCache = null; setBackupPickerAssets([]); setBackupPickerAfter(null); setBackupPickerHasNext(true); setBackupPickerLoading(false); setBackupPickerTotal(0); setBackupPickerSelected({}); };
+  const resetBackupPickerState = () => { backupPickerDeletedIdsCache = null; setBackupPickerAssets([]); setBackupPickerAfter(null); setBackupPickerHasNext(true); setBackupPickerLoading(false); setBackupPickerTotal(0); setBackupPickerSelected({}); backupPickerMetaInFlightRef.current.clear(); backupPickerThumbFixingRef.current.clear(); };
   const openBackupModeChooser = () => { if (loadingRef.current) return; setBackupModeOpen(true); };
   const closeBackupModeChooser = () => setBackupModeOpen(false);
+
+  // --- Backup picker: SINGLE batched flush for all async updates ---
+  // All thumb fixes, enrichments, and meta updates write to this pending Map,
+  // then a single debounced flush applies them to state in one setBackupPickerAssets call.
+  const backupPickerPendingUpdatesRef = useRef(new Map()); // id -> { thumbUri?, fileSize? }
+  const backupPickerFlushTimerRef = useRef(null);
+  const flushBackupPickerUpdates = useCallback(() => {
+    const pending = backupPickerPendingUpdatesRef.current;
+    if (pending.size === 0) return;
+    const batch = new Map(pending);
+    pending.clear();
+    setBackupPickerAssets(prev => (prev || []).map(a => {
+      if (!a?.id) return a;
+      const upd = batch.get(a.id);
+      if (!upd) return a;
+      let changed = a;
+      if (upd.thumbUri) changed = { ...changed, thumbUri: upd.thumbUri };
+      if (upd.fileSize) changed = { ...changed, fileSize: upd.fileSize };
+      return changed;
+    }));
+  }, []);
+  const scheduleBackupPickerFlush = useCallback(() => {
+    if (backupPickerFlushTimerRef.current) clearTimeout(backupPickerFlushTimerRef.current);
+    backupPickerFlushTimerRef.current = setTimeout(flushBackupPickerUpdates, 400);
+  }, [flushBackupPickerUpdates]);
+  const queueBackupPickerUpdate = useCallback((id, updates) => {
+    if (!id) return;
+    const existing = backupPickerPendingUpdatesRef.current.get(id) || {};
+    backupPickerPendingUpdatesRef.current.set(id, { ...existing, ...updates });
+    scheduleBackupPickerFlush();
+  }, [scheduleBackupPickerFlush]);
 
   const fixBackupPickerThumbnail = useCallback(async (asset) => {
     try {
@@ -2149,16 +2181,40 @@ export default function App() {
         } catch (e) {}
       }
 
-      if (thumbUri) {
+      const isContentUri = Platform.OS === 'android' && typeof thumbUri === 'string' && thumbUri.startsWith('content://');
+      if (thumbUri && !isContentUri) {
         backupPickerThumbCacheRef.current.set(asset.id, thumbUri);
         if (backupPickerThumbCacheRef.current.size > 800) {
           const firstKey = backupPickerThumbCacheRef.current.keys().next().value;
           if (firstKey) backupPickerThumbCacheRef.current.delete(firstKey);
         }
-        setBackupPickerAssets(prev => (prev || []).map(a => (a && a.id === asset.id ? { ...a, thumbUri } : a)));
+        if (thumbUri !== asset?.thumbUri) {
+          queueBackupPickerUpdate(asset.id, { thumbUri });
+        }
       }
     } catch (e) {}
-  }, []);
+  }, [queueBackupPickerUpdate]);
+
+  const warmBackupPickerDeletedIds = async () => {
+    if (Platform.OS !== 'android' || backupPickerDeletedIdsCache) return;
+    try {
+      const albums = await MediaLibrary.getAlbumsAsync({ includeSmartAlbums: false });
+      const deletedAlbum = albums.find(a => a.title === 'PhotoLynkDeleted');
+      if (deletedAlbum) {
+        const ids = new Set();
+        let dAfter = null;
+        while (true) {
+          const dPage = await MediaLibrary.getAssetsAsync({ album: deletedAlbum, first: 500, after: dAfter || undefined, mediaType: ['photo', 'video'] });
+          if (dPage?.assets) for (const a of dPage.assets) ids.add(a.id);
+          dAfter = dPage?.endCursor;
+          if (!dPage?.hasNextPage || !dPage?.assets?.length) break;
+        }
+        backupPickerDeletedIdsCache = ids;
+      } else {
+        backupPickerDeletedIdsCache = new Set();
+      }
+    } catch (e) { backupPickerDeletedIdsCache = new Set(); }
+  };
 
   const loadBackupPickerPage = async ({ reset }) => {
     if (backupPickerLoading) return;
@@ -2168,216 +2224,130 @@ export default function App() {
       const permission = await requestMediaLibraryPermission();
       if (permission.status !== 'granted') { showDarkAlert(t('alerts.permissionNeeded'), t('alerts.permissionNeededMessage')); return; }
 
-      // Android: build PhotoLynkDeleted asset ID set on first load (cached for session)
-      if (Platform.OS === 'android' && !backupPickerDeletedIdsCache) {
-        try {
-          const albums = await MediaLibrary.getAlbumsAsync({ includeSmartAlbums: false });
-          const deletedAlbum = albums.find(a => a.title === 'PhotoLynkDeleted');
-          if (deletedAlbum) {
-            const ids = new Set();
-            let dAfter = null;
-            while (true) {
-              const dPage = await MediaLibrary.getAssetsAsync({ album: deletedAlbum, first: 500, after: dAfter || undefined, mediaType: ['photo', 'video'] });
-              if (dPage?.assets) for (const a of dPage.assets) ids.add(a.id);
-              dAfter = dPage?.endCursor;
-              if (!dPage?.hasNextPage || !dPage?.assets?.length) break;
-            }
-            backupPickerDeletedIdsCache = ids;
-          } else {
-            backupPickerDeletedIdsCache = new Set();
-          }
-        } catch (e) { backupPickerDeletedIdsCache = new Set(); }
-      }
       if (!backupPickerDeletedIdsCache) backupPickerDeletedIdsCache = new Set();
 
-      const first = 18;
-      const after = reset ? null : backupPickerAfter;
-      const page = await MediaLibrary.getAssetsAsync({ first, after: after || undefined, mediaType: ['photo', 'video'], sortBy: [MediaLibrary.SortBy.creationTime] });
-      let assets = page && Array.isArray(page.assets) ? page.assets : [];
+      let currentAfter = reset ? null : backupPickerAfter;
+      let fetchedAssets = [];
+      let hasNext = true;
+      let deferredTotal = null;
 
-      // Filter out PhotoLynkDeleted assets (Android: by ID set + URI path fallback)
-      if (Platform.OS === 'android' && assets.length > 0) {
-        assets = assets.filter(a => {
-          if (backupPickerDeletedIdsCache.has(a.id)) return false;
-          const uri = a?.uri || '';
-          const localUri = a?.localUri || '';
-          if (uri.includes('/PhotoLynkDeleted/') || localUri.includes('/PhotoLynkDeleted/')) return false;
-          return true;
-        });
-      }
-
-      if (page && typeof page.totalCount === 'number') {
-        const adjustedTotal = Math.max(0, Number(page.totalCount) - backupPickerDeletedIdsCache.size);
-        setBackupPickerTotal(adjustedTotal || 0);
-      } else if (reset) {
-        setBackupPickerTotal(assets.length);
-      }
-      // Use a.uri for thumbnails - works on Android for both photos and videos
-      const basicAssets = assets.map(a => {
-        const cached = a && a.id ? backupPickerThumbCacheRef.current.get(a.id) : null;
-        return { ...a, thumbUri: cached || a.uri || null };
-      });
-      setBackupPickerAssets(prev => reset ? basicAssets : prev.concat(basicAssets));
-
-      if (serverType === 'stealthcloud') {
-        setTimeout(() => {
-          try {
-            for (const a of assets) {
-              if (a && a.id) ensureBackupPickerAssetMeta(a);
-            }
-          } catch (e) {}
-        }, 0);
-      }
-      
-      // Only enrich iOS formats (HEIC, HEIF) on Android - other formats work with a.uri
-      // This makes loading much faster while still supporting iOS photo formats
-      const enrichThumbnail = async (asset, index) => {
-        try {
-          const ext = (asset.filename || '').split('.').pop()?.toLowerCase();
-          const isVideo = asset.mediaType === 'video' || ['mov', 'mp4', 'avi', 'mkv', 'm4v', '3gp', 'webm'].includes(ext);
-          const androidNeedsThumb = Platform.OS === 'android' && asset.mediaType === 'photo' && typeof asset?.uri === 'string' && asset.uri.startsWith('content://');
-          
-          // Skip video thumbnails during initial load - too heavy, causes UI jank
-          // Videos will show placeholder, user can scroll to load on-demand via fixBackupPickerThumbnail
-          if (isVideo) {
-            return;
-          }
-
-          // Skip thumbnail generation for common formats - content:// URIs work fine with Image component
-          // Only generate thumbnails for iOS formats (HEIC, HEIF, AVIF) that may not display on Android
-          if (androidNeedsThumb) {
-            const iosFormats = ['heic', 'heif', 'avif'];
-            if (!iosFormats.includes(ext)) {
-              return; // Skip common formats - content:// URI works fine
-            }
-            const info = await MediaLibrary.getAssetInfoAsync(asset.id, { shouldDownloadFromNetwork: true });
-            const sourceUri = info?.localUri || info?.uri || asset?.uri;
-            if (sourceUri) {
-              try {
-                const manipResult = await ImageManipulator.manipulateAsync(
-                  sourceUri,
-                  [{ resize: { width: 200 } }],
-                  { compress: 0.7, format: ImageManipulator.SaveFormat.JPEG }
-                );
-                const thumbUri = manipResult?.uri || null;
-                if (thumbUri) {
-                  setBackupPickerAssets(prev => {
-                    const updated = [...prev];
-                    const targetIndex = reset ? index : prev.length - assets.length + index;
-                    if (updated[targetIndex] && updated[targetIndex].id === asset.id) {
-                      updated[targetIndex] = { ...updated[targetIndex], thumbUri };
-                    }
-                    return updated;
-                  });
-                }
-              } catch (e) {
-                // Keep original URI
-              }
-            }
-            return;
-          }
-          
-          // Only enrich iOS formats that may not display on Android
-          const iosFormats = ['heic', 'heif', 'avif'];
-          if (!iosFormats.includes(ext)) {
-            return; // Skip common formats - a.uri works fine
-          }
-          
-          const info = await MediaLibrary.getAssetInfoAsync(asset.id, { shouldDownloadFromNetwork: true });
-          let thumbUri = info?.localUri || info?.uri || asset?.uri;
-          
-          if (false) { // Disabled - videos handled above
-            // For videos on Android, try to generate thumbnail
-            // If that fails, use localUri (file://) which can display on Android
-            let videoThumbUri = null;
-            try {
-              // Try multiple URIs for video thumbnails - localUri is preferred
-              const videoUriCandidates = [info?.localUri, info?.uri, asset?.uri].filter(Boolean);
-              for (const videoUri of videoUriCandidates) {
-                if (videoThumbUri) break;
-                try {
-                  // Try time=0 first (works for all videos), then time=1000 as fallback
-                  let result = await VideoThumbnails.getThumbnailAsync(videoUri, { time: 0 });
-                  if (!result?.uri) {
-                    result = await VideoThumbnails.getThumbnailAsync(videoUri, { time: 1000 });
-                  }
-                  if (result?.uri) {
-                    videoThumbUri = result.uri;
-                  }
-                } catch (innerErr) {
-                  // Try next URI candidate
-                  console.log('[VideoThumb] Failed for', videoUri?.substring(0, 50), innerErr?.message);
-                }
-              }
-            } catch (thumbErr) {
-              console.log('[VideoThumb] Outer error', thumbErr?.message);
-            }
-            // Use generated thumbnail, or fall back to localUri (file://) which works on Android
-            if (videoThumbUri) {
-              thumbUri = videoThumbUri;
-              console.log('[VideoThumb] SUCCESS:', asset.filename, thumbUri?.substring(0, 50));
-            } else if (info?.localUri && info.localUri.startsWith('file://')) {
-              // On Android, file:// URIs can display - use as fallback
-              thumbUri = info.localUri;
-              console.log('[VideoThumb] FALLBACK to localUri:', asset.filename, thumbUri?.substring(0, 50));
-            } else {
-              // No displayable URI available - thumbUri stays null, won't update state
-              thumbUri = null;
-              console.log('[VideoThumb] NO VALID URI:', asset.filename, 'localUri:', info?.localUri?.substring(0, 50));
-            }
-          }
-          
-          // On Android, HEIC photos need conversion
-          if (Platform.OS === 'android' && asset.mediaType === 'photo' && (ext === 'heic' || ext === 'heif')) {
-            try {
-              const sourceUri = info?.localUri || info?.uri || asset?.uri;
-              if (sourceUri) {
-                const manipResult = await ImageManipulator.manipulateAsync(
-                  sourceUri,
-                  [{ resize: { width: 200 } }],
-                  { compress: 0.7, format: ImageManipulator.SaveFormat.JPEG }
-                );
-                if (manipResult?.uri) thumbUri = manipResult.uri;
-              }
-            } catch (heicErr) {
-              // Keep original URI
-            }
-          }
-          
-          // Only update if we have a valid thumbUri - don't overwrite with null/undefined
-          if (thumbUri) {
-            backupPickerThumbCacheRef.current.set(asset.id, thumbUri);
-            if (backupPickerThumbCacheRef.current.size > 800) {
-              const firstKey = backupPickerThumbCacheRef.current.keys().next().value;
-              if (firstKey) backupPickerThumbCacheRef.current.delete(firstKey);
-            }
-            setBackupPickerAssets(prev => {
-              const updated = [...prev];
-              const targetIndex = reset ? index : prev.length - assets.length + index;
-              if (updated[targetIndex] && updated[targetIndex].id === asset.id) {
-                updated[targetIndex] = { ...updated[targetIndex], thumbUri };
-              }
-              return updated;
-            });
-          }
-        } catch (e) {
-          // Keep original URI on error
+      // Loop until we have at least 18 items to avoid triggering rapid onEndReached calls
+      while (fetchedAssets.length < 18 && hasNext) {
+        const page = await MediaLibrary.getAssetsAsync({ first: 18, after: currentAfter || undefined, mediaType: ['photo', 'video'], sortBy: [MediaLibrary.SortBy.creationTime] });
+        if (!page || !Array.isArray(page.assets) || page.assets.length === 0) {
+          hasNext = false;
+          break;
         }
-      };
-      
-      // Process thumbnails in small batches to avoid blocking
-      const BATCH_SIZE = 4;
-      for (let i = 0; i < assets.length; i += BATCH_SIZE) {
-        const batch = assets.slice(i, i + BATCH_SIZE);
-        await Promise.all(batch.map((a, batchIdx) => enrichThumbnail(a, i + batchIdx)));
+        
+        if (deferredTotal === null && typeof page.totalCount === 'number') {
+           deferredTotal = Math.max(0, Number(page.totalCount) - backupPickerDeletedIdsCache.size) || 0;
+        }
+
+        let batch = page.assets;
+        if (Platform.OS === 'android') {
+          batch = batch.filter(a => {
+            if (backupPickerDeletedIdsCache.has(a.id)) return false;
+            const uri = a?.uri || '';
+            const localUri = a?.localUri || '';
+            if (uri.includes('/PhotoLynkDeleted/') || localUri.includes('/PhotoLynkDeleted/')) return false;
+            return true;
+          });
+        }
+        fetchedAssets.push(...batch);
+        currentAfter = page.endCursor;
+        hasNext = !!page.hasNextPage;
       }
-      setBackupPickerAfter(page && page.endCursor ? page.endCursor : null);
-      setBackupPickerHasNext(!!(page && page.hasNextPage));
-    } catch (e) {} finally { setBackupPickerLoading(false); }
+      
+      const assets = fetchedAssets;
+      if (deferredTotal === null && reset) {
+        deferredTotal = assets.length;
+      }
+
+      // Show assets immediately without blocking UI
+      const resolvedAssets = assets.map(a => {
+        if (!a || !a.id) return { ...a, thumbUri: null };
+        const cached = backupPickerThumbCacheRef.current.get(a.id);
+        const thumbUri = cached || a.uri || null;
+        return { ...a, thumbUri };
+      });
+
+      ReactNative.unstable_batchedUpdates(() => {
+        if (deferredTotal !== null) setBackupPickerTotal(deferredTotal);
+        setBackupPickerAssets(prev => reset ? resolvedAssets : prev.concat(resolvedAssets));
+        setBackupPickerAfter(currentAfter);
+        setBackupPickerHasNext(hasNext);
+        setBackupPickerLoading(false);
+      });
+
+      // Async background enrichment (Android content:// thumb fix & StealthCloud file size)
+      const ENRICH_BATCH = 4;
+      (async () => {
+        try {
+          for (let i = 0; i < assets.length; i += ENRICH_BATCH) {
+            const batch = assets.slice(i, i + ENRICH_BATCH);
+            await Promise.all(batch.map(async (asset) => {
+              try {
+                if (!asset?.id) return;
+                let updates = {};
+                
+                if (Platform.OS === 'android') {
+                   const cached = backupPickerThumbCacheRef.current.get(asset.id);
+                   const isContent = !cached && asset.uri && asset.uri.startsWith('content://');
+                   if (isContent || (!cached && asset.mediaType === 'video')) {
+                      const info = await MediaLibrary.getAssetInfoAsync(asset.id, { shouldDownloadFromNetwork: false }).catch(()=>null);
+                      let newThumb = info?.localUri || info?.uri || asset.uri;
+                      const ext = (asset.filename || '').split('.').pop()?.toLowerCase();
+                      const isHeic = ext === 'heic' || ext === 'heif' || ext === 'avif';
+                      if ((isHeic || (newThumb && newThumb.startsWith('content://'))) && asset.mediaType === 'photo') {
+                         const manip = await ImageManipulator.manipulateAsync(newThumb, [{ resize: { width: 200 } }], { compress: 0.7, format: ImageManipulator.SaveFormat.JPEG }).catch(()=>null);
+                         if (manip?.uri) newThumb = manip.uri;
+                      } else if (asset.mediaType === 'video' && newThumb) {
+                         const frame = await VideoThumbnails.getThumbnailAsync(newThumb, { time: 0 }).catch(()=>null);
+                         if (frame?.uri) newThumb = frame.uri;
+                      }
+                      if (newThumb && newThumb !== asset.uri && newThumb !== asset.thumbUri) {
+                         backupPickerThumbCacheRef.current.set(asset.id, newThumb);
+                         updates.thumbUri = newThumb;
+                      }
+                   }
+                }
+
+                if (serverType === 'stealthcloud' && !(typeof asset.fileSize === 'number' && asset.fileSize > 0)) {
+                  if (!backupPickerMetaInFlightRef.current.has(String(asset.id))) {
+                    backupPickerMetaInFlightRef.current.add(String(asset.id));
+                    const info = await MediaLibrary.getAssetInfoAsync(asset.id, { shouldDownloadFromNetwork: false }).catch(()=>null);
+                    let fs = info && typeof info.fileSize === 'number' ? Number(info.fileSize) : null;
+                    if ((!fs || fs <= 0) && info) {
+                      const uri = info.localUri || info.uri || asset.uri || null;
+                      if (uri) {
+                        const fi = await FileSystem.getInfoAsync(uri).catch(()=>null);
+                        if (fi && typeof fi.size === 'number' && fi.size > 0) fs = fi.size;
+                      }
+                    }
+                    if (fs && fs > 0) updates.fileSize = fs;
+                  }
+                }
+
+                if (Object.keys(updates).length > 0) {
+                  queueBackupPickerUpdate(asset.id, updates);
+                }
+              } catch (e) {}
+            }));
+          }
+        } catch (e) {}
+      })();
+
+      if (backupPickerThumbCacheRef.current.size > 800) {
+        const firstKey = backupPickerThumbCacheRef.current.keys().next().value;
+        if (firstKey) backupPickerThumbCacheRef.current.delete(firstKey);
+      }
+    } catch (e) {
+       setBackupPickerLoading(false);
+    }
   };
 
-  const openBackupPicker = async () => { if (loadingRef.current) return; resetBackupPickerState(); setBackupPickerPreview(null); setBackupPickerOpen(true); await loadBackupPickerPage({ reset: true }); };
-  const closeBackupPicker = () => { setBackupPickerOpen(false); setBackupPickerPreview(null); resetBackupPickerState(); };
+  const openBackupPicker = async () => { if (loadingRef.current) return; resetBackupPickerState(); setBackupPickerPreview(null); backupPickerOpenRef.current = true; setBackupPickerOpen(true); setBackupPickerLoading(true); await warmBackupPickerDeletedIds(); await loadBackupPickerPage({ reset: true }); };
+  const closeBackupPicker = () => { backupPickerOpenRef.current = false; setBackupPickerOpen(false); setBackupPickerPreview(null); resetBackupPickerState(); if (backupPickerFlushTimerRef.current) { clearTimeout(backupPickerFlushTimerRef.current); backupPickerFlushTimerRef.current = null; } backupPickerPendingUpdatesRef.current.clear(); };
 
   const ensureBackupPickerAssetMeta = useCallback(async (asset) => {
     try {
@@ -2402,15 +2372,13 @@ export default function App() {
             }
           }
           if (fileSize && fileSize > 0) {
-            setBackupPickerAssets(prev => (prev || []).map(a => (a && String(a.id) === id ? { ...a, fileSize } : a)));
+            queueBackupPickerUpdate(id, { fileSize });
           }
         } catch (e) {
-        } finally {
-          backupPickerMetaInFlightRef.current.delete(id);
         }
       });
     } catch (e) {}
-  }, [serverType]);
+  }, [serverType, queueBackupPickerUpdate]);
 
   const onBackupPickerViewableItemsChangedRef = useRef(null);
   onBackupPickerViewableItemsChangedRef.current = ({ viewableItems }) => {
@@ -3214,11 +3182,22 @@ export default function App() {
       try {
         const url = getServerUrl();
         if (!url) return;
-        const config = await getAuthHeaders();
-        const headers = config?.headers || config;
+        let config = await getAuthHeaders();
+        let headers = config?.headers || config;
         if (!headers) return;
-        // Sync NFTs from server → local
-        await NFTOperations.syncNFTsFromServer(url, headers);
+        try {
+          // Sync NFTs from server → local
+          await NFTOperations.syncNFTsFromServer(url, headers);
+        } catch (e) {
+          if (e?.response?.status === 403) {
+            console.log('[BGSync] 403 on NFT sync — refreshing token');
+            const refreshed = await refreshAuthToken();
+            if (refreshed.success && refreshed.headers) {
+              headers = refreshed.headers;
+              await NFTOperations.syncNFTsFromServer(url, headers);
+            } else return;
+          } else throw e;
+        }
         // Sync certificates from server → local (graceful if endpoint not deployed)
         try { await NFTOperations.syncCertificatesFromServer(url, headers); } catch (_) {}
         // Backup local certs to server (in case minted offline)
@@ -3248,20 +3227,24 @@ export default function App() {
 
       // Try to restart auto-upload runner when app returns to foreground
       if (nextState === 'active') {
-        try {
-          console.log('AutoUpload: app returned to foreground, attempting runner restart');
-          scheduleNextAutoUploadNightKick();
-          if (autoUploadEnabledRef.current && serverTypeRef.current === 'stealthcloud' && tokenRef.current) {
-            // If runner is already active, don't change status
-            if (!autoUploadNightRunnerActiveRef.current) {
-              void maybeStartAutoUploadNightSession();
+        // Skip auto-upload restart when backup picker is open — these functions
+        // call setStatus internally which re-renders the entire component tree
+        if (!backupPickerOpenRef.current) {
+          try {
+            console.log('AutoUpload: app returned to foreground, attempting runner restart');
+            scheduleNextAutoUploadNightKick();
+            if (autoUploadEnabledRef.current && serverTypeRef.current === 'stealthcloud' && tokenRef.current) {
+              // If runner is already active, don't change status
+              if (!autoUploadNightRunnerActiveRef.current) {
+                void maybeStartAutoUploadNightSession();
+              }
             }
+          } catch (e) {
+            // ignore
           }
-        } catch (e) {
-          // ignore
         }
 
-        if (!loadingRef.current && !autoUploadNightRunnerActiveRef.current) {
+        if (!loadingRef.current && !autoUploadNightRunnerActiveRef.current && !backupPickerOpenRef.current) {
           setProgress(0);
           setProgressAction(null);
           setStatus(t('status.idle'));
@@ -5807,7 +5790,7 @@ export default function App() {
                 <Text style={[styles.pickerHeaderBtnText, { color: THEME.accent }]}>{t('picker.cancel')}</Text>
               </TouchableOpacity>
               <View style={{ flex: 1, alignItems: 'center' }}>
-                <Text style={styles.pickerHeaderTitle}>{t('picker.selectMedia')}</Text>
+                <Text style={styles.pickerHeaderTitle}>{t('picker.selectFiles')}</Text>
                 <Text style={styles.pickerHeaderSubtitle}>{t('picker.selected', { count: Object.keys(backupPickerSelected || {}).filter(k => backupPickerSelected[k]).length })}</Text>
               </View>
               <TouchableOpacity
@@ -5830,17 +5813,22 @@ export default function App() {
               </View>
             ) : null}
 
-            {serverType === 'stealthcloud' ? (
+            {backupPickerLoading && (backupPickerAssets || []).length === 0 ? (
+              <View style={{ width: '100%', paddingVertical: scaleSpacing(32), alignItems: 'center' }}>
+                <ActivityIndicator size={isTablet ? 'large' : 'small'} color={THEME.accent} />
+                <Text style={{ color: '#888', fontSize: scale(13), marginTop: scaleSpacing(10) }}>{t('picker.loadingFiles')}</Text>
+              </View>
+            ) : serverType === 'stealthcloud' ? (
               <FlatList
                 data={backupPickerAssets || []}
                 keyExtractor={(a, idx) => `${a?.id}-${idx}`}
-                ListHeaderComponent={() => (
+                ListHeaderComponent={
                   <View style={{ paddingHorizontal: scaleSpacing(12), paddingVertical: scaleSpacing(8), borderBottomWidth: 1, borderBottomColor: '#222', backgroundColor: '#121212' }}>
                     <Text style={{ color: '#888', fontSize: scale(12) }}>
                       {t('picker.showingFiles', { count: backupPickerAssets.length, total: backupPickerTotal > 0 ? backupPickerTotal : backupPickerAssets.length })}
                     </Text>
                   </View>
-                )}
+                }
                 stickyHeaderIndices={[0]}
                 contentContainerStyle={styles.syncPickerList}
                 removeClippedSubviews={Platform.OS === 'android'}
@@ -5904,7 +5892,7 @@ export default function App() {
                     </TouchableOpacity>
                   );
                 }}
-                ListFooterComponent={() => (
+                ListFooterComponent={
                   <View style={{ width: '100%', paddingVertical: 12, paddingHorizontal: scaleSpacing(12), alignItems: 'center' }}>
                     {backupPickerLoading ? (
                       <ActivityIndicator size={isTablet ? 'large' : 'small'} color={THEME.accent} />
@@ -5912,13 +5900,19 @@ export default function App() {
                       <View style={{ height: 8 }} />
                     )}
                   </View>
-                )}
+                }
               />
             ) : (
               <FlatList
                 data={backupPickerAssets || []}
                 keyExtractor={(a, idx) => `${a?.id}-${idx}`}
                 numColumns={isTablet ? 4 : 3}
+                ListEmptyComponent={backupPickerLoading ? (
+                  <View style={{ width: '100%', paddingVertical: scaleSpacing(32), alignItems: 'center' }}>
+                    <ActivityIndicator size={isTablet ? 'large' : 'small'} color={THEME.accent} />
+                    <Text style={{ color: '#888', fontSize: scale(13), marginTop: scaleSpacing(10) }}>{t('picker.loadingFiles')}</Text>
+                  </View>
+                ) : null}
                 contentContainerStyle={{ padding: scaleSpacing(10) }}
                 columnWrapperStyle={{ justifyContent: 'space-between' }}
                 removeClippedSubviews={Platform.OS === 'android'}
@@ -5961,7 +5955,7 @@ export default function App() {
                     </TouchableOpacity>
                   );
                 }}
-                ListFooterComponent={() => (
+                ListFooterComponent={
                   <View style={{ width: '100%', paddingVertical: 12, paddingHorizontal: scaleSpacing(12), alignItems: 'center' }}>
                     {backupPickerLoading ? (
                       <ActivityIndicator size="small" color={THEME.accent} />
@@ -5969,7 +5963,7 @@ export default function App() {
                       <View style={{ height: 8 }} />
                     )}
                   </View>
-                )}
+                }
               />
             )}
           </View>
@@ -6069,7 +6063,7 @@ export default function App() {
             {!syncPickerLoading && serverType !== 'stealthcloud' ? (
               <View style={{ width: '100%', paddingHorizontal: scaleSpacing(12), paddingVertical: scaleSpacing(6), backgroundColor: '#1a1a1a' }}>
                 <Text style={{ color: '#666', fontSize: scale(11), textAlign: 'center' }}>
-                  Some previews may not load if files were modified externally
+                  {t('picker.previewsUnavailable')}
                 </Text>
               </View>
             ) : null}

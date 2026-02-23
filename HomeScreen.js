@@ -251,9 +251,9 @@ export const HomeScreen = ({
 
     return (
       <View style={styles.qsBarWrap}>
-        <LinearGradient colors={[`${statusColor}12`, COLORS.card, `${statusColor}06`]}
+        <LinearGradient colors={[`${statusColor}18`, `${statusColor}0C`, `${statusColor}10`]}
           start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.qsBarGradient}>
-          <LinearGradient colors={[`${statusColor}18`, `${statusColor}06`, 'transparent']}
+          <LinearGradient colors={[`${statusColor}22`, `${statusColor}0A`, 'transparent']}
             start={{ x: 0.5, y: 0 }} end={{ x: 0.5, y: 1 }} style={StyleSheet.absoluteFill} />
 
           {/* 2×2 grid — always visible */}

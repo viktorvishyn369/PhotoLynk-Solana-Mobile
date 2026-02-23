@@ -630,7 +630,7 @@ const getAssetFileInfo = async (asset) => {
     }
   }
 
-  let filename = assetInfo?.filename || asset.filename || null;
+  let filename = (resolved.isRaw && resolved.rawFilename) ? resolved.rawFilename : (assetInfo?.filename || asset?.filename || null);
   const isImage = asset.mediaType === 'photo' || assetInfo?.mediaType === 'photo';
   
   // Detect real format from magic bytes and fix extension if mismatched
@@ -1299,8 +1299,8 @@ export const stealthCloudBackupCore = async ({
   
   const getManifestIdFromAsset = (asset) => {
     if (!asset) return null;
-    const filename = asset.filename || `file_${asset.id}`;
-    const size = asset.fileSize || 0;
+    const filename = asset?.filename || `file_${asset.id}`;
+    const size = asset?.fileSize || 0;
     return computeFileIdentity(filename, size);
   };
   
@@ -1577,8 +1577,8 @@ export const stealthCloudBackupSelectedCore = async ({
   
   const getManifestIdFromAsset = (asset) => {
     if (!asset) return null;
-    const filename = asset.filename || `file_${asset.id}`;
-    const size = asset.fileSize || 0;
+    const filename = asset?.filename || `file_${asset.id}`;
+    const size = asset?.fileSize || 0;
     return computeFileIdentity(filename, size);
   };
   

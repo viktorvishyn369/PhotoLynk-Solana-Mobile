@@ -711,24 +711,32 @@ const buildLocalHashIndex = async (resolveReadableFilePath, onStatus, onProgress
               if (i < 10) console.log(`[Sync] File ${i}: videoHash error: ${e.message}`);
             }
           } else {
-            // Compute perceptual hash for images (cross-device dedup)
+            // Compute fileHash + perceptual hash for images (cross-device dedup)
+            // fileHash lets shouldSkipServerFile match by exact bytes (critical for iOS renamed files)
             // USE CACHE: Check if hash was already computed for this asset
             try {
-              // Try cache first
+              let fileHash = getCachedHash(asset, 'file');
+              if (!fileHash) {
+                fileHash = await computeExactFileHash(filePath);
+                if (fileHash) setCachedHash(asset, 'file', fileHash);
+              }
+              if (fileHash) {
+                localSets.fileHashes.add(fileHash);
+                if (i < 5) console.log(`[Sync] File ${i}: fileHash=${fileHash.substring(0, 16)}...`);
+              }
+            } catch (e) {
+              if (i < 10) console.log(`[Sync] File ${i}: fileHash error: ${e.message}`);
+            }
+            try {
               let phash = getCachedHash(asset, 'perceptual');
               if (!phash) {
-                if (i < 5) console.log(`[Sync] File ${i}: computing perceptual hash...`);
                 phash = await computePerceptualHash(filePath);
                 if (phash) setCachedHash(asset, 'perceptual', phash);
-              } else {
-                if (i < 5) console.log(`[Sync] File ${i}: using cached perceptual hash`);
               }
               if (phash) {
                 localSets.perceptualHashes.add(phash);
                 hashedCount++;
                 if (i < 5) console.log(`[Sync] File ${i}: phash=${phash}`);
-              } else {
-                if (i < 5) console.log(`[Sync] File ${i}: phash=null`);
               }
             } catch (e) { 
               hashErrors++;
@@ -863,6 +871,21 @@ export const stealthCloudRestoreCore = async ({
   
   updateProgress(onProgress, 0.10, true);
   await yieldToUi();
+
+  // Auto-prune restoreHistory: remove entries for files no longer on device
+  // This allows re-downloading files that were previously synced but then deleted
+  let pruned = 0;
+  for (const manifest of serverManifests) {
+    const hk = makeHistoryKey('sc', manifest.manifestId);
+    if (restoreHistory.has(hk) && !shouldSkipServerFile(manifest, localSets).skip) {
+      restoreHistory.delete(hk);
+      pruned++;
+    }
+  }
+  if (pruned > 0) {
+    console.log(`[Sync] Pruned ${pruned} stale history entries (files no longer on device)`);
+    await saveRestoreHistory(restoreHistory);
+  }
 
   // ========== PHASE 4: Filter Files to Download (10-15%) ==========
   onStatus(t('status.syncComparing', { current: 0, total: serverManifests.length }));
@@ -1092,15 +1115,23 @@ export const stealthCloudRestoreCore = async ({
       }
 
       // Save to media library
-      // iOS: use native saveRawToLibrary for RAW/DNG to prevent conversion to JPEG
+      // iOS: use native methods to preserve original file bytes (MediaLibrary.saveToLibraryAsync re-encodes JPEGs and strips EXIF)
       const isRawFormat = /\.(dng|cr2|cr3|nef|arw|orf|rw2|pef|srw|raf)$/i.test(filename || '');
+      const savePath = outUri.startsWith('file://') ? outUri.replace('file://', '') : outUri;
       if (Platform.OS === 'ios' && isRawFormat && ExifExtractor?.saveRawToLibrary) {
         try {
-          const rawPath = outUri.startsWith('file://') ? outUri.replace('file://', '') : outUri;
-          await ExifExtractor.saveRawToLibrary(rawPath);
+          await ExifExtractor.saveRawToLibrary(savePath);
           console.log(`[Sync] Saved RAW to library via native module: ${filename}`);
         } catch (rawErr) {
-          console.warn(`[Sync] saveRawToLibrary failed, falling back to saveToLibraryAsync: ${rawErr?.message}`);
+          console.warn(`[Sync] saveRawToLibrary failed, falling back: ${rawErr?.message}`);
+          await MediaLibrary.saveToLibraryAsync(outUri);
+        }
+      } else if (Platform.OS === 'ios' && ExifExtractor?.saveFileToLibrary) {
+        try {
+          await ExifExtractor.saveFileToLibrary(savePath);
+          console.log(`[Sync] Saved to library via saveFileToLibrary (byte-preserving): ${filename}`);
+        } catch (saveErr) {
+          console.warn(`[Sync] saveFileToLibrary failed, falling back: ${saveErr?.message}`);
           await MediaLibrary.saveToLibraryAsync(outUri);
         }
       } else {
@@ -1429,15 +1460,23 @@ export const localRemoteRestoreCore = async ({
               await FileSystem.deleteAsync(finalUri, { idempotent: true });
               await FileSystem.moveAsync({ from: localUri, to: finalUri });
             }
-            // iOS: use native saveRawToLibrary for RAW/DNG to prevent conversion to JPEG
+            // iOS: use native methods to preserve original file bytes (MediaLibrary.saveToLibraryAsync re-encodes JPEGs and strips EXIF)
             const isRawFile = /\.(dng|cr2|cr3|nef|arw|orf|rw2|pef|srw|raf)$/i.test(originalName || '');
+            const savePath = finalUri.startsWith('file://') ? finalUri.replace('file://', '') : finalUri;
             if (Platform.OS === 'ios' && isRawFile && ExifExtractor?.saveRawToLibrary) {
               try {
-                const rawPath = finalUri.startsWith('file://') ? finalUri.replace('file://', '') : finalUri;
-                await ExifExtractor.saveRawToLibrary(rawPath);
+                await ExifExtractor.saveRawToLibrary(savePath);
                 console.log(`[Sync] Saved RAW to library via native module: ${originalName}`);
               } catch (rawErr) {
                 console.warn(`[Sync] saveRawToLibrary failed, falling back: ${rawErr?.message}`);
+                await MediaLibrary.saveToLibraryAsync(finalUri);
+              }
+            } else if (Platform.OS === 'ios' && ExifExtractor?.saveFileToLibrary) {
+              try {
+                await ExifExtractor.saveFileToLibrary(savePath);
+                console.log(`[Sync] Saved to library via saveFileToLibrary (byte-preserving): ${originalName}`);
+              } catch (saveErr) {
+                console.warn(`[Sync] saveFileToLibrary failed, falling back: ${saveErr?.message}`);
                 await MediaLibrary.saveToLibraryAsync(finalUri);
               }
             } else {

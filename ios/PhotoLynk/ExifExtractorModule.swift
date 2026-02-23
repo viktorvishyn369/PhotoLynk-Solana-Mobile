@@ -364,6 +364,45 @@ class ExifExtractorModule: NSObject {
   }
   
   @objc
+  func saveFileToLibrary(_ filePath: String, resolver resolve: @escaping RCTPromiseResolveBlock, rejecter reject: @escaping RCTPromiseRejectBlock) {
+    DispatchQueue.global(qos: .userInitiated).async {
+      let cleanPath = filePath.replacingOccurrences(of: "file://", with: "")
+      let fileURL = URL(fileURLWithPath: cleanPath)
+      
+      guard FileManager.default.fileExists(atPath: cleanPath) else {
+        reject("E_NOT_FOUND", "File not found: \(cleanPath)", nil)
+        return
+      }
+      
+      let ext = fileURL.pathExtension.lowercased()
+      let videoExts = ["mov", "mp4", "m4v", "avi", "mkv", "webm", "3gp"]
+      let isVideo = videoExts.contains(ext)
+      
+      PHPhotoLibrary.requestAuthorization { status in
+        guard status == .authorized || status == .limited else {
+          reject("E_AUTH", "Photo library access denied", nil)
+          return
+        }
+        
+        PHPhotoLibrary.shared().performChanges({
+          let creationRequest = PHAssetCreationRequest.forAsset()
+          let options = PHAssetResourceCreationOptions()
+          options.shouldMoveFile = false
+          // Add original file bytes directly — no re-encoding
+          let resourceType: PHAssetResourceType = isVideo ? .video : .photo
+          creationRequest.addResource(with: resourceType, fileURL: fileURL, options: options)
+        }) { success, error in
+          if success {
+            resolve(["success": true])
+          } else {
+            reject("E_SAVE", "Failed to save file to library: \(error?.localizedDescription ?? "unknown")", nil)
+          }
+        }
+      }
+    }
+  }
+  
+  @objc
   func getOriginalResource(_ assetId: String, resolver resolve: @escaping RCTPromiseResolveBlock, rejecter reject: @escaping RCTPromiseRejectBlock) {
     DispatchQueue.global(qos: .userInitiated).async {
       // Strip ph:// prefix if present
