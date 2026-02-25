@@ -971,10 +971,10 @@ export const stripExifFromImage = async (filePath) => {
  * @param {string} filePath - Path to the JPEG file
  * @returns {Promise<string|null>} SHA256 hex hash or null
  */
-export const computeExifHash = async (filePath) => {
-  if (!filePath) return null;
+export const computeExifHash = async (filePath, preReadBase64 = null) => {
+  if (!filePath && !preReadBase64) return null;
   try {
-    const base64Content = await FileSystem.readAsStringAsync(filePath, {
+    const base64Content = preReadBase64 || await FileSystem.readAsStringAsync(filePath, {
       encoding: FileSystem.EncodingType.Base64,
     });
     const binaryString = atob(base64Content);
@@ -1016,7 +1016,8 @@ export const computeExifHash = async (filePath) => {
       // IFD0
       0x010F: 'Make', 0x0110: 'Model', 0x0112: 'Orientation',
       // ExifIFD
-      0x9003: 'DateTimeOriginal', 0x829A: 'ExposureTime', 0x829D: 'FNumber',
+      0x9003: 'DateTimeOriginal', 0x9004: 'DateTimeDigitized',
+      0x829A: 'ExposureTime', 0x829D: 'FNumber',
       0x8827: 'ISO', 0x920A: 'FocalLength', 0xA405: 'FocalLengthIn35mm',
       0xA402: 'ExposureMode', 0xA403: 'WhiteBalance', 0x9207: 'MeteringMode',
       0x9209: 'Flash', 0xA001: 'ColorSpace',
@@ -1112,7 +1113,8 @@ export const computeExifHash = async (filePath) => {
     if (raw.Make) normalized.Make = String(raw.Make).trim();
     if (raw.Model) normalized.Model = String(raw.Model).trim();
     if (raw.Orientation != null) normalized.Orientation = Number(raw.Orientation);
-    if (raw.DateTimeOriginal) normalized.DateTimeOriginal = String(raw.DateTimeOriginal).slice(0, 19);
+    const dto = raw.DateTimeOriginal || raw.DateTimeDigitized;
+    if (dto) normalized.DateTimeOriginal = String(dto).slice(0, 19);
     if (raw.ExposureTime != null) normalized.ExposureTime = num4(raw.ExposureTime);
     if (raw.FNumber != null) normalized.FNumber = num4(raw.FNumber);
     if (raw.ISO != null) normalized.ISO = num4(raw.ISO);
@@ -1180,6 +1182,313 @@ export const computeCameraSerialHash = (info) => {
   const hash = sha256(String(serial));
   console.log('[NFT] Camera serial hash computed:', hash.substring(0, 16) + '...');
   return hash;
+};
+
+// ============================================================================
+// RAW EXIF BINARY HASH (Hash1 — exact camera EXIF bytes, no parsing)
+// ============================================================================
+
+/**
+ * Extract raw EXIF binary bytes from any image file.
+ * No parsing, no library interpretation — exact bytes as the camera wrote them.
+ * Returns a Uint8Array of the raw EXIF segment.
+ *
+ * For JPEG: extracts the entire APP1 Exif segment ("Exif\0\0" + TIFF header + all IFDs).
+ *   Desktop equivalent: scanBuf.slice(pos + 4, pos + 2 + segLen) in nftDesktop.js
+ * For PNG: extracts eXIf chunk data.
+ * For WebP: extracts EXIF chunk data from RIFF container.
+ * For HEIC/TIFF/RAW: not directly scannable on mobile — returns null (these formats
+ *   don't have a simple binary header scan pattern on React Native without native libs).
+ *
+ * @param {string} filePath - Path to the image file
+ * @param {string|null} preReadBase64 - Pre-read base64 content (avoids double disk read)
+ * @returns {Promise<Uint8Array|null>} Raw EXIF binary bytes or null
+ */
+export const extractRawExifBytes = async (filePath, preReadBase64 = null) => {
+  if (!filePath && !preReadBase64) return null;
+  try {
+    const base64Content = preReadBase64 || await FileSystem.readAsStringAsync(filePath, {
+      encoding: FileSystem.EncodingType.Base64,
+    });
+    const binaryString = atob(base64Content);
+    const len = binaryString.length;
+    if (len < 12) return null;
+
+    const b = (i) => binaryString.charCodeAt(i);
+
+    // === JPEG: Find APP1 marker (FF E1) containing "Exif\0\0" ===
+    if (b(0) === 0xFF && b(1) === 0xD8) {
+      const scanLen = Math.min(len, 256 * 1024);
+      let pos = 2; // skip SOI
+      while (pos + 4 < scanLen) {
+        if (b(pos) !== 0xFF) break;
+        const marker = b(pos + 1);
+        const segLen = (b(pos + 2) << 8) | b(pos + 3);
+        if (marker === 0xE1 && segLen > 8) {
+          if (b(pos + 4) === 0x45 && b(pos + 5) === 0x78 &&
+              b(pos + 6) === 0x69 && b(pos + 7) === 0x66 &&
+              b(pos + 8) === 0x00 && b(pos + 9) === 0x00) {
+            // Extract: "Exif\0\0" + TIFF header + all IFDs — identical to desktop
+            const rawStr = binaryString.substring(pos + 4, pos + 2 + segLen);
+            const rawBytes = new Uint8Array(rawStr.length);
+            for (let j = 0; j < rawStr.length; j++) rawBytes[j] = rawStr.charCodeAt(j);
+            return rawBytes;
+          }
+        }
+        if (marker === 0xDA) break; // SOS — stop scanning
+        pos += 2 + segLen;
+      }
+      return null;
+    }
+
+    // === PNG: Find eXIf chunk ===
+    if (b(0) === 0x89 && b(1) === 0x50 && b(2) === 0x4E && b(3) === 0x47) {
+      const scanLen = Math.min(len, 512 * 1024);
+      let pos = 8; // skip PNG signature
+      while (pos + 12 < scanLen) {
+        const chunkLen = ((b(pos) << 24) | (b(pos + 1) << 16) | (b(pos + 2) << 8) | b(pos + 3)) >>> 0;
+        const ct0 = b(pos + 4), ct1 = b(pos + 5), ct2 = b(pos + 6), ct3 = b(pos + 7);
+        // 'eXIf' = 0x65 0x58 0x49 0x66
+        if (ct0 === 0x65 && ct1 === 0x58 && ct2 === 0x49 && ct3 === 0x66 && chunkLen > 0) {
+          const rawStr = binaryString.substring(pos + 8, pos + 8 + chunkLen);
+          const rawBytes = new Uint8Array(rawStr.length);
+          for (let j = 0; j < rawStr.length; j++) rawBytes[j] = rawStr.charCodeAt(j);
+          return rawBytes;
+        }
+        // 'IEND' = 0x49 0x45 0x4E 0x44
+        if (ct0 === 0x49 && ct1 === 0x45 && ct2 === 0x4E && ct3 === 0x44) break;
+        pos += 12 + chunkLen; // 4 len + 4 type + data + 4 CRC
+      }
+      return null;
+    }
+
+    // === WebP: Find EXIF chunk in RIFF container ===
+    // 'RIFF' = 0x52 0x49 0x46 0x46, 'WEBP' = 0x57 0x45 0x42 0x50
+    if (b(0) === 0x52 && b(1) === 0x49 && b(2) === 0x46 && b(3) === 0x46 &&
+        b(8) === 0x57 && b(9) === 0x45 && b(10) === 0x42 && b(11) === 0x50) {
+      const scanLen = Math.min(len, 512 * 1024);
+      let pos = 12;
+      while (pos + 8 < scanLen) {
+        const id0 = b(pos), id1 = b(pos + 1), id2 = b(pos + 2), id3 = b(pos + 3);
+        const chunkSize = (b(pos + 4) | (b(pos + 5) << 8) | (b(pos + 6) << 16) | ((b(pos + 7) << 24) >>> 0));
+        // 'EXIF' = 0x45 0x58 0x49 0x46
+        if (id0 === 0x45 && id1 === 0x58 && id2 === 0x49 && id3 === 0x46 && chunkSize > 0) {
+          const rawStr = binaryString.substring(pos + 8, pos + 8 + chunkSize);
+          const rawBytes = new Uint8Array(rawStr.length);
+          for (let j = 0; j < rawStr.length; j++) rawBytes[j] = rawStr.charCodeAt(j);
+          return rawBytes;
+        }
+        pos += 8 + chunkSize + (chunkSize % 2); // RIFF chunks are word-aligned
+      }
+      return null;
+    }
+
+    // === TIFF-based: DNG, CR2, NEF, ARW, ORF, RW2, PEF, SRW, RAF ===
+    // sharp().metadata().exif extracts the EXIF sub-IFD as a standalone TIFF blob,
+    // which differs from the raw file bytes. Matching that extraction in pure JS is
+    // unreliable, so these return null for Hash1 on mobile. Hash2 still covers them.
+    // (These formats are rare on mobile — primarily from imported DSLR files.)
+
+    // === HEIC/HEIF: ISOBMFF container with Exif item ===
+    // Check for ftyp box: bytes 4-7 = 'ftyp'
+    if (b(4) === 0x66 && b(5) === 0x74 && b(6) === 0x79 && b(7) === 0x70) {
+      const scanLen = Math.min(len, 512 * 1024);
+      // Scan ISOBMFF boxes for 'Exif' data
+      // HEIC stores EXIF in an 'iloc'-referenced item or directly in 'meta' > 'iinf' > 'Exif'
+      // The simplest reliable method: scan for "Exif\0\0" + TIFF header anywhere in the file
+      for (let pos = 0; pos + 10 < scanLen; pos++) {
+        if (b(pos) === 0x45 && b(pos + 1) === 0x78 && b(pos + 2) === 0x69 && b(pos + 3) === 0x66 &&
+            b(pos + 4) === 0x00 && b(pos + 5) === 0x00) {
+          // Verify TIFF header follows: II (0x4949) or MM (0x4D4D)
+          if ((b(pos + 6) === 0x49 && b(pos + 7) === 0x49) || (b(pos + 6) === 0x4D && b(pos + 7) === 0x4D)) {
+            // Found EXIF payload — include "Exif\0\0" prefix to match sharp().metadata().exif output
+            // tiffBase = start of TIFF header (for offset calculations), exifStart = pos (includes prefix)
+            const exifStart = pos; // includes "Exif\0\0"
+            const tiffBase = pos + 6; // TIFF header starts here, all IFD offsets relative to this
+            const le = b(tiffBase) === 0x49;
+            const u16t = (off) => le ? (binaryString.charCodeAt(off) | (binaryString.charCodeAt(off + 1) << 8))
+                                     : ((binaryString.charCodeAt(off) << 8) | binaryString.charCodeAt(off + 1));
+            const u32t = (off) => le ? (binaryString.charCodeAt(off) | (binaryString.charCodeAt(off + 1) << 8) |
+                                        (binaryString.charCodeAt(off + 2) << 16) | ((binaryString.charCodeAt(off + 3) << 24) >>> 0))
+                                     : (((binaryString.charCodeAt(off) << 24) >>> 0) | (binaryString.charCodeAt(off + 1) << 16) |
+                                        (binaryString.charCodeAt(off + 2) << 8) | binaryString.charCodeAt(off + 3));
+            // Walk IFDs to find the max extent (relative to tiffBase)
+            let maxExtent = 8; // at least TIFF header
+            try {
+              const ifd0Off = u32t(tiffBase + 4);
+              let ifdAbs = tiffBase + ifd0Off;
+              for (let ifdPass = 0; ifdPass < 4 && ifdAbs + 2 < scanLen; ifdPass++) {
+                const count = u16t(ifdAbs);
+                const ifdEnd = ifdAbs + 2 + count * 12 + 4;
+                if (ifdEnd > scanLen) break;
+                for (let ei = 0; ei < count; ei++) {
+                  const entryOff = ifdAbs + 2 + ei * 12;
+                  const typeSize = [0,1,1,2,4,8,1,1,2,4,8,4,8][u16t(entryOff + 2)] || 1;
+                  const valCount = u32t(entryOff + 4);
+                  const totalBytes = typeSize * valCount;
+                  if (totalBytes > 4) {
+                    const dataOff = u32t(entryOff + 8);
+                    const dataEnd = dataOff + totalBytes;
+                    if (dataEnd > maxExtent) maxExtent = dataEnd;
+                  }
+                  const tag = u16t(entryOff);
+                  if (tag === 0x8769 || tag === 0x8825) {
+                    const subOff = u32t(entryOff + 8);
+                    const subAbs = tiffBase + subOff;
+                    if (subAbs + 2 < scanLen) {
+                      const subCount = u16t(subAbs);
+                      const subEnd = subOff + 2 + subCount * 12 + 4;
+                      if (subEnd > maxExtent) maxExtent = subEnd;
+                      for (let si = 0; si < subCount && subAbs + 2 + si * 12 + 12 <= scanLen; si++) {
+                        const se = subAbs + 2 + si * 12;
+                        const st = [0,1,1,2,4,8,1,1,2,4,8,4,8][u16t(se + 2)] || 1;
+                        const sc = u32t(se + 4);
+                        if (st * sc > 4) {
+                          const sd = u32t(se + 8) + st * sc;
+                          if (sd > maxExtent) maxExtent = sd;
+                        }
+                      }
+                    }
+                  }
+                }
+                const nextRel = u32t(ifdAbs + 2 + count * 12);
+                if (nextRel === 0) break;
+                ifdAbs = tiffBase + nextRel;
+                const nextEnd = nextRel + 2;
+                if (nextEnd > maxExtent) maxExtent = nextEnd;
+              }
+            } catch (_) {
+              maxExtent = Math.min(65536, scanLen - tiffBase);
+            }
+            // Total length: "Exif\0\0" (6 bytes) + TIFF data (maxExtent bytes)
+            const totalLen = Math.min(6 + maxExtent, scanLen - exifStart);
+            if (totalLen > 14) { // at least prefix + TIFF header
+              const rawBytes = new Uint8Array(totalLen);
+              for (let j = 0; j < totalLen; j++) rawBytes[j] = binaryString.charCodeAt(exifStart + j);
+              return rawBytes;
+            }
+          }
+        }
+      }
+      return null;
+    }
+
+    return null;
+  } catch (e) {
+    console.warn('[NFT] extractRawExifBytes failed:', e?.message);
+    return null;
+  }
+};
+
+/**
+ * Strip IFD1 thumbnail data from raw TIFF/EXIF bytes for cross-platform stability.
+ * iOS regenerates the embedded JPEG thumbnail with different compression artifacts
+ * each time getAssetInfoAsync exports the photo, causing the raw EXIF binary to differ
+ * even though all actual camera fields (IFD0, ExifIFD, GPSIFD) are identical.
+ *
+ * Zeroes out: IFD1 pointer, IFD1 entries, thumbnail JPEG blob.
+ * Operates on a COPY — does not mutate the input.
+ * Identical logic to desktop/nft-service stripThumbnailFromTiff but uses Uint8Array.
+ *
+ * @param {Uint8Array} raw - Raw EXIF bytes
+ * @returns {Uint8Array} Copy with thumbnail data zeroed out
+ */
+const stripThumbnailFromTiff = (raw) => {
+  if (!raw || raw.length < 16) return raw;
+
+  const buf = new Uint8Array(raw); // copy
+
+  // TIFF start: "Exif\0\0" prefix → TIFF at byte 6
+  let t = 0;
+  if (buf[0] === 0x45 && buf[1] === 0x78 && buf[2] === 0x69 && buf[3] === 0x66 &&
+      buf[4] === 0x00 && buf[5] === 0x00) {
+    t = 6;
+  }
+  if (t + 8 > buf.length) return buf;
+
+  const le = (buf[t] === 0x49 && buf[t + 1] === 0x49);
+  const be = (buf[t] === 0x4D && buf[t + 1] === 0x4D);
+  if (!le && !be) return buf;
+
+  const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+  const u16 = (off) => dv.getUint16(off, le);
+  const u32 = (off) => dv.getUint32(off, le);
+  const w32 = (off, v) => dv.setUint32(off, v, le);
+
+  const ifd0Abs = t + u32(t + 4);
+  if (ifd0Abs + 2 > buf.length) return buf;
+  const ifd0Count = u16(ifd0Abs);
+  const ifd0End = ifd0Abs + 2 + ifd0Count * 12;
+  if (ifd0End + 4 > buf.length) return buf;
+
+  const ifd1Rel = u32(ifd0End);
+  if (ifd1Rel === 0) return buf; // no IFD1
+
+  const ifd1Abs = t + ifd1Rel;
+  if (ifd1Abs + 2 > buf.length) return buf;
+  const ifd1Count = u16(ifd1Abs);
+  if (ifd1Abs + 2 + ifd1Count * 12 + 4 > buf.length) return buf;
+
+  // Zero IFD1 pointer from IFD0
+  w32(ifd0End, 0);
+
+  // Find thumbnail offset/length in IFD1
+  let thOff = 0, thLen = 0, thOffTag = 0, thLenTag = 0;
+  for (let i = 0; i < ifd1Count; i++) {
+    const e = ifd1Abs + 2 + i * 12;
+    const tag = u16(e);
+    if (tag === 0x0201) { thOff = u32(e + 8); thOffTag = e + 8; }
+    else if (tag === 0x0202) { thLen = u32(e + 8); thLenTag = e + 8; }
+  }
+
+  // Zero thumbnail JPEG blob
+  if (thOff > 0 && thLen > 0) {
+    const s = t + thOff;
+    const e = Math.min(s + thLen, buf.length);
+    if (s < buf.length) buf.fill(0, s, e);
+  }
+
+  // Zero tag values
+  if (thOffTag) w32(thOffTag, 0);
+  if (thLenTag) w32(thLenTag, 0);
+
+  // Zero entire IFD1 block
+  const ifd1End = Math.min(ifd1Abs + 2 + ifd1Count * 12 + 4, buf.length);
+  buf.fill(0, ifd1Abs, ifd1End);
+
+  return buf;
+};
+
+/**
+ * Compute Hash1: SHA-256 of raw EXIF binary bytes from the original file.
+ * Strips IFD1 thumbnail before hashing for cross-platform stability.
+ * Identical to desktop computeExifRawHash — the thumbnail (which iOS re-renders)
+ * is zeroed out deterministically so the hash is stable across all platforms.
+ * @param {string} filePath - Path to the image file
+ * @param {string|null} preReadBase64 - Pre-read base64 content (avoids double disk read)
+ * @returns {Promise<string|null>} SHA-256 hex hash or null
+ */
+export const computeExifRawHash = async (filePath, preReadBase64 = null) => {
+  const rawBytes = await extractRawExifBytes(filePath, preReadBase64);
+  if (!rawBytes || rawBytes.length === 0) return null;
+  const stable = stripThumbnailFromTiff(rawBytes);
+  const hash = sha256(stable);
+  console.log(`[NFT] EXIF Raw Hash (${stable.length} bytes, thumb-stripped): ${hash.substring(0, 16)}...`);
+  return hash;
+};
+
+/**
+ * Compute Hash3: Binding proof — SHA-256(Hash1 + "|" + Hash2).
+ * Cryptographically binds the exact raw hash and the normalized dedup hash.
+ * Identical to desktop computeExifBindingHash.
+ * @param {string} rawHash - Hash1 (exact raw EXIF binary)
+ * @param {string} normalizedHash - Hash2 (normalized/rounded for dedup)
+ * @returns {string|null} SHA-256 hex binding hash or null
+ */
+export const computeExifBindingHash = (rawHash, normalizedHash) => {
+  if (!rawHash && !normalizedHash) return null;
+  const input = `${rawHash || 'none'}|${normalizedHash || 'none'}`;
+  return sha256(input);
 };
 
 // ============================================================================
@@ -1266,11 +1575,11 @@ export const requestRFC3161Timestamp = async (hexHash) => {
 export const buildC2PAManifest = ({ contentHash, exifHash, cameraSerialHash, creatorWallet, fileName, fileSize, originalFormat, originalResolution, tsaToken, tsaUrl, mintTimestamp }) => ({
   '@context': 'https://c2pa.org/statements/v1',
   'claim_generator': `PhotoLynk/${APP_VERSION}`,
-  'title': fileName || 'PhotoLynk Limited Edition',
+  'title': fileName || 'PhotoLynk Certified Original',
   'format': originalFormat || 'image/jpeg',
   'instance_id': `urn:photolynk:${contentHash}`,
   'claim': {
-    'dc:title': fileName || 'PhotoLynk Limited Edition',
+    'dc:title': fileName || 'PhotoLynk Certified Original',
     'dc:format': originalFormat || 'image/jpeg',
     'created': mintTimestamp || new Date().toISOString(),
     'claim_generator': `PhotoLynk/${APP_VERSION} (Solana Seeker)`,
@@ -1952,12 +2261,12 @@ export const estimateArweaveUploadCost = async (fileSizeBytes) => {
  * @param {Object} tags - Metadata tags
  * @returns {Object} { success, arweaveUrl, transactionId, error }
  */
-export const uploadToArweave = async (filePath, contentType = 'image/jpeg', tags = {}) => {
+export const uploadToArweave = async (filePath, contentType = 'image/jpeg', tags = {}, preReadBase64 = null) => {
   // Try Pinata first (we have the key configured)
   if (PINATA_JWT) {
     try {
       console.log('[NFT] Uploading to IPFS via Pinata...');
-      return await uploadToPinata(filePath, contentType);
+      return await uploadToPinata(filePath, contentType, preReadBase64);
     } catch (pinataError) {
       console.error('[NFT] Pinata upload failed:', pinataError.message);
       // Fall through to NFT.storage
@@ -1967,7 +2276,8 @@ export const uploadToArweave = async (filePath, contentType = 'image/jpeg', tags
   // Try NFT.storage as fallback
   if (NFT_STORAGE_API_KEY) {
     try {
-      const fileBase64 = await FileSystem.readAsStringAsync(filePath, {
+      // Reuse pre-read buffer when available (read-once optimization)
+      const fileBase64 = preReadBase64 || await FileSystem.readAsStringAsync(filePath, {
         encoding: FileSystem.EncodingType.Base64,
       });
       
@@ -2015,12 +2325,13 @@ export const uploadToArweave = async (filePath, contentType = 'image/jpeg', tags
 /**
  * Upload to Pinata IPFS using base64 approach for React Native
  */
-const uploadToPinata = async (filePath, contentType) => {
+const uploadToPinata = async (filePath, contentType, preReadBase64 = null) => {
   if (!PINATA_JWT) {
     throw new Error('Pinata JWT not configured');
   }
   
-  let fileBase64 = await FileSystem.readAsStringAsync(filePath, {
+  // Reuse pre-read buffer when available (read-once optimization for large RAW files)
+  let fileBase64 = preReadBase64 || await FileSystem.readAsStringAsync(filePath, {
     encoding: FileSystem.EncodingType.Base64,
   });
   
@@ -2032,7 +2343,10 @@ const uploadToPinata = async (filePath, contentType) => {
   const boundary = '----FormBoundary' + Math.random().toString(36).substring(2);
   const isJson = contentType === 'application/json';
   const isEncrypted = contentType === 'application/octet-stream';
-  const fileName = isJson ? `metadata_${Date.now()}.json` : isEncrypted ? `encrypted_${Date.now()}.bin` : `photo_${Date.now()}.jpg`;
+  // Derive correct file extension from MIME type for proper CID metadata
+  const extMap = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/heic': 'heic', 'image/heif': 'heif', 'image/webp': 'webp', 'image/gif': 'gif', 'image/avif': 'avif', 'image/tiff': 'tiff', 'image/x-adobe-dng': 'dng', 'image/x-canon-cr2': 'cr2', 'image/x-canon-cr3': 'cr3', 'image/x-nikon-nef': 'nef', 'image/x-sony-arw': 'arw', 'image/x-fuji-raf': 'raf', 'image/x-olympus-orf': 'orf', 'image/x-panasonic-rw2': 'rw2' };
+  const fileExt = isJson ? 'json' : isEncrypted ? 'bin' : (extMap[contentType] || 'jpg');
+  const fileName = isJson ? `metadata_${Date.now()}.json` : isEncrypted ? `encrypted_${Date.now()}.bin` : `photo_${Date.now()}.${fileExt}`;
   
   // Decode base64 to binary — free intermediates to reduce peak memory (~6MB each)
   let binaryStr = atob(fileBase64);
@@ -2104,12 +2418,13 @@ const uploadToPinata = async (filePath, contentType) => {
  * @param {string} contentType - MIME type
  * @returns {Object} { success, arweaveUrl, transactionId, size, error }
  */
-const uploadToAkordArweave = async (filePath, contentType = 'image/jpeg') => {
+const uploadToAkordArweave = async (filePath, contentType = 'image/jpeg', preReadBase64 = null) => {
   if (!AKORD_API_KEY) {
     return { success: false, error: 'Akord API key not configured. Get one at https://akord.com' };
   }
 
-  const fileBase64 = await FileSystem.readAsStringAsync(filePath, {
+  // Reuse pre-read buffer when available (read-once optimization)
+  const fileBase64 = preReadBase64 || await FileSystem.readAsStringAsync(filePath, {
     encoding: FileSystem.EncodingType.Base64,
   });
 
@@ -2169,10 +2484,10 @@ const uploadToAkordArweave = async (filePath, contentType = 'image/jpeg') => {
  * @param {string} filePath - Path to the file
  * @returns {Promise<string>} SHA256 hash as hex string
  */
-export const computeContentHash = async (filePath) => {
+export const computeContentHash = async (filePath, preReadBase64 = null) => {
   try {
-    // Read file as base64
-    const base64Content = await FileSystem.readAsStringAsync(filePath, {
+    // Read file as base64 — reuse pre-read buffer when available (read-once optimization)
+    const base64Content = preReadBase64 || await FileSystem.readAsStringAsync(filePath, {
       encoding: FileSystem.EncodingType.Base64,
     });
     
@@ -2218,16 +2533,20 @@ export const buildNFTMetadata = ({
   watermarked = false,
   encrypted = false,
   encryptionData = null,
+  exifRawHash = null,
   exifHash = null,
+  exifBindingHash = null,
   cameraSerialHash = null,
   originalFormat = null,
   originalResolution = null,
+  uploadMimeType = null,
   storageOption = null,
   tsaToken = null,
   tsaUrl = null,
   tsaPolicy = null,
   c2paManifest = null,
   mintTimestamp = null,
+  certificationMode = null,
 }) => {
   const isLimited = edition === NFT_EDITION.LIMITED;
   const editionLabel = isLimited ? 'Limited' : 'Open';
@@ -2237,12 +2556,10 @@ export const buildNFTMetadata = ({
   const licenseEntry = NFT_LICENSE_OPTIONS.find(l => l.id === license);
   const licenseLabel = licenseEntry ? licenseEntry.label : 'All Rights Reserved';
 
-  const defaultDesc = isLimited
-    ? 'Limited Edition — copyright certificate with RFC 3161 trusted timestamp and C2PA provenance'
-    : 'Open Edition — photo NFT with on-chain integrity proof';
+  const defaultDesc = 'Certified Original — certificate of authenticity with RFC 3161 trusted timestamp and C2PA provenance';
 
   const metadata = {
-    name: name || 'PhotoLynk Photo NFT',
+    name: name || ('Certified Original — ' + new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })),
     symbol: PHOTOLYNK_COLLECTION.symbol,
     description: description || defaultDesc,
     image: imageUrl,
@@ -2251,7 +2568,9 @@ export const buildNFTMetadata = ({
     attributes: [
       { trait_type: 'Edition', value: editionLabel },
       ...(contentHash ? [{ trait_type: 'Content Hash', value: `SHA256:${contentHash}` }] : []),
+      ...(exifRawHash ? [{ trait_type: 'EXIF Raw Hash', value: `SHA256:${exifRawHash}` }] : []),
       ...(exifHash ? [{ trait_type: 'EXIF Hash', value: `SHA256:${exifHash}` }] : []),
+      ...(exifBindingHash ? [{ trait_type: 'EXIF Binding Hash', value: `SHA256:${exifBindingHash}` }] : []),
       ...(cameraSerialHash ? [{ trait_type: 'Camera Hash', value: `SHA256:${cameraSerialHash}` }] : []),
       ...(fileSize ? [{ trait_type: 'Original Size', value: `${fileSize} bytes` }] : []),
       ...(originalFormat ? [{ trait_type: 'Original Format', value: originalFormat }] : []),
@@ -2259,18 +2578,18 @@ export const buildNFTMetadata = ({
       { trait_type: 'License', value: licenseLabel },
       { trait_type: 'Watermarked', value: watermarked ? 'true' : 'false' },
       { trait_type: 'Encrypted', value: encrypted ? 'true' : 'false' },
-      ...(isLimited ? [{ trait_type: 'Original Storage', value: 'Creator Device Only' }] : []),
-      { trait_type: 'Proof Type', value: isLimited ? 'Copyright Certificate' : 'Photo Ownership' },
-      ...(isLimited && tsaToken ? [{ trait_type: 'RFC 3161 Timestamp', value: 'FreeTSA.org' }] : []),
-      ...(isLimited && c2paManifest ? [{ trait_type: 'C2PA Provenance', value: 'Included' }] : []),
+      { trait_type: 'Proof Type', value: 'Certificate of Authenticity' },
+      ...(tsaToken ? [{ trait_type: 'RFC 3161 Timestamp', value: 'FreeTSA.org' }] : []),
+      ...(c2paManifest ? [{ trait_type: 'C2PA Provenance', value: 'Included' }] : []),
       { trait_type: 'Storage', value: storageOption === 'cloud' ? 'StealthCloud' : storageOption === 'arweave' ? 'Arweave' : storageOption === 'onchain' ? 'Embedded SVG' : 'IPFS' },
       { trait_type: 'Minted With', value: 'PhotoLynk' },
       { trait_type: 'Platform', value: 'Solana Seeker' },
+      ...(certificationMode ? [{ trait_type: 'Certification Mode', value: certificationMode === 'public' ? 'Public' : 'Private' }] : []),
     ],
 
     properties: {
       category: 'image',
-      files: [{ uri: imageUrl, type: encrypted ? 'application/octet-stream' : storageOption === 'onchain' ? 'image/svg+xml' : 'image/jpeg' }],
+      files: [{ uri: imageUrl, type: uploadMimeType || 'image/jpeg' }],
       creators: [{ address: creatorAddress || ownerAddress, share: 100 }],
       ...(encrypted ? {
         encryption: {
@@ -2285,14 +2604,16 @@ export const buildNFTMetadata = ({
           } : {}),
         },
       } : {}),
-      ...(isLimited ? {
+      ...((true) ? {
         certificate: {
           version: 2,
           type: 'PhotoLynk Certificate of Authenticity',
-          edition: 'Limited',
+          edition: editionLabel,
           mintedAt: mintTimestamp || new Date().toISOString(),
           originalHash: contentHash ? `SHA256:${contentHash}` : null,
+          exifRawHash: exifRawHash ? `SHA256:${exifRawHash}` : null,
           exifHash: exifHash ? `SHA256:${exifHash}` : null,
+          exifBindingHash: exifBindingHash ? `SHA256:${exifBindingHash}` : null,
           cameraSerialHash: cameraSerialHash ? `SHA256:${cameraSerialHash}` : null,
           originalFormat: originalFormat || null,
           originalResolution: originalResolution || null,
@@ -3011,6 +3332,7 @@ export const mintPhotoNFT = async ({
   watermark = false,           // Burn visible watermark into preview/thumbnail
   encrypt = false,             // Encrypt image before upload
   masterKey = null,            // StealthCloud master key (required if encrypt=true)
+  certificationMode = null,    // 'private' or 'public'
 }) => {
   // Check if any wallet is available (WalletAdapter or MWA)
   if (!solanaAvailable || !isWalletAvailable() || !connection) {
@@ -3021,6 +3343,11 @@ export const mintPhotoNFT = async ({
   if (!filePath) {
     console.error('[NFT] No file path provided');
     return { success: false, error: 'No image file provided' };
+  }
+  
+  // Ensure file:// prefix — normalizeFilePath strips it but Expo FileSystem APIs need it on Android
+  if (filePath.startsWith('/') && !filePath.startsWith('file://')) {
+    filePath = 'file://' + filePath;
   }
   
   if (encrypt && !masterKey) {
@@ -3049,15 +3376,27 @@ export const mintPhotoNFT = async ({
     const info = await MediaLibrary.getAssetInfoAsync(asset.id);
     const exifData = extractExifForNFT(asset, info);
     
-    // Compute EXIF hash from raw EXIF binary in the original file
+    // ── 3-Hash EXIF Proof System ──────────────────────────────────────
+    // Hash1 (raw): exact camera EXIF binary bytes, no parsing/rounding
+    // Hash2 (normalized): parsed fields with r4/t4 rounding for cross-platform dedup
+    // Hash3 (binding): SHA-256(Hash1 + "|" + Hash2) — cryptographically links both
+    
+    // Hash2: Normalized EXIF hash (cross-platform dedup)
     let exifHash = await computeExifHash(filePath);
     // Fallback: for HEIC/RAW (no JPEG APP1), compute from assetInfo.exif
     if (!exifHash && info) {
       exifHash = computeExifHashFromAssetInfo(info);
     }
     
-    // Compute camera serial hash (Limited Edition — device-binding proof)
-    const camSerialHash = isLimited ? computeCameraSerialHash(info) : null;
+    // Hash1: Raw EXIF binary hash (exact camera bytes — JPEG/PNG/WebP only on mobile)
+    let exifRawHash = await computeExifRawHash(filePath);
+    
+    // Hash3: Binding proof
+    let exifBindingHash = computeExifBindingHash(exifRawHash, exifHash);
+    console.log(`[NFT] EXIF 3-hash proof: raw=${exifRawHash?.substring(0, 12) || 'null'}... norm=${exifHash?.substring(0, 12) || 'null'}... bind=${exifBindingHash?.substring(0, 12) || 'null'}...`);
+    
+    // Compute camera serial hash (device-binding proof — all editions)
+    const camSerialHash = computeCameraSerialHash(info);
     
     // Determine original format and resolution
     const filename = asset.filename || info?.filename || '';
@@ -3066,17 +3405,27 @@ export const mintPhotoNFT = async ({
     const originalResolution = (asset.width && asset.height) ? `${asset.width}x${asset.height}` : null;
     const mintTimestamp = new Date().toISOString();
 
-    // Pre-compute contentHash here for Limited Edition (RFC 3161 needs it before wallet step)
-    // For Open Edition this is also computed later at line ~2954 — we hoist it here to avoid double work
-    let earlyContentHash = null;
-    if (isLimited) {
-      earlyContentHash = await computeContentHash(filePath);
+    // Read-once optimization: read the original file into base64 once,
+    // reuse for content hash + IPFS upload (avoids 3x disk reads for large RAW files)
+    let originalBase64 = null;
+    try {
+      originalBase64 = await FileSystem.readAsStringAsync(filePath, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+      console.log(`[NFT] Read-once: ${Math.ceil(originalBase64.length * 0.75)} bytes buffered`);
+    } catch (readErr) {
+      console.warn('[NFT] Read-once failed, will fall back to per-operation reads:', readErr.message);
     }
 
-    // RFC 3161 trusted timestamp + C2PA manifest (Limited Edition only)
+    // Pre-compute contentHash (RFC 3161 needs it before wallet step)
+    // Also computed later — we hoist it here to avoid double work
+    let earlyContentHash = null;
+    earlyContentHash = await computeContentHash(filePath, originalBase64);
+
+    // RFC 3161 trusted timestamp + C2PA manifest (all editions)
     let tsaResult = null;
     let c2paManifest = null;
-    if (isLimited && earlyContentHash) {
+    if (earlyContentHash) {
       onStatus?.('Requesting trusted timestamp (RFC 3161)...');
       tsaResult = await requestRFC3161Timestamp(earlyContentHash);
       if (tsaResult.success) {
@@ -3196,7 +3545,11 @@ export const mintPhotoNFT = async ({
     }
     
     // Normalize EXIF orientation before upload (bake rotation into pixels)
-    // Skip for encrypted images — they're already binary and don't have EXIF
+    // so that web viewers (Tensor, explorers) display the image upright.
+    // Skip for encrypted images — they're already binary and don't have EXIF.
+    // Content/EXIF hashes are computed from the original BEFORE this step.
+    // RAW formats (CR3, NEF, ARW, etc.) will fail gracefully in the catch block.
+    let imageAlreadyProcessed = imageToUploadPath !== filePath;
     if (!encryptionData) {
       try {
         let pathForManipulator = imageToUploadPath;
@@ -3209,12 +3562,13 @@ export const mintPhotoNFT = async ({
         }
         const normalized = await ImageManipulator.manipulateAsync(
           pathForManipulator,
-          [],
+          [{ rotate: 0 }],
           { compress: 1, format: ImageManipulator.SaveFormat.JPEG }
         );
         if (normalized.uri) {
           cleanupTempFiles.push(normalized.uri);
           imageToUploadPath = normalized.uri;
+          imageAlreadyProcessed = true;
           console.log('[NFT] EXIF orientation normalized for upload');
         }
       } catch (exifErr) {
@@ -3227,7 +3581,11 @@ export const mintPhotoNFT = async ({
     const useOnChain = storageOption === NFT_STORAGE_OPTIONS.ONCHAIN;
     let imageUpload;
     let onChainDataUri = null;
-    const uploadContentType = (encrypt && encryptionData) ? 'application/octet-stream' : 'image/jpeg';
+    const mimeTypes = { JPEG: 'image/jpeg', JPG: 'image/jpeg', PNG: 'image/png', HEIC: 'image/heic', HEIF: 'image/heif', WEBP: 'image/webp', GIF: 'image/gif', AVIF: 'image/avif', TIFF: 'image/tiff', TIF: 'image/tiff', DNG: 'image/x-adobe-dng', CR2: 'image/x-canon-cr2', CR3: 'image/x-canon-cr3', NEF: 'image/x-nikon-nef', ARW: 'image/x-sony-arw', RAF: 'image/x-fuji-raf', ORF: 'image/x-olympus-orf', RW2: 'image/x-panasonic-rw2' };
+    // When strip or watermark is ON, ImageManipulator re-encodes to JPEG — use that MIME type
+    // When uploading original bytes (no processing), use the actual format from the asset filename
+    const actualUploadFormat = (imageAlreadyProcessed && !encryptionData) ? 'image/jpeg' : (mimeTypes[originalFormat] || 'image/jpeg');
+    const uploadContentType = (encrypt && encryptionData) ? 'application/octet-stream' : actualUploadFormat;
     
     if (useOnChain) {
       // ON-CHAIN: embed original image as data URI — no separate image upload
@@ -3247,15 +3605,19 @@ export const mintPhotoNFT = async ({
     } else if (useArweave) {
       onStatus?.('Uploading to Arweave (permanent)...');
       onProgress?.(0.25);
-      imageUpload = await uploadToAkordArweave(imageToUploadPath, uploadContentType);
+      // Read-once: reuse originalBase64 when uploading the unmodified original file
+      const reuseBuffer = (imageToUploadPath === filePath) ? originalBase64 : null;
+      imageUpload = await uploadToAkordArweave(imageToUploadPath, uploadContentType, reuseBuffer);
     } else {
       onStatus?.('Uploading to IPFS...');
       onProgress?.(0.25);
+      // Read-once: reuse originalBase64 when uploading the unmodified original file
+      const reuseBuffer = (imageToUploadPath === filePath) ? originalBase64 : null;
       imageUpload = await uploadToArweave(imageToUploadPath, uploadContentType, {
         'NFT-Owner': ownerAddressStr,
         'Photo-Date': stripExif ? 'Private' : (exifData.dateTaken || 'Unknown'),
         'NFT-Edition': isLimited ? 'Limited' : 'Open',
-      });
+      }, reuseBuffer);
     }
     
     if (!imageUpload.success) {
@@ -3354,7 +3716,8 @@ export const mintPhotoNFT = async ({
     
     // Compute content hash of ORIGINAL file (not the preview/thumbnail)
     // For Limited Edition, reuse earlyContentHash already computed above (avoids double read)
-    const contentHash = earlyContentHash || await computeContentHash(filePath);
+    const contentHash = earlyContentHash || await computeContentHash(filePath, originalBase64);
+    originalBase64 = null; // Free buffer — no longer needed, release memory for wallet signing
     console.log('[NFT] === HASH DIAGNOSTIC ===');
     console.log('[NFT] filePath:', filePath);
     console.log('[NFT] fileSize:', fileSize, 'bytes');
@@ -3366,7 +3729,7 @@ export const mintPhotoNFT = async ({
     onProgress?.(0.4);
     
     // Build NFT metadata with edition support
-    const nftName = name || (filePath ? filePath.split('/').pop().replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ').trim() : '') || 'Photo NFT';
+    const nftName = name || (filePath ? filePath.split('/').pop().replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ').trim() : '') || ('Certified Original — ' + new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }));
     const nftDescription = description || null; // Let buildNFTMetadata set default per edition
     
     // Build metadata - exclude EXIF if privacy mode is on
@@ -3397,16 +3760,20 @@ export const mintPhotoNFT = async ({
       watermarked: watermark,
       encrypted: !!(encrypt && encryptionData),
       encryptionData: encryptionData || null,
+      exifRawHash,
       exifHash,
+      exifBindingHash,
       cameraSerialHash: camSerialHash,
       originalFormat,
       originalResolution,
+      uploadMimeType: uploadContentType,
       storageOption,
       tsaToken: tsaResult?.tsaToken || null,
       tsaUrl: tsaResult?.tsaUrl || null,
       tsaPolicy: tsaResult?.tsaPolicy || null,
       c2paManifest: c2paManifest || null,
       mintTimestamp,
+      certificationMode,
     });
     
     // Upload metadata (encrypted if nftKeyB64 available)
@@ -3922,7 +4289,7 @@ export const mintPhotoNFT = async ({
     await saveNFTToStorage({
       mintAddress: result.mintAddress,
       ownerAddress: result.ownerAddress,
-      name: name || (asset?.uri ? asset.uri.split('/').pop().replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ').trim() : '') || 'Photo NFT',
+      name: name || (asset?.uri ? asset.uri.split('/').pop().replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ').trim() : '') || 'Certified Original',
       description,
       imageUrl: result.thumbnailUrl || result.imageUrl || localImagePath || asset.uri,
       thumbnailUrl: result.thumbnailUrl,
@@ -3943,10 +4310,11 @@ export const mintPhotoNFT = async ({
       // Attributes + metadata stored so badges render from local storage without re-fetching chain
       attributes: metadata?.attributes || [],
       metadata,
+      certificationMode,
     }, serverUrl, authHeaders);
     
-    // Auto-generate Certificate of Authenticity for Limited Edition
-    if (isLimited) {
+    // Auto-generate Certificate of Authenticity (all editions)
+    if (true) {
       try {
         const cert = generateCertificate({
           mintAddress: result.mintAddress,
@@ -3963,6 +4331,7 @@ export const mintPhotoNFT = async ({
           metadataUrl: result.metadataUrl,
           metadata,
           createdAt: new Date().toISOString(),
+          certificationMode,
         });
         if (cert) {
           await saveCertificate(cert, serverUrl, authHeaders);
@@ -3983,6 +4352,10 @@ export const mintPhotoNFT = async ({
       metadataUrl: result.metadataUrl,
       ownerAddress: result.ownerAddress,
       edition,
+      contentHash,
+      exifRawHash,
+      exifHash,
+      exifBindingHash,
     };
   } catch (e) {
     _mintingInProgress = false;
@@ -5166,6 +5539,8 @@ export const fetchNFTsFromBlockchain = async (walletAddress, knownMints = null) 
           };
           const editionRaw = getAttr('Edition');
           const edition = editionRaw ? String(editionRaw).toLowerCase() : null;
+          const certModeRaw = getAttr('Certification Mode');
+          const certificationMode = certModeRaw ? String(certModeRaw).toLowerCase() : (edition === 'limited' ? 'private' : edition === 'open' ? 'public' : null);
           const encryptedFromAttr = getAttr('Encrypted') === 'true';
           const encryptedFromProps = !!(metadata.properties && metadata.properties.encryption && metadata.properties.encryption.encrypted);
           const isEncrypted = encryptedFromAttr || encryptedFromProps;
@@ -5178,7 +5553,7 @@ export const fetchNFTsFromBlockchain = async (walletAddress, knownMints = null) 
 
           nfts.push({
             mintAddress,
-            name: metadata.name || 'Unknown NFT',
+            name: metadata.name || 'Unknown Proof',
             description: metadata.description || '',
             imageUrl: imgUrl,
             metadataUrl: metadata.uri || '',
@@ -5186,6 +5561,7 @@ export const fetchNFTsFromBlockchain = async (walletAddress, knownMints = null) 
             createdAt: new Date().toISOString(),
             source: 'rpc',
             edition,
+            certificationMode,
             encrypted: isEncrypted,
             watermarked: isWatermarked,
             license: licenseVal,
@@ -5194,7 +5570,7 @@ export const fetchNFTsFromBlockchain = async (walletAddress, knownMints = null) 
             attributes: attrs,
             metadata, // Full metadata JSON for cert generation (RFC3161, C2PA)
           });
-          console.log(`[NFT] Found: ${metadata.name} edition=${edition} encrypted=${isEncrypted}`);
+          console.log(`[NFT] Found: ${metadata.name} edition=${edition} certificationMode=${certificationMode} encrypted=${isEncrypted}`);
         }
       } catch (e) {
         console.log(`[NFT] Failed to fetch metadata for ${mintAddress}:`, e.message);
@@ -5224,6 +5600,16 @@ export const fetchNFTsFromBlockchain = async (walletAddress, knownMints = null) 
   }
 };
 
+// DAS total-check cache: skip full pagination if total hasn't changed (1 call vs ~24)
+let _lastDasTotal = null;
+let _lastDasTotalTs = 0;
+let _dasForceRefresh = false;
+
+/**
+ * Invalidate DAS cache — call after minting to force full re-scan
+ */
+export const invalidateDasCache = () => { _dasForceRefresh = true; };
+
 /**
  * Fetch compressed NFTs (cNFTs) using DAS API
  * @param {string} walletAddress - Owner's wallet address
@@ -5242,6 +5628,9 @@ const fetchCompressedNFTs = async (walletAddress, knownMints = null) => {
   let dasPage = 1;
   let rateLimitRetries = 0;
   const MAX_PAGES = 25; // Safety limit: 25 pages × 20 = 500 items max
+  const forceRefresh = _dasForceRefresh;
+  if (forceRefresh) _dasForceRefresh = false;
+  let _dasTotalFromPage1 = null; // Captured from first successful page
   
   while (compressedItems.length < MAX_CNFT_METADATA_PER_CALL && dasPage <= MAX_PAGES) {
     try {
@@ -5263,10 +5652,10 @@ const fetchCompressedNFTs = async (walletAddress, knownMints = null) => {
       
       if (!response.ok) {
         // Rate limited (429) — wait and retry with exponential backoff
-        if (response.status === 429 && rateLimitRetries < 4) {
-          const backoff = Math.pow(2, rateLimitRetries) * 5000; // 5s, 10s, 20s, 40s
+        if (response.status === 429 && rateLimitRetries < 6) {
+          const backoff = Math.min(60000, Math.pow(2, rateLimitRetries) * 10000); // 10s, 20s, 40s, 60s, 60s, 60s
           rateLimitRetries++;
-          console.log(`[cNFT] Rate limited (429), retrying in ${backoff / 1000}s (attempt ${rateLimitRetries}/4)`);
+          console.log(`[cNFT] Rate limited (429), retrying in ${backoff / 1000}s (attempt ${rateLimitRetries}/6)`);
           await new Promise(r => setTimeout(r, backoff));
           continue;
         }
@@ -5279,10 +5668,10 @@ const fetchCompressedNFTs = async (walletAddress, knownMints = null) => {
       
       if (data.error) {
         // Rate limited via JSON-RPC error code
-        if (data.error.code === -32429 && rateLimitRetries < 4) {
-          const backoff = Math.pow(2, rateLimitRetries) * 5000;
+        if (data.error.code === -32429 && rateLimitRetries < 6) {
+          const backoff = Math.min(60000, Math.pow(2, rateLimitRetries) * 10000);
           rateLimitRetries++;
-          console.log(`[cNFT] Rate limited (-32429), retrying in ${backoff / 1000}s (attempt ${rateLimitRetries}/4)`);
+          console.log(`[cNFT] Rate limited (-32429), retrying in ${backoff / 1000}s (attempt ${rateLimitRetries}/6)`);
           await new Promise(r => setTimeout(r, backoff));
           continue;
         }
@@ -5303,6 +5692,22 @@ const fetchCompressedNFTs = async (walletAddress, knownMints = null) => {
       }
       
       const items = data.result?.items;
+      const dasTotal = data.result?.total || 0;
+      
+      // Capture total from page 1 for caching
+      if (dasPage === 1) _dasTotalFromPage1 = dasTotal;
+      
+      // DAS total-check: after page 1 succeeds, compare total to last known
+      if (dasPage === 1 && !forceRefresh && _lastDasTotal !== null) {
+        if (dasTotal === _lastDasTotal) {
+          console.log(`[cNFT] Total unchanged (${dasTotal}), skipping full pagination`);
+          _lastDasTotal = dasTotal;
+          _lastDasTotalTs = Date.now();
+          return [];
+        }
+        console.log(`[cNFT] Total changed: ${_lastDasTotal} → ${dasTotal}, doing full scan`);
+      }
+      
       if (!items || items.length === 0) {
         console.log('[cNFT] No more items from DAS');
         break;
@@ -5327,6 +5732,12 @@ const fetchCompressedNFTs = async (walletAddress, knownMints = null) => {
       break;
     }
   }
+  
+  // Update cached total from DAS page 1 response (authoritative)
+  if (_dasTotalFromPage1 !== null) {
+    _lastDasTotal = _dasTotalFromPage1;
+  }
+  _lastDasTotalTs = Date.now();
   
   if (compressedItems.length === 0) {
     console.log('[cNFT] No new compressed NFTs to process');
@@ -5430,6 +5841,8 @@ const fetchCompressedNFTs = async (walletAddress, knownMints = null) => {
       };
       const editionRaw = getAttr('Edition');
       const edition = editionRaw ? String(editionRaw).toLowerCase() : null;
+      const certModeRaw = getAttr('Certification Mode');
+      const certificationMode = certModeRaw ? String(certModeRaw).toLowerCase() : (edition === 'limited' ? 'private' : edition === 'open' ? 'public' : null);
       // Extract encryption keys from full metadata properties
       let encryptionData = null;
       const encProps = (metadataJson && metadataJson.properties && metadataJson.properties.encryption) ? metadataJson.properties.encryption : {};
@@ -5453,7 +5866,7 @@ const fetchCompressedNFTs = async (walletAddress, knownMints = null) => {
       return {
         mintAddress: `cnft_${item.id}`,
         assetId: item.id,
-        name: item.content?.metadata?.name || 'Compressed NFT',
+        name: item.content?.metadata?.name || 'Compressed Proof',
         description: item.content?.metadata?.description || '',
         imageUrl,
         arweaveUrl: imageUrl,
@@ -5464,6 +5877,7 @@ const fetchCompressedNFTs = async (walletAddress, knownMints = null) => {
         isCompressed: true,
         merkleTree: item.compression?.tree,
         edition,
+        certificationMode,
         encrypted: isEncrypted,
         watermarked: isWatermarked,
         license: licenseVal,
@@ -5653,7 +6067,7 @@ export const discoverAndImportNFTs = async (walletAddress, serverUrl = null, aut
   
   let imported = 0;
   let updated = 0;
-  const newLimitedNFTs = []; // Track limited NFTs that need certificates
+  const newCertNFTs = []; // Track NFTs that need certificates (all editions)
   const newNFTs = []; // Batch new NFTs for single write
   for (const nft of result.nfts) {
     const existing = existingMap[normMint(nft.mintAddress)];
@@ -5667,6 +6081,7 @@ export const discoverAndImportNFTs = async (walletAddress, serverUrl = null, aut
           if (oldEntry.encryptionData && !nft.encryptionData) nft.encryptionData = oldEntry.encryptionData;
           if (oldEntry.thumbnailUrl && !nft.thumbnailUrl) nft.thumbnailUrl = oldEntry.thumbnailUrl;
           if (oldEntry.edition && !nft.edition) nft.edition = oldEntry.edition;
+          if (oldEntry.certificationMode && !nft.certificationMode) nft.certificationMode = oldEntry.certificationMode;
           if (oldEntry.encrypted && !nft.encrypted) nft.encrypted = oldEntry.encrypted;
           if (oldEntry.imageUrl && !nft.imageUrl) nft.imageUrl = oldEntry.imageUrl;
           existingNFTs[oldIdx] = nft;
@@ -5674,17 +6089,18 @@ export const discoverAndImportNFTs = async (walletAddress, serverUrl = null, aut
           existingMetaMap[nft.metadataUrl] = { nft, idx: oldIdx };
           updated++;
           console.log('[NFT] Replaced temp tx_ entry with real cnft_ for:', nft.name);
-          if (nft.edition === 'limited') newLimitedNFTs.push(nft);
+          newCertNFTs.push(nft);
           continue;
         }
       }
       newNFTs.push(nft);
       imported++;
-      if (nft.edition === 'limited') newLimitedNFTs.push(nft);
+      newCertNFTs.push(nft);
     } else {
       // Merge missing fields from blockchain into existing local NFT
       let changed = false;
       if (nft.edition && !existing.edition) { existing.edition = nft.edition; changed = true; }
+      if (nft.certificationMode && !existing.certificationMode) { existing.certificationMode = nft.certificationMode; changed = true; }
       if (nft.encrypted && !existing.encrypted) { existing.encrypted = nft.encrypted; changed = true; }
       if (nft.watermarked && !existing.watermarked) { existing.watermarked = nft.watermarked; changed = true; }
       if (nft.license && !existing.license) { existing.license = nft.license; changed = true; }
@@ -5695,12 +6111,9 @@ export const discoverAndImportNFTs = async (walletAddress, serverUrl = null, aut
       if (nft.metadata && !existing.metadata) { existing.metadata = nft.metadata; changed = true; }
       if (nft.attributes?.length && !existing.attributes?.length) { existing.attributes = nft.attributes; changed = true; }
       if (changed) updated++;
-      // Track existing limited NFTs that may need a cert generated
-      if (nft.edition === 'limited' || existing.edition === 'limited') {
-        // Only auto-generate cert if edition is explicitly 'limited' (not null from encrypted metadata)
-        if (nft.edition === 'limited') {
-          newLimitedNFTs.push({ ...existing, ...nft, edition: 'limited' });
-        }
+      // Track NFTs that may need a cert generated (all editions)
+      if (nft.edition) {
+        newCertNFTs.push({ ...existing, ...nft });
       }
     }
   }
@@ -5712,13 +6125,13 @@ export const discoverAndImportNFTs = async (walletAddress, serverUrl = null, aut
     console.log(`[NFT] Saved ${imported} new + ${updated} updated NFTs in single write`);
   }
   
-  // Auto-generate certificates for limited edition NFTs that don't have one yet
-  if (newLimitedNFTs.length > 0) {
+  // Auto-generate certificates for ALL NFTs that don't have one yet
+  if (newCertNFTs.length > 0) {
     try {
       const existingCerts = await getStoredCertificates();
       const certMints = new Set(existingCerts.map(c => normMint(c.mintAddress)));
       let certsGenerated = 0;
-      for (const nft of newLimitedNFTs) {
+      for (const nft of newCertNFTs) {
         const mint = normMint(nft.mintAddress);
         if (mint && !certMints.has(mint)) {
           try {
@@ -5758,16 +6171,118 @@ export const discoverAndImportNFTs = async (walletAddress, serverUrl = null, aut
 
 const CERTIFICATES_STORAGE_KEY = 'photolynk_nft_certificates';
 const CERTIFICATES_STORAGE_FILE = `${FileSystem.documentDirectory}photolynk_nft_certificates.json`;
+const CERT_DATA_DIR = `${FileSystem.documentDirectory}cert_data/`;
+
+// Heavy fields that bloat the main index — stored in separate per-cert files
+const HEAVY_FIELDS = ['rfc3161Token', 'c2paManifest'];
+let _certOOMCount = 0; // OOM guard: stop retrying after repeated failures
+const MAX_OOM_RETRIES = 3;
+let _compactionDone = false; // one-time compaction flag per session
+
+const ensureCertDataDir = async () => {
+  try {
+    const info = await FileSystem.getInfoAsync(CERT_DATA_DIR);
+    if (!info.exists) await FileSystem.makeDirectoryAsync(CERT_DATA_DIR, { intermediates: true });
+  } catch (_) {}
+};
+
+const certDataPath = (certId, field) => `${CERT_DATA_DIR}${certId}_${field}.json`;
+
+// Check whether the externalized heavy-field files actually exist on disk for a cert.
+// Returns { rfc3161Token: bool, c2paManifest: bool }
+export const hasCertHeavyFieldsOnDisk = async (certId) => {
+  const result = {};
+  for (const f of HEAVY_FIELDS) {
+    try {
+      const info = await FileSystem.getInfoAsync(certDataPath(certId, f));
+      result[f] = !!(info.exists && info.size && info.size > 10);
+    } catch (_) { result[f] = false; }
+  }
+  return result;
+};
+
+const externalizeCertHeavyFields = async (cert) => {
+  if (!cert || !cert.id) return cert;
+  await ensureCertDataDir();
+  const slim = { ...cert };
+  for (const f of HEAVY_FIELDS) {
+    if (cert[f]) {
+      try {
+        await FileSystem.writeAsStringAsync(certDataPath(cert.id, f), JSON.stringify(cert[f]));
+      } catch (e) {
+        console.warn(`[NFT] Failed to externalize ${f} for ${cert.id}:`, e?.message);
+      }
+      delete slim[f];
+    }
+  }
+  // Set canonical boolean flags (used by UI for badge display without loading heavy data)
+  if (cert.rfc3161Token || cert.hasRfc3161) slim.hasRfc3161 = true;
+  if (cert.c2paManifest || cert.hasC2pa) slim.hasC2pa = true;
+  return slim;
+};
+
+const loadCertHeavyField = async (certId, field) => {
+  try {
+    const path = certDataPath(certId, field);
+    const info = await FileSystem.getInfoAsync(path);
+    if (!info.exists) return null;
+    const raw = await FileSystem.readAsStringAsync(path);
+    return raw ? JSON.parse(raw) : null;
+  } catch (_) { return null; }
+};
+
+const compactCertificatesFile = async () => {
+  if (_compactionDone) return;
+  try {
+    const info = await FileSystem.getInfoAsync(CERTIFICATES_STORAGE_FILE);
+    if (!info.exists) { _compactionDone = true; return; }
+    // Only compact if file > 2MB (healthy index should be <1MB for 500 certs)
+    if (info.size && info.size < 2 * 1024 * 1024) { _compactionDone = true; return; }
+    console.log(`[NFT] Certificate file is ${(info.size / 1024 / 1024).toFixed(1)}MB — compacting...`);
+    // If file is >20MB, skip compaction entirely (reading it for compaction would OOM).
+    // Keep the file — a bloated file is better than no file when device is offline.
+    if (info.size && info.size > 20 * 1024 * 1024) {
+      console.warn(`[NFT] Certificate file too large (${(info.size / 1024 / 1024).toFixed(1)}MB) — skipping compaction, will try server sync instead`);
+      _compactionDone = true;
+      return;
+    }
+    const raw = await FileSystem.readAsStringAsync(CERTIFICATES_STORAGE_FILE);
+    const certs = raw ? JSON.parse(raw) : [];
+    await ensureCertDataDir();
+    let externalized = 0;
+    const slim = [];
+    for (const cert of certs) {
+      const s = await externalizeCertHeavyFields(cert);
+      slim.push(s);
+      if (cert.rfc3161Token || cert.c2paManifest) externalized++;
+    }
+    await FileSystem.writeAsStringAsync(CERTIFICATES_STORAGE_FILE, JSON.stringify(slim));
+    const newInfo = await FileSystem.getInfoAsync(CERTIFICATES_STORAGE_FILE);
+    console.log(`[NFT] Compacted certificates: ${externalized} heavy fields extracted, file now ${((newInfo.size || 0) / 1024 / 1024).toFixed(1)}MB`);
+    _compactionDone = true;
+    _certOOMCount = 0; // reset OOM counter after successful compaction
+  } catch (e) {
+    const isOOM = e?.message?.includes('OutOfMemoryError') || e?.message?.includes('allocate');
+    if (isOOM) {
+      // Compaction OOM'd — keep the file intact (device may be offline, can't rebuild from server).
+      // The raw file read in getStoredCertificates uses less memory than compaction and may succeed.
+      console.warn('[NFT] Certificate compaction OOM — skipping compaction, keeping file intact');
+    } else {
+      console.warn('[NFT] Certificate compaction failed:', e?.message);
+    }
+    _compactionDone = true;
+  }
+};
 
 /**
- * Generate a Certificate of Authenticity JSON for a Limited Edition NFT
+ * Generate a Certificate of Authenticity JSON for a certified NFT
  * @param {Object} nftData - Minted NFT data from saveNFTToStorage
  * @returns {Object} Certificate object
  */
 export const generateCertificate = (nftData) => {
   if (!nftData) return null;
-  // Only generate certificates for explicitly limited edition NFTs
-  if (nftData.edition !== 'limited') return null;
+  // Generate certificates for all editions (previously limited only)
+  // if (false && nftData.edition !== 'limited') return null;
   // Skip temporary tx_ entries unless forceGenerate is set (post-mint immediate cert)
   if (!nftData.forceGenerate && nftData.mintAddress && String(nftData.mintAddress).startsWith('tx_')) return null;
   const cert = {
@@ -5775,13 +6290,16 @@ export const generateCertificate = (nftData) => {
     version: 1,
     type: 'PhotoLynk Certificate of Authenticity',
     edition: nftData.edition || 'limited',
+    certificationMode: nftData.certificationMode || (nftData.edition === 'limited' ? 'private' : nftData.edition === 'open' ? 'public' : null),
     mintAddress: nftData.mintAddress,
     txSignature: nftData.txSignature,
     creatorWallet: nftData.ownerAddress,
     name: nftData.name,
     description: nftData.description,
     contentHash: null,
+    exifRawHash: null,
     exifHash: null,
+    exifBindingHash: null,
     license: nftData.license || 'arr',
     watermarked: !!nftData.watermarked,
     encrypted: !!nftData.encrypted,
@@ -5798,7 +6316,9 @@ export const generateCertificate = (nftData) => {
   const attrs = nftData.metadata?.attributes || nftData.attributes || [];
   for (const attr of attrs) {
     if (attr.trait_type === 'Content Hash') cert.contentHash = ensureHashPrefix(attr.value);
+    if (attr.trait_type === 'EXIF Raw Hash') cert.exifRawHash = ensureHashPrefix(attr.value);
     if (attr.trait_type === 'EXIF Hash') cert.exifHash = ensureHashPrefix(attr.value);
+    if (attr.trait_type === 'EXIF Binding Hash') cert.exifBindingHash = ensureHashPrefix(attr.value);
     if (attr.trait_type === 'Camera Hash' && !cert.cameraHash) cert.cameraHash = ensureHashPrefix(attr.value);
     if (attr.trait_type === 'License' && !cert.license) cert.license = attr.value;
   }
@@ -5829,13 +6349,15 @@ export const generateCertificate = (nftData) => {
  */
 export const saveCertificate = async (cert, serverUrl = null, authHeaders = null) => {
   try {
+    // Externalize heavy fields before saving to index
+    const slimCert = await externalizeCertHeavyFields(cert);
     const certs = await getStoredCertificates();
     // Avoid duplicates
     const idx = certs.findIndex(c => c.id === cert.id);
     if (idx >= 0) {
-      certs[idx] = cert;
+      certs[idx] = slimCert;
     } else {
-      certs.unshift(cert);
+      certs.unshift(slimCert);
     }
     await FileSystem.writeAsStringAsync(CERTIFICATES_STORAGE_FILE, JSON.stringify(certs));
     console.log('[NFT] Certificate saved:', cert.id);
@@ -5846,6 +6368,8 @@ export const saveCertificate = async (cert, serverUrl = null, authHeaders = null
         const slim = { ...cert };
         delete slim.encryptionData;
         delete slim.metadata;
+        delete slim.rfc3161Token;
+        delete slim.c2paManifest;
         await axios.post(`${serverUrl}/api/nft/certificates`, {
           action: 'add',
           certificate: slim,
@@ -5868,7 +6392,12 @@ export const saveCertificate = async (cert, serverUrl = null, authHeaders = null
  */
 export const saveAllCertificates = async (certs) => {
   try {
-    await FileSystem.writeAsStringAsync(CERTIFICATES_STORAGE_FILE, JSON.stringify(certs));
+    // Externalize heavy fields before bulk save
+    const slim = [];
+    for (const cert of certs) {
+      slim.push(await externalizeCertHeavyFields(cert));
+    }
+    await FileSystem.writeAsStringAsync(CERTIFICATES_STORAGE_FILE, JSON.stringify(slim));
     return { success: true };
   } catch (e) {
     console.error('[NFT] Bulk save certificates failed:', e.message);
@@ -5880,10 +6409,21 @@ export const saveAllCertificates = async (certs) => {
  * Get all stored certificates
  */
 export const getStoredCertificates = async () => {
+  // OOM guard: if we've failed repeatedly, stop trying this session to avoid crash loops.
+  // File is kept intact — server sync will compact it when network is available.
+  if (_certOOMCount >= MAX_OOM_RETRIES) {
+    console.warn(`[NFT] Certificate loading paused after ${_certOOMCount} OOM failures — waiting for server sync to compact`);
+    return [];
+  }
   try {
     const fileInfo = await FileSystem.getInfoAsync(CERTIFICATES_STORAGE_FILE);
     if (fileInfo.exists) {
+      // Auto-compact if file is bloated (>2MB) — one-time per session
+      if (!_compactionDone && fileInfo.size && fileInfo.size > 2 * 1024 * 1024) {
+        await compactCertificatesFile();
+      }
       const raw = await FileSystem.readAsStringAsync(CERTIFICATES_STORAGE_FILE);
+      _certOOMCount = 0; // successful read resets counter
       return raw ? JSON.parse(raw) : [];
     }
     // One-time migration from SecureStore (if any data exists there)
@@ -5901,9 +6441,35 @@ export const getStoredCertificates = async () => {
     }
     return [];
   } catch (e) {
+    const isOOM = e?.message?.includes('OutOfMemoryError') || e?.message?.includes('allocate');
+    if (isOOM) {
+      _certOOMCount++;
+      console.warn(`[NFT] Certificate OOM #${_certOOMCount} — will ${_certOOMCount >= MAX_OOM_RETRIES ? 'pause loading' : 'try compaction next'}`);
+      // Force compaction on next attempt
+      if (_certOOMCount < MAX_OOM_RETRIES) _compactionDone = false;
+    }
     console.warn('[NFT] Load certificates failed:', e?.message);
     return [];
   }
+};
+
+export const getCertificateFullData = async (certId, existingCert = null) => {
+  if (!certId) return null;
+  // Use pre-loaded cert if available (avoids re-reading the full index file)
+  let cert = existingCert ? { ...existingCert } : null;
+  if (!cert) {
+    const certs = await getStoredCertificates();
+    cert = certs.find(c => c.id === certId);
+    if (!cert) return null;
+  }
+  // Lazy-load heavy fields from external files
+  for (const f of HEAVY_FIELDS) {
+    if (!cert[f]) {
+      const data = await loadCertHeavyField(certId, f);
+      if (data) cert[f] = data;
+    }
+  }
+  return cert;
 };
 
 /**
@@ -5919,28 +6485,83 @@ export const syncCertificatesFromServer = async (serverUrl, authHeaders) => {
     const res = await axios.get(`${serverUrl}/api/nft/certificates`, { headers: authHeaders, timeout: 10000 });
     const remote = res.data?.certificates || [];
     if (remote.length === 0) return { success: true, merged: 0 };
-    
-    const local = await getStoredCertificates();
-    const localMap = {};
-    for (const c of local) { if (c.id) localMap[c.id] = c; }
-    let merged = 0;
-    const MERGE_FIELDS = ['rfc3161Token','rfc3161Tsa','c2paManifest','contentHash','exifHash','cameraHash',
-      'hasRfc3161','hasC2pa','metadataUrl','description','storageType','encrypted','watermarked','license'];
-    for (const c of remote) {
-      if (!localMap[c.id]) {
-        local.push(c);
-        localMap[c.id] = c;
-        merged++;
+
+    // Whitelist only lightweight fields — prevents writing bloated files that cause OOM on read.
+    // Server should already send slim data, but defend against stale servers sending full certs.
+    // Keep only lightweight fields — large binary blobs (rfc3161Token, c2paManifest,
+    // metadata, encryptionData, imageData) are excluded to prevent OOM on mobile.
+    // Boolean flags hasRfc3161/hasC2pa are derived below for badge display.
+    const SLIM_KEYS = ['id','name','mintAddress','txSignature','creatorWallet','ownerAddress',
+      'issuedAt','createdAt','edition','license','contentHash','exifHash','cameraHash',
+      'exifRawHash','exifBindingHash','rfc3161Policy','mintedAt',
+      'hasRfc3161','hasC2pa','encrypted','watermarked','storageType','nftType','isCompressed',
+      'rfc3161Tsa','metadataUrl','description','version','type','imageUrl','certificationMode'];
+    const slimRemote = remote.map(c => {
+      const s = {};
+      for (const k of SLIM_KEYS) { if (c[k] !== undefined) s[k] = c[k]; }
+      if (c.rfc3161Token) s.hasRfc3161 = true;
+      if (c.c2paManifest) s.hasC2pa = true;
+      // Strip base64 data URIs from imageUrl — these can be megabytes each
+      if (s.imageUrl && s.imageUrl.startsWith('data:') && s.imageUrl.length > 5000) delete s.imageUrl;
+      return s;
+    });
+
+    // Check if local file is readable — if OOM, replace entirely with slim remote data
+    let local = [];
+    let localOOM = false;
+    try {
+      const fileInfo = await FileSystem.getInfoAsync(CERTIFICATES_STORAGE_FILE);
+      if (fileInfo.exists && fileInfo.size && fileInfo.size > 10 * 1024 * 1024) {
+        // File >10MB — don't even try to read, it will OOM. Replace with slim remote data.
+        console.warn(`[NFT] Certificate file is ${(fileInfo.size / 1024 / 1024).toFixed(1)}MB — too large to read, replacing with slim server data`);
+        localOOM = true;
       } else {
-        // Merge missing fields from server into local cert
-        const lc = localMap[c.id];
-        for (const k of MERGE_FIELDS) {
-          if (!lc[k] && c[k]) { lc[k] = c[k]; merged++; }
+        local = await getStoredCertificates();
+      }
+    } catch (_) {
+      localOOM = true;
+    }
+
+    let merged = 0;
+    let result;
+    if (localOOM || local.length === 0) {
+      // Local unreadable or empty — use slim remote data directly
+      result = slimRemote;
+      merged = slimRemote.length;
+      console.log('[NFT] Rebuilding certificate file from server:', slimRemote.length, 'slim certs');
+    } else {
+      // Normal merge path
+      const localMap = {};
+      for (const c of local) { if (c.id) localMap[c.id] = c; }
+      const MERGE_FIELDS = ['rfc3161Tsa','contentHash','exifHash','cameraHash',
+        'hasRfc3161','hasC2pa','metadataUrl','description','storageType','encrypted','watermarked','license'];
+      for (const c of slimRemote) {
+        if (!localMap[c.id]) {
+          local.push(c);
+          localMap[c.id] = c;
+          merged++;
+        } else {
+          const lc = localMap[c.id];
+          for (const k of MERGE_FIELDS) {
+            if (!lc[k] && c[k]) { lc[k] = c[k]; merged++; }
+          }
         }
       }
+      result = local;
     }
+
     if (merged > 0) {
-      await FileSystem.writeAsStringAsync(CERTIFICATES_STORAGE_FILE, JSON.stringify(local));
+      result.sort((a, b) => new Date(b.createdAt || b.issuedAt || 0) - new Date(a.createdAt || a.issuedAt || 0));
+      // Externalize any remaining heavy fields before writing index
+      const slim = [];
+      for (const cert of result) {
+        slim.push(await externalizeCertHeavyFields(cert));
+      }
+      const json = JSON.stringify(slim);
+      console.log(`[NFT] Writing certificate index: ${slim.length} certs, ${(json.length / 1024).toFixed(0)}KB`);
+      await FileSystem.writeAsStringAsync(CERTIFICATES_STORAGE_FILE, json);
+      // Reset OOM counter — file is now small enough to read
+      _certOOMCount = 0;
       console.log('[NFT] Synced', merged, 'new certificates/fields from server');
     }
     return { success: true, merged };
@@ -5963,10 +6584,16 @@ export const backupCertificatesToServer = async (serverUrl, authHeaders) => {
     const certs = await getStoredCertificates();
     if (certs.length === 0) return { success: true };
     // Keep only essential fields to stay under reverse-proxy body limit (~1MB)
+    // IMPORTANT: Do NOT include rfc3161Token or c2paManifest — they bloat the server file
+    // and cause OOM on mobile when synced back. Only send boolean flags + lightweight fields.
+    // Keep all cert fields EXCEPT large binary blobs (metadata, encryptionData, imageData)
+    // rfc3161Token + c2paManifest are actual proof certificates — must be preserved
     const KEEP_KEYS = ['id','name','mintAddress','txSignature','creatorWallet','ownerAddress',
       'issuedAt','createdAt','edition','license','contentHash','exifHash','cameraHash',
+      'exifRawHash','exifBindingHash','rfc3161Policy','mintedAt',
       'hasRfc3161','hasC2pa','encrypted','watermarked','storageType','nftType','isCompressed',
-      'rfc3161Token','rfc3161Tsa','c2paManifest','metadataUrl','description','version','type','imageUrl'];
+      'rfc3161Tsa','metadataUrl','description','version','type','imageUrl','certificationMode',
+      'rfc3161Token','c2paManifest'];
     const slim = certs.map(c => {
       const copy = {};
       for (const k of KEEP_KEYS) { if (c[k] !== undefined) copy[k] = c[k]; }
@@ -6000,6 +6627,10 @@ export const removeCertificate = async (certId) => {
     const certs = await getStoredCertificates();
     const filtered = certs.filter(c => c.id !== certId);
     await FileSystem.writeAsStringAsync(CERTIFICATES_STORAGE_FILE, JSON.stringify(filtered));
+    // Clean up externalized heavy field files
+    for (const f of HEAVY_FIELDS) {
+      try { await FileSystem.deleteAsync(certDataPath(certId, f), { idempotent: true }); } catch (_) {}
+    }
     return { success: true };
   } catch (e) {
     return { success: false, error: e.message };
@@ -6010,11 +6641,19 @@ export const removeCertificateByMint = async (mintAddress) => {
   try {
     const certs = await getStoredCertificates();
     const normalizedMint = (mintAddress || '').replace('cnft_', '');
+    const removed = [];
     const filtered = certs.filter(c => {
       const cMint = (c.mintAddress || '').replace('cnft_', '');
-      return cMint !== normalizedMint;
+      if (cMint === normalizedMint) { removed.push(c.id); return false; }
+      return true;
     });
     await FileSystem.writeAsStringAsync(CERTIFICATES_STORAGE_FILE, JSON.stringify(filtered));
+    // Clean up externalized heavy field files for removed certs
+    for (const id of removed) {
+      for (const f of HEAVY_FIELDS) {
+        try { await FileSystem.deleteAsync(certDataPath(id, f), { idempotent: true }); } catch (_) {}
+      }
+    }
     return { success: true };
   } catch (e) {
     return { success: false, error: e.message };
@@ -6070,6 +6709,8 @@ export const formatCertificateForExport = (cert) => {
   const tx = cert.txSignature || '—';
   const contentHash = cert.contentHash || '— not recorded —';
   const exifHash = cert.exifHash || '— not recorded —';
+  const exifRawHash = cert.exifRawHash || '— not recorded —';
+  const exifBindingHash = cert.exifBindingHash || '— not recorded —';
   const storage = cert.storageType === 'cloud' ? 'StealthCloud (Encrypted Private Storage)' : cert.storageType === 'arweave' ? 'Arweave (Permanent Decentralized Storage)' : cert.storageType === 'onchain' ? 'Embedded On-Chain (Original Image in Metadata)' : 'IPFS (Decentralized Public Storage)';
 
   const hash = cert.contentHash ? cert.contentHash.replace(/^SHA256:/, '') : '<sha256_hash>';
@@ -6078,7 +6719,7 @@ export const formatCertificateForExport = (cert) => {
     '┌─────────────────────────────────────────────────────┐',
     '│                                                     │',
     '│          CERTIFICATE OF AUTHENTICITY                │',
-    '│          Digital Asset — Limited Edition             │',
+    `│          Digital Asset — ${cert.certificationMode === 'public' ? 'Public Certified' : 'Private Certified'}          │`,
     '│                                                     │',
     '│          Issued by PhotoLynk                        │',
     '│          https://stealthlynk.io                     │',
@@ -6093,7 +6734,7 @@ export const formatCertificateForExport = (cert) => {
     'SECTION 1 — WORK IDENTIFICATION',
     '',
     `  Title:          ${cert.name || 'Untitled'}`,
-    `  Edition:        ${cert.edition === 'limited' ? 'Limited Edition (1 of 1)' : 'Open Edition'}`,
+    `  Certification:  ${cert.certificationMode === 'public' ? 'Public Certified' : cert.certificationMode === 'private' ? 'Private Certified' : cert.edition === 'limited' ? 'Private Certified' : cert.edition === 'open' ? 'Public Certified' : 'Certified Original'}`,
     `  License:        ${licenseLabel}`,
     ...(licenseUrl ? [`  License Deed:   ${licenseUrl}`] : []),
     '',
@@ -6111,6 +6752,8 @@ export const formatCertificateForExport = (cert) => {
     '',
     `  Content Hash:   ${contentHash}`,
     `  EXIF Hash:      ${exifHash}`,
+    `  Raw EXIF Hash:  ${exifRawHash}`,
+    `  Binding Hash:   ${exifBindingHash}`,
     '',
     '  The above cryptographic hashes were computed at the',
     '  time of minting and can be used to verify that the',
@@ -6225,6 +6868,7 @@ export default {
   fetchNFTsFromBlockchain,
   fetchNFTMetadata,
   discoverAndImportNFTs,
+  invalidateDasCache,
   isCNFTAvailable,
   isWalletAvailable,
   // Edition system
@@ -6243,6 +6887,8 @@ export default {
   saveCertificate,
   saveAllCertificates,
   getStoredCertificates,
+  getCertificateFullData,
+  hasCertHeavyFieldsOnDisk,
   syncCertificatesFromServer,
   backupCertificatesToServer,
   removeCertificate,

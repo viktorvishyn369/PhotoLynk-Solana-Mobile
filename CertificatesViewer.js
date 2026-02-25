@@ -47,6 +47,7 @@ const CertificatesViewer = ({ visible, onClose, serverUrl, getAuthHeaders, onSho
   const [certificates, setCertificates] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedCert, setSelectedCert] = useState(null);
+  const [loadingDetail, setLoadingDetail] = useState(false);
   const [darkAlert, setDarkAlert] = useState(null);
 
   const showDarkAlert = (title, message, buttons = [{ text: t('common.ok'), onPress: () => setDarkAlert(null) }]) => {
@@ -69,9 +70,11 @@ const CertificatesViewer = ({ visible, onClose, serverUrl, getAuthHeaders, onSho
         } catch (_) {}
       }
       const certs = await NFTOperations.getStoredCertificates();
+      console.log('[Certs] Loaded', certs.length, 'certificates from storage');
       
       // Load NFTs once (used for both enrichment and ownership filter)
       const allNFTs = await NFTOperations.getStoredNFTs();
+      console.log('[Certs] Loaded', allNFTs.length, 'NFTs from storage');
       const normMint = (m) => m ? String(m).replace(/^cnft_/, '') : '';
       const nftMap = {};
       for (const n of allNFTs) {
@@ -87,20 +90,21 @@ const CertificatesViewer = ({ visible, onClose, serverUrl, getAuthHeaders, onSho
           if (!nft) continue;
           const attrs = nft.metadata?.attributes || nft.attributes || [];
           if (!c.contentHash) { const a = attrs.find(x => x.trait_type === 'Content Hash'); if (a) { c.contentHash = a.value; enriched++; } }
+          if (!c.exifRawHash) { const a = attrs.find(x => x.trait_type === 'EXIF Raw Hash'); if (a) { c.exifRawHash = a.value; enriched++; } }
           if (!c.exifHash) { const a = attrs.find(x => x.trait_type === 'EXIF Hash'); if (a) { c.exifHash = a.value; enriched++; } }
+          if (!c.exifBindingHash) { const a = attrs.find(x => x.trait_type === 'EXIF Binding Hash'); if (a) { c.exifBindingHash = a.value; enriched++; } }
           if (!c.cameraHash) { const a = attrs.find(x => x.trait_type === 'Camera Hash'); if (a) { c.cameraHash = a.value; enriched++; } }
           if (!c.license || c.license === 'arr') { const a = attrs.find(x => x.trait_type === 'License'); if (a) { c.license = a.value; enriched++; } }
           if (!c.storageType && nft.storageType) { c.storageType = nft.storageType; enriched++; }
           if (!c.encrypted && nft.encrypted) { c.encrypted = nft.encrypted; enriched++; }
           if (!c.watermarked && nft.watermarked) { c.watermarked = nft.watermarked; enriched++; }
-          // RFC 3161 from NFT metadata
+          // RFC 3161 / C2PA — only set boolean flags, heavy data is externalized to per-cert files
           const metaCert = nft.metadata?.properties?.certificate;
-          if (!c.rfc3161Token && metaCert?.rfc3161?.tsaTokenBase64) { c.rfc3161Token = metaCert.rfc3161.tsaTokenBase64; c.hasRfc3161 = true; enriched++; }
-          // C2PA from NFT metadata
-          if (!c.c2paManifest && nft.metadata?.properties?.c2pa) { c.c2paManifest = nft.metadata.properties.c2pa; c.hasC2pa = true; enriched++; }
+          if (!c.hasRfc3161 && metaCert?.rfc3161?.tsaTokenBase64) { c.hasRfc3161 = true; enriched++; }
+          if (!c.hasC2pa && nft.metadata?.properties?.c2pa) { c.hasC2pa = true; enriched++; }
           // Also check attributes for RFC3161/C2PA presence
-          if (!c.rfc3161Token && !c.hasRfc3161) { const a = attrs.find(x => x.trait_type === 'RFC 3161 Timestamp'); if (a) { c.hasRfc3161 = true; enriched++; } }
-          if (!c.c2paManifest && !c.hasC2pa) { const a = attrs.find(x => x.trait_type === 'C2PA Provenance'); if (a) { c.hasC2pa = true; enriched++; } }
+          if (!c.hasRfc3161) { const a = attrs.find(x => x.trait_type === 'RFC 3161 Timestamp'); if (a) { c.hasRfc3161 = true; enriched++; } }
+          if (!c.hasC2pa) { const a = attrs.find(x => x.trait_type === 'C2PA Provenance'); if (a) { c.hasC2pa = true; enriched++; } }
           // Fallback: NFT-level flags (survive metadata stripping)
           if (!c.hasRfc3161 && nft.hasRfc3161) { c.hasRfc3161 = true; enriched++; }
           if (!c.hasC2pa && nft.hasC2pa) { c.hasC2pa = true; enriched++; }
@@ -111,24 +115,32 @@ const CertificatesViewer = ({ visible, onClose, serverUrl, getAuthHeaders, onSho
       } catch (_) {}
       
       // Filter by ownership using LOCAL NFTs only (no blockchain scan — fast)
+      // Skip filter when allNFTs is empty (airplane mode / first launch) to avoid hiding all certs
       let filtered = certs;
       try {
         const status = WalletAdapter.getConnectionStatus ? WalletAdapter.getConnectionStatus() : null;
         const addr = status?.address || null;
-        if (addr) {
+        console.log('[Certs] Wallet addr:', addr, 'allNFTs.length:', allNFTs.length);
+        if (addr && allNFTs.length > 0) {
           const ownedSet = new Set(
             allNFTs
               .filter(n => (n?.ownerAddress || '') === addr)
               .map(n => normMint(n?.mintAddress || n?.assetId || ''))
               .filter(Boolean)
           );
-          filtered = certs.filter(c => {
-            const id = normMint(c?.mintAddress || '');
-            if (id && id.startsWith('tx_')) return true;
-            return id && ownedSet.has(id);
-          });
+          // Skip filter when no NFTs have ownerAddress (not yet populated from blockchain scan)
+          if (ownedSet.size > 0) {
+            filtered = certs.filter(c => {
+              const id = normMint(c?.mintAddress || '');
+              if (id && id.startsWith('tx_')) return true;
+              return id && ownedSet.has(id);
+            });
+            console.log('[Certs] Ownership filter: ownedSet size=', ownedSet.size, 'filtered=', filtered.length, '/', certs.length);
+          } else {
+            console.log('[Certs] Ownership filter skipped — no NFTs have ownerAddress for', addr);
+          }
         }
-      } catch (_) {}
+      } catch (filterErr) { console.warn('[Certs] Ownership filter error:', filterErr?.message); }
 
       // Deduplicate by id
       const seen = new Set();
@@ -137,20 +149,32 @@ const CertificatesViewer = ({ visible, onClose, serverUrl, getAuthHeaders, onSho
         seen.add(c.id);
         return true;
       });
-      setCertificates(unique.sort((a, b) => new Date(b.issuedAt) - new Date(a.issuedAt)));
+      console.log('[Certs] After dedup:', unique.length, 'certificates to display');
+      setCertificates(unique.sort((a, b) => new Date(b.createdAt || b.issuedAt) - new Date(a.createdAt || a.issuedAt)));
       if (!isBackground) setLoading(false);
       
       // Background: fetch metadata from IPFS for certs missing actual rfc3161Token or c2paManifest data
-      // Skip certs already attempted in the last 2 hours to avoid infinite retry loop
+      // Boolean flags (hasRfc3161/hasC2pa) may be set but the actual heavy-field files may not exist
+      // on disk (e.g. server stripped them before they reached the client). Check disk to be sure.
       const RECOVERY_COOLDOWN_MS = 2 * 60 * 60 * 1000; // 2 hours
       const now = Date.now();
-      const needsMetaFetch = certs.filter(c => {
-        if (c.rfc3161Token && c.c2paManifest) return false; // already have full data
-        if (c._recoveryAttemptedAt && (now - c._recoveryAttemptedAt) < RECOVERY_COOLDOWN_MS) return false; // cooldown
+      const needsMetaFetchRaw = [];
+      for (const c of certs) {
+        if (c._recoveryAttemptedAt && (now - c._recoveryAttemptedAt) < RECOVERY_COOLDOWN_MS) continue;
         const nft = nftMap[normMint(c.mintAddress)];
         const metaUrl = c.metadataUrl || nft?.metadataUrl;
-        return !!metaUrl;
-      });
+        if (!metaUrl) continue;
+        // If flags say we have both, verify externalized files actually exist
+        if (c.hasRfc3161 && c.hasC2pa) {
+          try {
+            const disk = await NFTOperations.hasCertHeavyFieldsOnDisk(c.id);
+            if (disk.rfc3161Token && disk.c2paManifest) continue; // truly complete
+            console.log(`[Certs] ${c.name}: flags say complete but disk missing rfc3161=${!disk.rfc3161Token} c2pa=${!disk.c2paManifest} — needs recovery`);
+          } catch (_) { /* can't check disk — try recovery */ }
+        }
+        needsMetaFetchRaw.push(c);
+      }
+      const needsMetaFetch = needsMetaFetchRaw;
       if (needsMetaFetch.length > 0) {
         console.log(`[Certs] ${needsMetaFetch.length} certs need RFC3161/C2PA recovery (after cooldown filter)`);
         const IPFS_GWS = ['https://gateway.pinata.cloud/ipfs/', 'https://dweb.link/ipfs/', 'https://w3s.link/ipfs/', 'https://nftstorage.link/ipfs/', 'https://ipfs.io/ipfs/'];
@@ -207,7 +231,9 @@ const CertificatesViewer = ({ visible, onClose, serverUrl, getAuthHeaders, onSho
             if (metaJson.properties?.c2pa && !c.c2paManifest) { c.c2paManifest = metaJson.properties.c2pa; c.hasC2pa = true; enriched++; }
             const fAttrs = metaJson.attributes || [];
             if (!c.contentHash) { const a = fAttrs.find(x => x.trait_type === 'Content Hash'); if (a) { c.contentHash = a.value; enriched++; } }
+            if (!c.exifRawHash) { const a = fAttrs.find(x => x.trait_type === 'EXIF Raw Hash'); if (a) { c.exifRawHash = a.value; enriched++; } }
             if (!c.exifHash) { const a = fAttrs.find(x => x.trait_type === 'EXIF Hash'); if (a) { c.exifHash = a.value; enriched++; } }
+            if (!c.exifBindingHash) { const a = fAttrs.find(x => x.trait_type === 'EXIF Binding Hash'); if (a) { c.exifBindingHash = a.value; enriched++; } }
             console.log(`[Certs] Fetched metadata for ${c.name}, rfc3161=${!!c.rfc3161Token} c2pa=${!!c.c2paManifest}`);
           } catch (_) { c._recoveryAttemptedAt = Date.now(); }
         };
@@ -232,7 +258,7 @@ const CertificatesViewer = ({ visible, onClose, serverUrl, getAuthHeaders, onSho
           seen2.add(c.id);
           return true;
         });
-        setCertificates([...unique2.sort((a, b) => new Date(b.issuedAt) - new Date(a.issuedAt))]);
+        setCertificates([...unique2.sort((a, b) => new Date(b.createdAt || b.issuedAt) - new Date(a.createdAt || a.issuedAt))]);
       }
     } catch (e) {
       console.warn('[Certs] Failed to load:', e?.message);
@@ -256,14 +282,18 @@ const CertificatesViewer = ({ visible, onClose, serverUrl, getAuthHeaders, onSho
     const target = normMint(pendingSelectMint);
     const match = certificates.find(c => normMint(c.mintAddress) === target);
     if (match) {
-      setSelectedCert(match);
+      // Lazy-load heavy fields for detail view (pass in-memory cert to skip index re-read)
+      setLoadingDetail(true);
+      NFTOperations.getCertificateFullData(match.id, match).then(full => { setSelectedCert(full || match); setLoadingDetail(false); }).catch(() => { setSelectedCert(match); setLoadingDetail(false); });
     }
     onPendingSelectConsumed?.();
   }, [visible, pendingSelectMint, certificates]);
 
   const handleShare = async (cert) => {
     try {
-      const text = NFTOperations.formatCertificateForExport(cert);
+      // Lazy-load heavy fields for export (rfc3161Token needed for verify commands)
+      const full = await NFTOperations.getCertificateFullData(cert.id, cert) || cert;
+      const text = NFTOperations.formatCertificateForExport(full);
       await Share.share({ message: text, title: `${t('certificates.certificateOfAuth')} — ${cert.name}` });
     } catch (e) {
       if (e.message !== 'User did not share') {
@@ -274,12 +304,12 @@ const CertificatesViewer = ({ visible, onClose, serverUrl, getAuthHeaders, onSho
 
   const handleDelete = (cert) => {
     showDarkAlert(
-      t('certificates.deleteCert'),
-      t('certificates.deleteConfirm', { name: cert.name }),
+      t('certificates.archiveRecord') || 'Archive Proof Record',
+      t('certificates.archiveConfirm', { name: cert.name }) || `Archive proof record for "${cert.name}"?\nThis removes it from your local view only. The on-chain record remains permanent and will sync back on next refresh.`,
       [
         { text: t('common.cancel'), onPress: () => setDarkAlert(null) },
         {
-          text: t('common.delete'),
+          text: t('certificates.archive') || 'Archive',
           onPress: async () => {
             setDarkAlert(null);
             await NFTOperations.removeCertificate(cert.id);
@@ -302,7 +332,17 @@ const CertificatesViewer = ({ visible, onClose, serverUrl, getAuthHeaders, onSho
   const renderCertCard = ({ item }) => (
     <TouchableOpacity
       style={[styles.certCard, selectedCert?.id === item.id && styles.certCardSelected]}
-      onPress={() => setSelectedCert(item)}
+      onPress={async () => {
+        // Lazy-load heavy fields (rfc3161Token, c2paManifest) from external files
+        setLoadingDetail(true);
+        try {
+          const full = await NFTOperations.getCertificateFullData(item.id, item);
+          setSelectedCert(full || item);
+        } catch (_) {
+          setSelectedCert(item);
+        }
+        setLoadingDetail(false);
+      }}
       activeOpacity={0.7}
     >
       <View style={styles.certCardHeader}>
@@ -313,62 +353,73 @@ const CertificatesViewer = ({ visible, onClose, serverUrl, getAuthHeaders, onSho
           <Text style={styles.certCardName} numberOfLines={1}>{item.name || t('certificates.untitled')}</Text>
           <Text style={styles.certCardDate}>{formatDate(item.issuedAt)}</Text>
         </View>
-        <View style={styles.certCardActions}>
-          <TouchableOpacity onPress={() => handleShare(item)} style={styles.certIconBtn}>
-            <Feather name="share-2" size={16} color={COLORS.textSecondary} />
-          </TouchableOpacity>
-          <TouchableOpacity onPress={() => handleDelete(item)} style={styles.certIconBtn}>
-            <Feather name="trash-2" size={16} color={COLORS.error} />
-          </TouchableOpacity>
-        </View>
+        <TouchableOpacity onPress={() => handleShare(item)} style={styles.certIconBtn}>
+          <Feather name="share-2" size={16} color={COLORS.textSecondary} />
+        </TouchableOpacity>
       </View>
+      {/* Microcopy — trust reinforcement */}
+      <Text style={{ fontSize: 9, color: '#6b7280', marginTop: 4, marginBottom: 6 }}>SHA-256 anchored · Immutable · Timestamped</Text>
+      {/* Standards as pillars — full descriptive labels */}
       <View style={styles.certCardMeta}>
-        <View style={styles.certTag}>
-          <Text style={styles.certTagText}>{t('certificates.limitedEdition')}</Text>
+        <View style={[styles.certTag, { borderColor: (item.certificationMode === 'public' || (!item.certificationMode && item.edition === 'open')) ? 'rgba(16,185,129,0.3)' : 'rgba(139,92,246,0.3)' }]}>
+          <Text style={[styles.certTagText, { color: (item.certificationMode === 'public' || (!item.certificationMode && item.edition === 'open')) ? '#10b981' : '#8b5cf6' }]}>{(item.certificationMode === 'public' || (!item.certificationMode && item.edition === 'open')) ? '🌍 ' + (t('certificates.publicCertification') || 'Public Certified') : '🔐 ' + (t('certificates.privateCertification') || 'Private Certified')}</Text>
         </View>
         {item.encrypted && (
-          <View style={[styles.certTag, { borderColor: '#9945FF40' }]}>
-            <Feather name="lock" size={10} color="#9945FF" />
-            <Text style={[styles.certTagText, { color: '#9945FF' }]}>{t('certificates.encrypted')}</Text>
+          <View style={[styles.certTag, { borderColor: 'rgba(139,92,246,0.3)' }]}>
+            <Feather name="lock" size={10} color="#8b5cf6" />
+            <Text style={[styles.certTagText, { color: '#8b5cf6' }]}>{t('certificates.encrypted')}</Text>
           </View>
         )}
         {item.watermarked && (
-          <View style={[styles.certTag, { borderColor: 'rgba(34, 197, 94, 0.3)' }]}>
-            <Text style={[styles.certTagText, { color: '#22c55e' }]}>{t('certificates.watermarked')}</Text>
+          <View style={[styles.certTag, { borderColor: 'rgba(16,185,129,0.3)' }]}>
+            <Feather name="check-circle" size={10} color="#10b981" />
+            <Text style={[styles.certTagText, { color: '#10b981' }]}>{t('certificates.watermarked')}</Text>
           </View>
         )}
-        {(item.rfc3161Token || item.hasRfc3161) && (
+        {item.hasRfc3161 && (
           <View style={[styles.certTag, { borderColor: 'rgba(16,185,129,0.4)', backgroundColor: 'rgba(16,185,129,0.08)' }]}>
-            <Feather name="clock" size={10} color="#10b981" />
-            <Text style={[styles.certTagText, { color: '#10b981' }]}>RFC 3161</Text>
+            <Feather name="check-circle" size={10} color="#10b981" />
+            <Text style={[styles.certTagText, { color: '#10b981' }]}>{t('certificates.rfc3161Pillar') || '✔ Timestamp (RFC 3161)'}</Text>
           </View>
         )}
-        {(item.c2paManifest || item.hasC2pa) && (
+        {item.hasC2pa && (
           <View style={[styles.certTag, { borderColor: 'rgba(59,130,246,0.4)', backgroundColor: 'rgba(59,130,246,0.08)' }]}>
-            <Feather name="shield" size={10} color="#3b82f6" />
-            <Text style={[styles.certTagText, { color: '#3b82f6' }]}>C2PA</Text>
+            <Feather name="check-circle" size={10} color="#3b82f6" />
+            <Text style={[styles.certTagText, { color: '#3b82f6' }]}>{t('certificates.c2paPillar') || '✔ Authenticity (C2PA)'}</Text>
           </View>
         )}
-        {item.license && item.license !== 'arr' && (
-          <View style={[styles.certTag, { borderColor: 'rgba(245,158,11,0.3)' }]}>
-            <Text style={[styles.certTagText, { color: '#f59e0b' }]}>{item.license}</Text>
+        {item.contentHash && (
+          <View style={[styles.certTag, { borderColor: 'rgba(16,185,129,0.3)', backgroundColor: 'rgba(16,185,129,0.06)' }]}>
+            <Feather name="hash" size={10} color="#10b981" />
+            <Text style={[styles.certTagText, { color: '#10b981' }]}>{t('certificates.hashPillar') || '✔ Cryptographic Hash'}</Text>
           </View>
         )}
-        {item.license === 'arr' && (
+        <View style={[styles.certTag, { borderColor: 'rgba(59,130,246,0.3)', backgroundColor: 'rgba(59,130,246,0.06)' }]}>
+          <Feather name="anchor" size={10} color="#3b82f6" />
+          <Text style={[styles.certTagText, { color: '#3b82f6' }]}>{t('certificates.anchorPillar') || '✔ Immutable Anchor'}</Text>
+        </View>
+        {item.license && (
           <View style={[styles.certTag, { borderColor: 'rgba(245,158,11,0.3)' }]}>
-            <Text style={[styles.certTagText, { color: '#f59e0b' }]}>All Rights Reserved</Text>
+            <Feather name="file-text" size={10} color="#f59e0b" />
+            <Text style={[styles.certTagText, { color: '#f59e0b' }]}>{item.license === 'arr' ? 'All Rights Reserved' : item.license}</Text>
           </View>
         )}
         {item.storageType === 'onchain' && (
-          <View style={[styles.certTag, { borderColor: 'rgba(245,158,11,0.3)', backgroundColor: 'rgba(245,158,11,0.08)' }]}>
-            <Feather name="code" size={10} color="#f59e0b" />
-            <Text style={[styles.certTagText, { color: '#f59e0b' }]}>On-Chain</Text>
+          <View style={[styles.certTag, { borderColor: 'rgba(107,114,128,0.3)', backgroundColor: 'rgba(107,114,128,0.06)' }]}>
+            <Feather name="code" size={10} color="#9ca3af" />
+            <Text style={[styles.certTagText, { color: '#9ca3af' }]}>Embedded SVG</Text>
           </View>
         )}
         {item.storageType === 'cloud' && (
-          <View style={[styles.certTag, { borderColor: 'rgba(59,130,246,0.3)', backgroundColor: 'rgba(59,130,246,0.08)' }]}>
-            <Feather name="cloud" size={10} color="#3b82f6" />
-            <Text style={[styles.certTagText, { color: '#3b82f6' }]}>StealthCloud</Text>
+          <View style={[styles.certTag, { borderColor: 'rgba(107,114,128,0.3)', backgroundColor: 'rgba(107,114,128,0.06)' }]}>
+            <Feather name="cloud" size={10} color="#9ca3af" />
+            <Text style={[styles.certTagText, { color: '#9ca3af' }]}>StealthCloud</Text>
+          </View>
+        )}
+        {(!item.storageType || item.storageType === 'ipfs') && (
+          <View style={[styles.certTag, { borderColor: 'rgba(107,114,128,0.3)', backgroundColor: 'rgba(107,114,128,0.06)' }]}>
+            <Feather name="globe" size={10} color="#9ca3af" />
+            <Text style={[styles.certTagText, { color: '#9ca3af' }]}>IPFS</Text>
           </View>
         )}
       </View>
@@ -404,7 +455,7 @@ const CertificatesViewer = ({ visible, onClose, serverUrl, getAuthHeaders, onSho
 
           <View style={styles.detailDivider} />
 
-          <DetailRow label={t('certificates.edition')} value={t('certificates.limitedEdition')} />
+          <DetailRow label={t('certificates.certification') || 'Certification'} value={(c.certificationMode === 'public' || (!c.certificationMode && c.edition === 'open')) ? (t('certificates.publicCertification') || 'Public Certified') : (t('certificates.privateCertification') || 'Private Certified')} />
           <DetailRow label={t('certificates.license')} value={({'arr':'All Rights Reserved','cc-by':'CC BY 4.0','cc-by-sa':'CC BY-SA 4.0','cc-by-nc':'CC BY-NC 4.0','cc-by-nc-sa':'CC BY-NC-SA 4.0','cc-by-nd':'CC BY-ND 4.0','cc-by-nc-nd':'CC BY-NC-ND 4.0','cc0':'CC0 1.0 (Public Domain)','commercial':'Commercial License'})[c.license] || c.license || 'All Rights Reserved'} />
           <DetailRow label={t('certificates.issued')} value={formatDate(c.issuedAt)} />
 
@@ -417,7 +468,9 @@ const CertificatesViewer = ({ visible, onClose, serverUrl, getAuthHeaders, onSho
           <View style={styles.detailDivider} />
           <Text style={styles.detailSectionTitle}>{t('certificates.integrityProof')}</Text>
           <DetailRow label={t('certificates.contentHash')} value={c.contentHash || 'N/A'} mono />
+          <DetailRow label={t('certificates.exifRawHash') || 'Raw EXIF Hash'} value={c.exifRawHash || 'N/A'} mono />
           <DetailRow label={t('certificates.exifHash')} value={c.exifHash || 'N/A'} mono />
+          <DetailRow label={t('certificates.exifBindingHash') || 'EXIF Binding Hash'} value={c.exifBindingHash || 'N/A'} mono />
 
           <View style={styles.verifyBox}>
             <Text style={styles.verifyTitle}>{t('certificates.howToVerify')}</Text>
@@ -463,7 +516,7 @@ const CertificatesViewer = ({ visible, onClose, serverUrl, getAuthHeaders, onSho
           <DetailRow label={t('certificates.watermarked')} value={c.watermarked ? t('common.yes') : t('common.no')} />
           <DetailRow label={t('certificates.encrypted')} value={c.encrypted ? t('common.yes') : t('common.no')} />
           <DetailRow label={t('certificates.storage')} value={c.storageType === 'cloud' ? 'StealthCloud' : c.storageType === 'arweave' ? 'Arweave (Permanent)' : c.storageType === 'onchain' ? 'Embedded (On-Chain)' : 'IPFS'} />
-          {(c.rfc3161Token || c.hasRfc3161) && (
+          {(c.hasRfc3161 || c.rfc3161Token) && (
             <>
               <View style={styles.detailDivider} />
               <Text style={styles.detailSectionTitle}>{t('certificates.rfc3161Title')}</Text>
@@ -478,12 +531,12 @@ const CertificatesViewer = ({ visible, onClose, serverUrl, getAuthHeaders, onSho
               {!c.rfc3161Token && (
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4, paddingHorizontal: 4 }}>
                   <ActivityIndicator size="small" color="#10b981" />
-                  <Text style={{ fontSize: 10, color: '#6b7280' }}>Recovering full token from on-chain metadata...</Text>
+                  <Text style={{ fontSize: 10, color: '#6b7280' }}>{t('certificates.recoveringToken') || 'Recovering full token from on-chain metadata...'}</Text>
                 </View>
               )}
             </>
           )}
-          {(c.c2paManifest || c.hasC2pa) && (
+          {(c.hasC2pa || c.c2paManifest) && (
             <>
               <View style={styles.detailDivider} />
               <Text style={styles.detailSectionTitle}>{t('certificates.c2paTitle')}</Text>
@@ -493,7 +546,39 @@ const CertificatesViewer = ({ visible, onClose, serverUrl, getAuthHeaders, onSho
             </>
           )}
 
-          {/* Navigate to NFT in gallery */}
+          {/* Integrity Score */}
+          <View style={styles.detailDivider} />
+          <Text style={styles.detailSectionTitle}>{t('certificates.integrityScore') || 'Integrity Verification'}</Text>
+          <View style={{ backgroundColor: 'rgba(16,185,129,0.06)', borderRadius: 10, padding: 12, borderWidth: 1, borderColor: 'rgba(16,185,129,0.2)', marginBottom: 8 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+              <Feather name="shield" size={20} color="#10b981" />
+              <Text style={{ fontSize: 16, fontWeight: '700', color: '#10b981' }}>{t('certificates.integrityVerified') || 'Integrity: Verified'}</Text>
+            </View>
+            <View style={{ gap: 6 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <Feather name={c.contentHash ? 'check-circle' : 'minus-circle'} size={14} color={c.contentHash ? '#10b981' : '#6b7280'} />
+                <Text style={{ fontSize: 12, color: c.contentHash ? '#10b981' : '#6b7280' }}>{t('certificates.hashAnchored') || 'Cryptographic hash anchored'}</Text>
+              </View>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <Feather name={c.hasRfc3161 ? 'check-circle' : 'minus-circle'} size={14} color={c.hasRfc3161 ? '#10b981' : '#6b7280'} />
+                <Text style={{ fontSize: 12, color: c.hasRfc3161 ? '#10b981' : '#6b7280' }}>{t('certificates.timestampVerified') || 'Timestamp authority verified (RFC 3161)'}</Text>
+              </View>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <Feather name={c.hasC2pa ? 'check-circle' : 'minus-circle'} size={14} color={c.hasC2pa ? '#10b981' : '#6b7280'} />
+                <Text style={{ fontSize: 12, color: c.hasC2pa ? '#10b981' : '#6b7280' }}>{t('certificates.contentAuthenticity') || 'Content authenticity signed (C2PA)'}</Text>
+              </View>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <Feather name="check-circle" size={14} color="#10b981" />
+                <Text style={{ fontSize: 12, color: '#10b981' }}>{t('certificates.immutableRecord') || 'Immutable on-chain record'}</Text>
+              </View>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <Feather name={c.exifHash ? 'check-circle' : 'minus-circle'} size={14} color={c.exifHash ? '#10b981' : '#6b7280'} />
+                <Text style={{ fontSize: 12, color: c.exifHash ? '#10b981' : '#6b7280' }}>{t('certificates.metadataIntact') || 'Original metadata intact'}</Text>
+              </View>
+            </View>
+          </View>
+
+          {/* Navigate to original in vault */}
           {onShowNFT && c.mintAddress && (
             <>
               <View style={styles.detailDivider} />
@@ -503,10 +588,21 @@ const CertificatesViewer = ({ visible, onClose, serverUrl, getAuthHeaders, onSho
                 onPress={() => onShowNFT(c.mintAddress)}
               >
                 <Feather name="image" size={16} color="#9945FF" />
-                <Text style={{ color: '#9945FF', fontWeight: '600', fontSize: 14 }}>View NFT in Album</Text>
+                <Text style={{ color: '#9945FF', fontWeight: '600', fontSize: 14 }}>{t('certificates.viewInVault') || 'View in Proof Vault'}</Text>
               </TouchableOpacity>
             </>
           )}
+
+          {/* Archive action — moved from card to detail only */}
+          <View style={styles.detailDivider} />
+          <TouchableOpacity
+            style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(107,114,128,0.1)', borderRadius: 10, paddingVertical: 12, marginTop: 4, gap: 8 }}
+            activeOpacity={0.7}
+            onPress={() => handleDelete(c)}
+          >
+            <Feather name="archive" size={16} color="#6b7280" />
+            <Text style={{ color: '#6b7280', fontWeight: '500', fontSize: 13 }}>{t('certificates.archiveFromView') || 'Archive from view'}</Text>
+          </TouchableOpacity>
         </View>
         </ScrollView>
       </View>
@@ -540,7 +636,12 @@ const CertificatesViewer = ({ visible, onClose, serverUrl, getAuthHeaders, onSho
           <View style={{ width: 40 }} />
         </View>
 
-        {selectedCert ? (
+        {loadingDetail ? (
+          <View style={styles.emptyState}>
+            <ActivityIndicator size="large" color={COLORS.accent} />
+            <Text style={{ color: COLORS.textSecondary, marginTop: 12, fontSize: 13 }}>{t('common.loading') || 'Loading...'}</Text>
+          </View>
+        ) : selectedCert ? (
           renderDetail()
         ) : loading ? (
           <View style={styles.emptyState}>

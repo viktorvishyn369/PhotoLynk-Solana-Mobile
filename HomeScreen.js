@@ -2,8 +2,8 @@
  * HomeScreen.js
  * 
  * Premium Home UI with bottom tab navigation.
- * 4 tabs: Home (Backup/Sync), NFT (Create/Album/Certs), Tools (Clean/AI), Share (P2P).
- * Dark glass aesthetic with Solana-inspired palette. Fits all screen sizes.
+ * 4 tabs: Home (Backup/Sync), Authenticity (Certify/Originals/Proofs), Tools (Clean/AI), Share (P2P).
+ * Dark glass aesthetic with premium palette. Fits all screen sizes.
  */
 
 import React, { useState, useRef, useCallback } from 'react';
@@ -79,12 +79,12 @@ const scaleSpacing = (size) => {
   return r;
 };
 
-// Premium dark palette — Solana-inspired
+// Premium dark palette
 const COLORS = {
   primary: '#03E1FF',    // Cyan
   secondary: '#00FFA3',  // Mint
   accent: '#DC1FFF',     // Magenta
-  nft: '#9945FF',        // Solana purple
+  nft: '#9945FF',        // Authenticity purple
   gold: '#D4AF37',       // Premium gold accent
   bg: '#060608',         // Near-black
   card: '#111114',       // Dark card
@@ -224,15 +224,15 @@ export const HomeScreen = ({
   const isBackingUp = progressAction === 'backup';
   const isSyncing = progressAction === 'sync';
   const isCleaning = progressAction === 'cleanup';
-  const isMintingNFT = progressAction === 'nft';
-  const isIdle = !isBackingUp && !isSyncing && !isCleaning && !isMintingNFT;
+  const isCertifying = progressAction === 'nft';
+  const isIdle = !isBackingUp && !isSyncing && !isCleaning && !isCertifying;
   const isFetching = loading && isIdle;
 
   const progressPercent = Math.min(Math.max(progress, 0), 1) * 100;
   const showProgress = progressPercent > 0 && !isFetching && !isIdle;
 
   const getStatusColor = () => {
-    if (isMintingNFT) return COLORS.nft;
+    if (isCertifying) return COLORS.nft;
     if (isCleaning) return COLORS.accent;
     if (isSyncing) return COLORS.secondary;
     if (isBackingUp) return COLORS.primary;
@@ -247,7 +247,7 @@ export const HomeScreen = ({
     if (activeTab !== 'home') return null;
 
     const isActive = !isIdle && !isFetching;
-    const operationLabel = isMintingNFT ? t('home.mintingNft') : isCleaning ? t('home.scanning') : isSyncing ? t('home.syncing') : t('home.backingUp');
+    const operationLabel = isCertifying ? t('home.mintingNft') : isCleaning ? t('home.scanning') : isSyncing ? t('home.syncing') : t('home.backingUp');
 
     return (
       <View style={styles.qsBarWrap}>
@@ -290,7 +290,7 @@ export const HomeScreen = ({
               </View>
               <View style={[styles.qsCell, styles.qsCellRight]}>
                 <View style={[styles.qsIcon, { backgroundColor: `${COLORS.nft}18` }]}>
-                  <Feather name="hexagon" size={scale(13)} color={COLORS.nft} />
+                  <Feather name="shield" size={scale(13)} color={COLORS.nft} />
                 </View>
                 <View style={styles.qsText}>
                   <Text style={styles.qsLabel}>{t('home.qsNfts')}</Text>
@@ -415,8 +415,8 @@ export const HomeScreen = ({
       </View>
 
 
-      {/* ── NFT Section ── */}
-      <SectionHeader icon="hexagon" title={t('home.solanaNft') || 'SOLANA NFT'} color={COLORS.nft} />
+      {/* ── Authenticity Section ── */}
+      <SectionHeader icon="shield" title={t('home.solanaNft') || 'AUTHENTICITY'} color={COLORS.nft} />
 
       <AnimatedPressable style={[styles.nftHeroCard, loading && styles.disabled]}
         onPress={onMintNFT} disabled={loading}>
@@ -424,7 +424,7 @@ export const HomeScreen = ({
           start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.nftHeroGrad}>
           <View style={styles.nftHeroGlow} />
           <View style={styles.nftHeroIconWrap}>
-            <Feather name="hexagon" size={scale(32)} color="#FFF" />
+            <Feather name="shield" size={scale(32)} color="#FFF" />
           </View>
           <View style={{ flex: 1 }}>
             <Text style={styles.nftHeroTitle}>{t('home.createNft')}</Text>

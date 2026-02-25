@@ -636,7 +636,7 @@ const NFTGallery = ({
   const [sortBy, setSortBy] = useState('date_desc');
   const [showSortMenu, setShowSortMenu] = useState(false);
   const [currentPage, setCurrentPage] = useState(0); // Page-based pagination
-  const [nftFilter, setNftFilter] = useState('all'); // 'all', 'standard', 'compressed'
+  const [nftFilter, setNftFilter] = useState('all'); // 'all', 'private', 'public'
   
   // Report NFT count changes to parent
   useEffect(() => {
@@ -713,8 +713,10 @@ const NFTGallery = ({
   // Uses wallet address from stored NFTs — no wallet prompt needed
   const autoScanBlockchain = useCallback(async () => {
     try {
-      // Use nfts state (already loaded by loadNFTsAppendOnly) to avoid redundant file read
-      const walletAddr = nfts.find(n => n.ownerAddress)?.ownerAddress;
+      // Read from storage directly — nfts state may be stale (React setState is async,
+      // so nfts closure still holds [] from initial render even after loadNFTsAppendOnly)
+      const storedNFTs = await NFTOperations.getStoredNFTs();
+      const walletAddr = storedNFTs.find(n => n.ownerAddress)?.ownerAddress;
       if (!walletAddr) {
         console.log('[NFTGallery] No wallet address in stored NFTs, skipping auto-scan');
         return;
@@ -737,7 +739,7 @@ const NFTGallery = ({
     } catch (e) {
       console.log('[NFTGallery] Auto-scan failed (non-critical):', e.message);
     }
-  }, [nfts, serverUrl, getAuthHeaders]);
+  }, [serverUrl, getAuthHeaders]);
 
   // Guard to prevent overlapping blockchain scans
   const scanInProgressRef = React.useRef(false);
@@ -930,11 +932,11 @@ const NFTGallery = ({
   const filteredNFTs = useMemo(() => {
     let result = [...nfts];
     
-    // Apply NFT type filter
-    if (nftFilter === 'standard') {
-      result = result.filter(nft => !isCompressedNFT(nft));
-    } else if (nftFilter === 'compressed') {
-      result = result.filter(nft => isCompressedNFT(nft));
+    // Apply certification mode filter
+    if (nftFilter === 'private') {
+      result = result.filter(nft => nft.certificationMode === 'private' || nft.edition === 'limited' || nft.encrypted);
+    } else if (nftFilter === 'public') {
+      result = result.filter(nft => (nft.certificationMode === 'public' || nft.edition === 'open') && !nft.encrypted);
     }
     // 'all' shows everything
     
@@ -946,10 +948,17 @@ const NFTGallery = ({
         if (nft.name?.toLowerCase().includes(query) || nft.description?.toLowerCase().includes(query)) return true;
         // Build searchable badge tags
         const tags = [];
-        if (nft.edition === 'limited') tags.push('limited');
-        else if (nft.edition === 'open') tags.push('open');
-        if (isCompressedNFT(nft)) { tags.push('compressed', 'cnft'); } else { tags.push('standard'); }
-        if (nft.encrypted) tags.push('encrypted');
+        if (nft.certificationMode === 'private' || nft.edition === 'limited') { tags.push('private', 'certified', 'limited'); }
+        else if (nft.certificationMode === 'public' || nft.edition === 'open') { tags.push('public', 'certified', 'open'); }
+        if (isCompressedNFT(nft)) { tags.push('compressed', 'cnft', 'private', 'encrypted'); } else { tags.push('standard', 'public', 'unencrypted', 'original'); }
+        
+        // Add network/storage tags
+        if (nft.network === 'solana') { tags.push('solana', 'onchain'); }
+        if (nft.storageType === 'onchain') { tags.push('onchain'); }
+        if (nft.storageType === 'cloud') { tags.push('cloud'); }
+        if (nft.storageType === 'arweave') { tags.push('arweave'); }
+        if (nft.storageType === 'ipfs') { tags.push('ipfs'); }
+        if (nft.watermarked) tags.push('watermarked');
         const mint = normMint(nft.mintAddress);
         if (mint && certifiedMints.has(mint)) tags.push('certified');
         const _urls = (nft.imageUrl || '') + (nft.arweaveUrl || '');
@@ -1158,22 +1167,18 @@ const NFTGallery = ({
                 {new Date(item.createdAt).toLocaleDateString()}
               </Text>
             </View>
-            {/* Edition badge */}
-            {item.edition === 'limited' ? (
-              <View style={[styles.solanaBadge, { backgroundColor: 'rgba(245, 158, 11, 0.3)' }]}>
-                <Text style={{ fontSize: 8, color: '#f59e0b', fontWeight: '600' }}>Limited</Text>
+            {/* Certification badge */}
+            {(item.certificationMode === 'private' || item.edition === 'limited') ? (
+              <View style={[styles.solanaBadge, { backgroundColor: 'rgba(153, 69, 255, 0.3)' }]}>
+                <Text style={{ fontSize: 8, color: '#9945FF', fontWeight: '600' }}>🔐 Private</Text>
               </View>
-            ) : item.edition === 'open' ? (
+            ) : (item.certificationMode === 'public' || item.edition === 'open') ? (
               <View style={[styles.solanaBadge, { backgroundColor: 'rgba(34, 197, 94, 0.3)' }]}>
-                <Text style={{ fontSize: 8, color: '#22c55e', fontWeight: '600' }}>Open</Text>
-              </View>
-            ) : (item.isCompressed || item.mintAddress?.startsWith('cnft_')) ? (
-              <View style={[styles.solanaBadge, { backgroundColor: 'rgba(34, 197, 94, 0.3)' }]}>
-                <Text style={{ fontSize: 8, color: '#22c55e', fontWeight: '600' }}>cNFT</Text>
+                <Text style={{ fontSize: 8, color: '#22c55e', fontWeight: '600' }}>🌍 Public</Text>
               </View>
             ) : (
               <View style={styles.solanaBadge}>
-                <Feather name="hexagon" size={10} color="#9945FF" />
+                <Feather name="shield" size={10} color="#9945FF" />
               </View>
             )}
             {/* Encrypted indicator */}
@@ -1233,21 +1238,17 @@ const NFTGallery = ({
             >
               {/* Type & edition badges — inside scroll so they don't block content */}
               <View style={{ flexDirection: 'row', gap: 6, paddingHorizontal: 16, paddingTop: 8, paddingBottom: 4, flexWrap: 'wrap' }}>
-                {selectedNFT.edition === 'limited' ? (
-                  <View style={{ backgroundColor: 'rgba(245, 158, 11, 0.2)', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 4 }}>
-                    <Text style={{ fontSize: 10, color: '#f59e0b', fontWeight: '600' }}>{t('nftAlbum.limitedEdition')}</Text>
+                {(selectedNFT.certificationMode === 'private' || selectedNFT.edition === 'limited') ? (
+                  <View style={{ backgroundColor: 'rgba(153, 69, 255, 0.2)', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 4 }}>
+                    <Text style={{ fontSize: 10, color: '#9945FF', fontWeight: '600' }}>🔐 {t('nftAlbum.privateCertification') || 'Private Certified'}</Text>
                   </View>
-                ) : selectedNFT.edition === 'open' ? (
+                ) : (selectedNFT.certificationMode === 'public' || selectedNFT.edition === 'open') ? (
                   <View style={{ backgroundColor: 'rgba(34, 197, 94, 0.2)', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 4 }}>
-                    <Text style={{ fontSize: 10, color: '#22c55e', fontWeight: '600' }}>{t('nftAlbum.openEdition')}</Text>
-                  </View>
-                ) : (selectedNFT.isCompressed || selectedNFT.mintAddress?.startsWith('cnft_')) ? (
-                  <View style={{ backgroundColor: 'rgba(34, 197, 94, 0.2)', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 4 }}>
-                    <Text style={{ fontSize: 10, color: '#22c55e', fontWeight: '600' }}>{t('nftAlbum.compressedNft')}</Text>
+                    <Text style={{ fontSize: 10, color: '#22c55e', fontWeight: '600' }}>🌍 {t('nftAlbum.publicCertification') || 'Public Certified'}</Text>
                   </View>
                 ) : (
                   <View style={{ backgroundColor: 'rgba(153, 69, 255, 0.2)', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 4 }}>
-                    <Text style={{ fontSize: 10, color: '#9945FF', fontWeight: '600' }}>{t('nftAlbum.standardNft')}</Text>
+                    <Text style={{ fontSize: 10, color: '#9945FF', fontWeight: '600' }}>🛡 {t('nftAlbum.certified') || 'Certified'}</Text>
                   </View>
                 )}
                 <View style={{ backgroundColor: 'rgba(153, 69, 255, 0.2)', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 4 }}>
@@ -1307,7 +1308,7 @@ const NFTGallery = ({
                             return <Feather name="code" size={48} color={COLORS.textSecondary} />;
                           }
                         })()}
-                        <Text style={{ fontSize: 10, color: COLORS.textSecondary, marginTop: 6 }}>{t('nftAlbum.embeddedOnChain') || 'Embedded on-chain preview'}</Text>
+                        <Text style={{ fontSize: 10, color: COLORS.textSecondary, marginTop: 6 }}>{t('nftAlbum.embeddedOnChain') || 'Embedded preview'}</Text>
                       </View>
                     );
                   }
@@ -1366,13 +1367,13 @@ const NFTGallery = ({
                 );
               })()}
               
-              {/* Limited Edition certificate banner */}
-              {selectedNFT.edition === 'limited' && (
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 16, paddingVertical: 12, backgroundColor: 'rgba(245,158,11,0.08)', borderBottomWidth: 1, borderBottomColor: COLORS.border }}>
-                  <Feather name="award" size={24} color="#f59e0b" />
+              {/* Certification banner */}
+              {(selectedNFT.certificationMode || selectedNFT.edition) && (
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 16, paddingVertical: 12, backgroundColor: (selectedNFT.certificationMode === 'private' || selectedNFT.edition === 'limited') ? 'rgba(153,69,255,0.08)' : 'rgba(34,197,94,0.08)', borderBottomWidth: 1, borderBottomColor: COLORS.border }}>
+                  <Feather name="shield" size={24} color={(selectedNFT.certificationMode === 'private' || selectedNFT.edition === 'limited') ? '#9945FF' : '#22c55e'} />
                   <View style={{ flex: 1 }}>
-                    <Text style={{ fontSize: 14, fontWeight: '700', color: '#f59e0b' }}>{t('certificates.certificateOfAuth') || 'Certificate of Authenticity'}</Text>
-                    <Text style={{ fontSize: 11, color: COLORS.textSecondary, marginTop: 2 }}>{t('nftAlbum.originalOnDevice') || 'Original photo stays on your device'}</Text>
+                    <Text style={{ fontSize: 14, fontWeight: '700', color: (selectedNFT.certificationMode === 'private' || selectedNFT.edition === 'limited') ? '#9945FF' : '#22c55e' }}>{t('certificates.certificateOfAuth') || 'Certificate of Authenticity'}</Text>
+                    <Text style={{ fontSize: 11, color: COLORS.textSecondary, marginTop: 2 }}>{(selectedNFT.certificationMode === 'private' || selectedNFT.edition === 'limited') ? (t('nftAlbum.privateCertDesc') || 'Encrypted • EXIF preserved • Zero-knowledge') : (t('nftAlbum.publicCertDesc') || 'Decentralized storage • Blockchain anchored')}</Text>
                   </View>
                 </View>
               )}
@@ -1607,8 +1608,8 @@ const NFTGallery = ({
               </TouchableOpacity>
               </View>
               
-              {/* Certificate button — Limited Edition only */}
-              {selectedNFT.edition === 'limited' && (
+              {/* Certificate button — all certified editions */}
+              {(selectedNFT.certificationMode || selectedNFT.edition) && (
                 <TouchableOpacity
                   style={[styles.transferButton, { backgroundColor: COLORS.warning, marginBottom: 8 }]}
                   onPress={async () => {
@@ -1669,15 +1670,15 @@ const NFTGallery = ({
           </View>
           <TouchableOpacity onPress={clearAllNFTs} style={styles.headerRight}>
             {nfts.length > 0 && (
-              <Feather name="trash-2" size={20} color={COLORS.textSecondary} />
+              <Feather name="archive" size={20} color={COLORS.textSecondary} />
             )}
           </TouchableOpacity>
         </View>
         
-        {/* Filter Toggle - All NFTs, Standard, Compressed */}
+        {/* Filter Toggle - All, Public, Private */}
         {nfts.length > 0 && (
           <View style={styles.filterToggleBar}>
-            <TouchableOpacity 
+            <TouchableOpacity
               style={[styles.filterToggle, nftFilter === 'all' && styles.filterToggleActive]}
               onPress={() => { setNftFilter('all'); setCurrentPage(0); }}
             >
@@ -1686,32 +1687,32 @@ const NFTGallery = ({
                 {t('nftAlbum.allNfts')}
               </Text>
             </TouchableOpacity>
-            <TouchableOpacity 
-              style={[styles.filterToggle, nftFilter === 'standard' && { backgroundColor: 'rgba(153, 69, 255, 0.3)', borderColor: '#9945FF' }]}
-              onPress={() => { setNftFilter('standard'); setCurrentPage(0); }}
+            <TouchableOpacity
+              style={[styles.filterToggle, nftFilter === 'public' && { backgroundColor: 'rgba(153, 69, 255, 0.3)', borderColor: '#9945FF' }]}
+              onPress={() => { setNftFilter('public'); setCurrentPage(0); }}
             >
               <View style={{ alignItems: 'center' }}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                  <Feather name="hexagon" size={14} color={nftFilter === 'standard' ? '#9945FF' : COLORS.textSecondary} />
-                  <Text style={[styles.filterToggleText, nftFilter === 'standard' && { color: '#9945FF' }]}>
-                    {t('nftAlbum.standard')}
+                  <Feather name="globe" size={14} color={nftFilter === 'public' ? '#9945FF' : COLORS.textSecondary} />
+                  <Text style={[styles.filterToggleText, nftFilter === 'public' && { color: '#9945FF' }]}>
+                    {t('nftAlbum.publicFilter')}
                   </Text>
                 </View>
-                <Text style={{ fontSize: 8, color: COLORS.textSecondary, marginTop: 2 }}>{t('nftAlbum.uniqueToken')}</Text>
+                <Text style={{ fontSize: 8, color: COLORS.textSecondary, marginTop: 2 }}>{t('nftAlbum.publicFilterDesc')}</Text>
               </View>
             </TouchableOpacity>
-            <TouchableOpacity 
-              style={[styles.filterToggle, nftFilter === 'compressed' && { backgroundColor: 'rgba(34, 197, 94, 0.3)', borderColor: '#22c55e' }]}
-              onPress={() => { setNftFilter('compressed'); setCurrentPage(0); }}
+            <TouchableOpacity
+              style={[styles.filterToggle, nftFilter === 'private' && { backgroundColor: 'rgba(34, 197, 94, 0.3)', borderColor: '#22c55e' }]}
+              onPress={() => { setNftFilter('private'); setCurrentPage(0); }}
             >
               <View style={{ alignItems: 'center' }}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                  <Feather name="zap" size={14} color={nftFilter === 'compressed' ? '#22c55e' : COLORS.textSecondary} />
-                  <Text style={[styles.filterToggleText, nftFilter === 'compressed' && { color: '#22c55e' }]}>
-                    {t('nftAlbum.compressed')}
+                  <Feather name="lock" size={14} color={nftFilter === 'private' ? '#22c55e' : COLORS.textSecondary} />
+                  <Text style={[styles.filterToggleText, nftFilter === 'private' && { color: '#22c55e' }]}>
+                    {t('nftAlbum.privateFilter')}
                   </Text>
                 </View>
-                <Text style={{ fontSize: 8, color: COLORS.textSecondary, marginTop: 2 }}>{t('nftAlbum.lowCost')}</Text>
+                <Text style={{ fontSize: 8, color: COLORS.textSecondary, marginTop: 2 }}>{t('nftAlbum.privateFilterDesc')}</Text>
               </View>
             </TouchableOpacity>
           </View>

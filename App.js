@@ -2579,7 +2579,7 @@ export default function App() {
     }
   };
   
-  const handleMintNFT = async ({ asset, filePath, name, description, stripExif, storageOption, nftType, serverConfig, costEstimate: passedCostEstimate, edition, license, watermark, encrypt }) => {
+  const handleMintNFT = async ({ asset, filePath, name, description, stripExif, storageOption, nftType, serverConfig, costEstimate: passedCostEstimate, edition, license, watermark, encrypt, certificationMode }) => {
     if (!asset || !filePath) {
       showDarkAlert(t('alerts.error'), t('alerts.selectItemsMessage'));
       return;
@@ -2631,10 +2631,10 @@ export default function App() {
       const confirmMint = await new Promise((resolve) => {
         setCustomAlert({
           title: t('nftMint.confirmMinting'),
-          message: `${nftTypeLabel} • ${storageLabel}\n\n${t('nftMint.estTotal')}: ${totalDisplay}\n\n${t('nftMint.proceedWithMinting')}`,
+          message: `${t('nftMint.estTotal')}: ${totalDisplay}\n\n${t('nftMint.proceedWithMinting')}`,
           buttons: [
             { text: t('common.cancel'), style: 'cancel', onPress: () => resolve(false) },
-            { text: t('nftMint.mintNft'), onPress: () => resolve(true) },
+            { text: t('nftMint.certifyOriginal'), onPress: () => resolve(true) },
           ],
         });
       });
@@ -2707,24 +2707,20 @@ export default function App() {
         watermark,
         encrypt,
         masterKey,
+        certificationMode,
       });
       
       if (result.success) {
         setStatus(t('status.nftMinted'));
+        // Invalidate DAS cache so next scan picks up the new NFT
+        NFTOperations.invalidateDasCache();
         
-        // Show success with different info for cNFT vs standard NFT, and storage-specific note
-        const isCompressed = result.isCompressed || result.mintAddress?.startsWith('cnft_');
-        const nftTypeLabel = isCompressed ? t('nftMint.compressedNft') : t('nftMint.standardNft');
-        const addressLabel = isCompressed ? t('nftMint.assetId') : t('nftMint.mintAddress');
-        const explorerNote = storageOption === 'onchain'
-          ? t('nftMint.viewInGalleryOnChain')
-          : isCompressed
-            ? t('nftMint.viewInGalleryXray')
-            : t('nftMint.viewInGalleryExplorer');
+        // Show success — simple certification confirmation
+        const addressLabel = t('nftMint.certId');
         
         showDarkAlert(
-          t('nftMint.nftCreated', { type: nftTypeLabel }),
-          `${t('nftMint.photoMintedOnSolana', { name })}\n\n${addressLabel}:\n${result.mintAddress?.slice(0, 20)}...\n\n${explorerNote}`
+          t('nftMint.certifiedSuccess'),
+          `${t('nftMint.photoCertified', { name })}\n\n${addressLabel}:\n${result.mintAddress?.slice(0, 20)}...\n\n${t('nftMint.viewInOriginalsAndProofs')}`
         );
       } else {
         const errMsg = result.error || t('alerts.error');
@@ -3164,7 +3160,7 @@ export default function App() {
     setProgress(0);
     setProgressAction(null);
     setStatus(t('status.idleWithMode', { mode: fastModeEnabled ? t('settings.fastModeLabel') : t('settings.slowModeLabel') }));
-  }, [loading, view, status, fastModeEnabled]);
+  }, [loading, view, fastModeEnabled]);
 
   useEffect(() => {
     if (loading && !autoUploadEnabledRef.current) {
@@ -4254,8 +4250,8 @@ export default function App() {
           throw lastNetworkError;
         }
       } else {
-        // Local/Remote - no retry, fail immediately
-        res = await axios.post(authUrl, payload);
+        // Local/Remote - no retry, fail immediately (15s timeout)
+        res = await axios.post(authUrl, payload, { timeout: 15000 });
       }
       await new Promise(resolve => setTimeout(resolve, 200));
 
