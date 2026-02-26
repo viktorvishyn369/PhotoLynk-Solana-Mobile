@@ -1123,7 +1123,7 @@ const NFTGallery = ({
           return imgUrl ? (
             <NFTImageWithFallback 
               url={imgUrl}
-              originalUrl={item.arweaveUrl || item.metadataUrl}
+              originalUrl={item.ipfsThumbnailUrl || item.arweaveUrl || item.metadataUrl}
               style={styles.nftImage} 
             />
           ) : (
@@ -1355,7 +1355,7 @@ const NFTGallery = ({
                   <NFTImageWithFallback 
                     key={`img-${selectedNFT.mintAddress}`}
                     url={imgUrl}
-                    originalUrl={selectedNFT.arweaveUrl || selectedNFT.metadataUrl}
+                    originalUrl={selectedNFT.ipfsThumbnailUrl || selectedNFT.arweaveUrl || selectedNFT.metadataUrl}
                     style={styles.detailImage}
                     isDetail={true}
                   />

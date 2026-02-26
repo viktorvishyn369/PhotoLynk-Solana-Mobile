@@ -3198,6 +3198,7 @@ const mintWithWalletAdapter = async ({
       ownerAddress: ownerAddressStr,
       imageUrl: imageUpload.arweaveUrl,
       thumbnailUrl,
+      ipfsThumbnailUrl,
       metadataUrl: metadataUpload.arweaveUrl,
       metadata,
       isRealNFT: true,
@@ -3308,6 +3309,7 @@ const mintWithWalletAdapter = async ({
       ownerAddress: ownerAddressStr,
       imageUrl: imageUpload.arweaveUrl,
       thumbnailUrl,
+      ipfsThumbnailUrl,
       metadataUrl: metadataUpload.arweaveUrl,
       metadata,
       isRealNFT: true,
@@ -3646,6 +3648,7 @@ export const mintPhotoNFT = async ({
     // Unencrypted: plain JPEG thumbnail (400px)
     // Encrypted: 50%-of-original encrypted thumbnail (.bin) — DecryptedNFTImage decrypts it for gallery
     let thumbnailUrl = null;
+    let ipfsThumbnailUrl = null;
     if (serverConfig) {
       onStatus?.('Creating thumbnail...');
       onProgress?.(0.30);
@@ -3715,15 +3718,25 @@ export const mintPhotoNFT = async ({
           
           const useIpfsMode = storageOption === NFT_STORAGE_OPTIONS.IPFS || (!useStealthCloud && !useArweave && !useOnChain);
           if (useIpfsMode && PINATA_JWT) {
-            // Hybrid IPFS: thumbnail → IPFS (tiny ~30KB, on-chain preview for Tensor/explorers)
+            // Hybrid IPFS: dual thumbnail — IPFS (decentralized fallback) + StealthCloud (fast primary)
             const thumbB64 = await FileSystem.readAsStringAsync(thumbToUpload, { encoding: FileSystem.EncodingType.Base64 });
+            // 1) Upload to IPFS (decentralized fallback + on-chain preview for Tensor/explorers)
             const thumbIpfs = await uploadToArweave(thumbToUpload, 'image/jpeg', {}, thumbB64);
             if (thumbIpfs.success) {
-              thumbnailUrl = thumbIpfs.arweaveUrl;
-              console.log('[NFT] Thumbnail uploaded to IPFS (hybrid mode):', thumbnailUrl);
+              ipfsThumbnailUrl = thumbIpfs.arweaveUrl;
+              console.log('[NFT] Thumbnail uploaded to IPFS:', ipfsThumbnailUrl);
             }
+            // 2) Also upload to StealthCloud (fast primary for gallery)
+            const nftName = name || `PhotoLynk_${Date.now()}`;
+            const scResult = await uploadThumbnailToStealthCloud(thumbToUpload, nftName, serverConfig);
+            if (scResult.success) {
+              thumbnailUrl = scResult.thumbnailUrl;
+              console.log('[NFT] Thumbnail also stored on StealthCloud:', thumbnailUrl);
+            }
+            // Fallback: if StealthCloud failed, use IPFS as primary
+            if (!thumbnailUrl) thumbnailUrl = ipfsThumbnailUrl;
           } else {
-            // StealthCloud / Arweave / On-Chain: thumbnail → StealthCloud
+            // StealthCloud / Arweave / On-Chain: thumbnail → StealthCloud only
             const nftName = name || `PhotoLynk_${Date.now()}`;
             const uploadResult = await uploadThumbnailToStealthCloud(
               thumbToUpload, 
@@ -3981,6 +3994,7 @@ export const mintPhotoNFT = async ({
             ownerAddress: ownerAddressStr,
             imageUrl: imageUpload.arweaveUrl,
             thumbnailUrl,
+            ipfsThumbnailUrl,
             metadataUrl: metadataUpload.arweaveUrl,
             metadata,
             commissionUsd,
@@ -4169,7 +4183,8 @@ export const mintPhotoNFT = async ({
         mintAddress: mintPubkey.toBase58(),
         ownerAddress: ownerAddressStr,
         imageUrl: imageUpload.arweaveUrl,
-        thumbnailUrl, // StealthCloud thumbnail for fast gallery loading
+        thumbnailUrl,
+        ipfsThumbnailUrl,
         metadataUrl: metadataUpload.arweaveUrl,
         metadata,
         isRealNFT: true,
@@ -4319,6 +4334,7 @@ export const mintPhotoNFT = async ({
       description,
       imageUrl: result.thumbnailUrl || result.imageUrl || localImagePath || asset.uri,
       thumbnailUrl: result.thumbnailUrl,
+      ipfsThumbnailUrl: result.ipfsThumbnailUrl,
       arweaveUrl: result.imageUrl,
       metadataUrl: result.metadataUrl,
       txSignature: result.txSignature,
