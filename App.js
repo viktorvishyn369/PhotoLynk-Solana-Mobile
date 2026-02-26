@@ -53,6 +53,7 @@ import {
   computeFileIdentity,
   getMimeFromFilename,
   sanitizeStoreKey,
+  emailToSeekerId,
 } from './utils';
 import { computeAndroidHardwareId, computeIosHardwareId } from './deviceId';
 import { makeHistoryKey, loadRestoreHistory, saveRestoreHistory, clearRestoreHistory } from './restoreHistory';
@@ -5474,7 +5475,7 @@ export default function App() {
         progressAction={progressAction}
         loading={loading}
         glassModeEnabled={glassModeEnabled}
-        qsEmail={email}
+        qsEmail={emailToSeekerId(email) || email}
         qsWalletAddress={qsWalletAddress}
         qsNftCount={qsNftCount}
         qsLastBackupTime={qsLastBackupTime}

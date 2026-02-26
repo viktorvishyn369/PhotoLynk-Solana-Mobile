@@ -177,6 +177,19 @@ export const normalizeSeekerIdForStorage = (value) => {
   return trimmed || null;
 };
 
+// Convert email / nickname / Seeker ID to display format: alice.skr
+export const emailToSeekerId = (value) => {
+  if (!value) return null;
+  const trimmed = String(value).trim().toLowerCase();
+  if (!trimmed) return null;
+  if (trimmed.endsWith('.skr')) return trimmed;
+  if (trimmed.includes('@')) {
+    const local = trimmed.split('@')[0];
+    return local ? local + '.skr' : null;
+  }
+  return trimmed + '.skr';
+};
+
 // Sanitize a string for use as an expo-secure-store key.
 // Android SecureStore only allows alphanumeric characters, ".", "-", and "_".
 // We replace common illegal chars: ":" → "_", "@" → "_at_", and any other
