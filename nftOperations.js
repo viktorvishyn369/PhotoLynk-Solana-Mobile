@@ -3616,22 +3616,31 @@ export const mintPhotoNFT = async ({
       const reuseBuffer = (imageToUploadPath === filePath) ? originalBase64 : null;
       imageUpload = await uploadToAkordArweave(imageToUploadPath, uploadContentType, reuseBuffer);
     } else {
-      onStatus?.('Uploading to IPFS...');
-      onProgress?.(0.25);
-      // Read-once: reuse originalBase64 when uploading the unmodified original file
-      const reuseBuffer = (imageToUploadPath === filePath) ? originalBase64 : null;
-      imageUpload = await uploadToArweave(imageToUploadPath, uploadContentType, {
-        'NFT-Owner': ownerAddressStr,
-        'Photo-Date': stripExif ? 'Private' : (exifData.dateTaken || 'Unknown'),
-        'NFT-Edition': isLimited ? 'Limited' : 'Open',
-      }, reuseBuffer);
+      // Hybrid IPFS mode: full image → StealthCloud, thumb+metadata → IPFS
+      // Saves ~5MB/NFT on Pinata; ~32KB/NFT instead → ~15,000 NFTs on free plan
+      if (serverConfig) {
+        onStatus?.('Uploading image to StealthCloud...');
+        onProgress?.(0.25);
+        imageUpload = await uploadToStealthCloud(imageToUploadPath, serverConfig);
+      } else {
+        // Fallback: no server config, upload directly to IPFS
+        onStatus?.('Uploading to IPFS...');
+        onProgress?.(0.25);
+        const reuseBuffer = (imageToUploadPath === filePath) ? originalBase64 : null;
+        imageUpload = await uploadToArweave(imageToUploadPath, uploadContentType, {
+          'NFT-Owner': ownerAddressStr,
+          'Photo-Date': stripExif ? 'Private' : (exifData.dateTaken || 'Unknown'),
+          'NFT-Edition': isLimited ? 'Limited' : 'Open',
+        }, reuseBuffer);
+      }
     }
     
     if (!imageUpload.success) {
       throw new Error('Image upload failed: ' + imageUpload.error);
     }
     
-    console.log(`[NFT] Image ready via ${useOnChain ? 'On-Chain' : useStealthCloud ? 'StealthCloud' : useArweave ? 'Arweave' : 'IPFS'}:`, useOnChain ? '(data URI)' : imageUpload.arweaveUrl);
+    const imageStorageLabel = useOnChain ? 'On-Chain' : useStealthCloud ? 'StealthCloud' : useArweave ? 'Arweave' : (serverConfig ? 'StealthCloud (hybrid IPFS)' : 'IPFS');
+    console.log(`[NFT] Image ready via ${imageStorageLabel}:`, useOnChain ? '(data URI)' : imageUpload.arweaveUrl);
     
     // Generate and upload gallery thumbnail to StealthCloud
     // Unencrypted: plain JPEG thumbnail (400px)
@@ -3704,15 +3713,27 @@ export const mintPhotoNFT = async ({
             }
           }
           
-          const nftName = name || `PhotoLynk_${Date.now()}`;
-          const uploadResult = await uploadThumbnailToStealthCloud(
-            thumbToUpload, 
-            nftName, 
-            serverConfig
-          );
-          if (uploadResult.success) {
-            thumbnailUrl = uploadResult.thumbnailUrl;
-            console.log('[NFT] Thumbnail stored:', thumbnailUrl);
+          const useIpfsMode = storageOption === NFT_STORAGE_OPTIONS.IPFS || (!useStealthCloud && !useArweave && !useOnChain);
+          if (useIpfsMode && PINATA_JWT) {
+            // Hybrid IPFS: thumbnail → IPFS (tiny ~30KB, on-chain preview for Tensor/explorers)
+            const thumbB64 = await FileSystem.readAsStringAsync(thumbToUpload, { encoding: FileSystem.EncodingType.Base64 });
+            const thumbIpfs = await uploadToArweave(thumbToUpload, 'image/jpeg', {}, thumbB64);
+            if (thumbIpfs.success) {
+              thumbnailUrl = thumbIpfs.arweaveUrl;
+              console.log('[NFT] Thumbnail uploaded to IPFS (hybrid mode):', thumbnailUrl);
+            }
+          } else {
+            // StealthCloud / Arweave / On-Chain: thumbnail → StealthCloud
+            const nftName = name || `PhotoLynk_${Date.now()}`;
+            const uploadResult = await uploadThumbnailToStealthCloud(
+              thumbToUpload, 
+              nftName, 
+              serverConfig
+            );
+            if (uploadResult.success) {
+              thumbnailUrl = uploadResult.thumbnailUrl;
+              console.log('[NFT] Thumbnail stored on StealthCloud:', thumbnailUrl);
+            }
           }
         }
       }
