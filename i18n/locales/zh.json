@@ -54,7 +54,15 @@
     "retryingConnection": "重试连接...",
     "stillConnecting": "仍在连接...",
     "almostThere": "快到了...",
-    "confirmDeleteAll": "确认身份以删除所有数据"
+    "confirmDeleteAll": "确认身份以删除所有数据",
+    "connectingWallet": "正在连接钱包...",
+    "connectWallet": "连接钱包",
+    "walletLoginDesc": "使用您的 Solana 硬件钱包登录。您的设备生物识别技术可保护您的帐户安全 — 无需密码。",
+    "walletAuthFailed": "钱包身份验证失败",
+    "haveExistingAccount": "已有账号",
+    "legacyMigrateTitle": "将现有帐户链接到钱包",
+    "migrateAndConnect": "验证并连接钱包",
+    "backToNewUser": "← 新用户？直接连接钱包"
   },
   "home": {
     "backup": "备份",
@@ -714,7 +722,11 @@
     "onChainFailed": "链上转换失败：{{reason}}",
     "onChainTooComplex": "照片对于链上SVG来说太复杂（>10KB）。请尝试更简单的图片。",
     "applyingWatermark": "正在添加水印...",
-    "encryptingImage": "正在加密图片..."
+    "encryptingImage": "正在加密图片...",
+    "requestingTimestamp": "请求可信时间戳...",
+    "uploadingArweave": "上传至永久存储...",
+    "embeddingOriginal": "嵌入原始图片...",
+    "mintingStandard": "创建标准记录..."
   },
   "nftTransfer": {
     "title": "转让原创",

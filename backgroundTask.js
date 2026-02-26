@@ -195,19 +195,33 @@ export const getStealthCloudMasterKey = async () => {
     // Ignore
   }
 
-  // Try to derive from credentials WITHOUT triggering biometric.
-  // Biometric should only happen at login/app-launch, not during backup/sync.
-  const email = await SecureStore.getItemAsync('user_email');
+  // For migrated legacy→wallet users, the master key must be derived from the
+  // ORIGINAL email+password (not the wallet-derived ones). Check for stored
+  // legacy master key credentials first.
+  let email = null;
   let password = null;
-  // Password may be stored with requireAuthentication: true (biometric-protected).
-  // On Android, even a plain getItemAsync can trigger biometric for such keys.
-  // Use requireAuthentication: false explicitly to avoid bio prompt.
   try {
-    password = await SecureStore.getItemAsync('user_password_v1', {
-      requireAuthentication: false
-    });
-  } catch (e) {
-    // Ignore — key may not be readable without biometric on this device
+    const mkEmail = await SecureStore.getItemAsync('legacy_mk_email');
+    const mkPassword = await SecureStore.getItemAsync('legacy_mk_password');
+    if (mkEmail && mkPassword) {
+      email = mkEmail;
+      password = mkPassword;
+    }
+  } catch (e) {}
+
+  // If no legacy MK credentials, use current user credentials
+  if (!email || !password) {
+    email = await SecureStore.getItemAsync('user_email');
+    // Password may be stored with requireAuthentication: true (biometric-protected).
+    // On Android, even a plain getItemAsync can trigger biometric for such keys.
+    // Use requireAuthentication: false explicitly to avoid bio prompt.
+    try {
+      password = await SecureStore.getItemAsync('user_password_v1', {
+        requireAuthentication: false
+      });
+    } catch (e) {
+      // Ignore — key may not be readable without biometric on this device
+    }
   }
 
   console.log('StealthCloud masterKey: email=', email ? 'present' : 'missing', 'password=', password ? 'present' : 'missing');

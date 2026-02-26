@@ -54,7 +54,15 @@
     "retryingConnection": "Riprova la connessione...",
     "stillConnecting": "Ancora in collegamento...",
     "almostThere": "Ci siamo quasi...",
-    "confirmDeleteAll": "Conferma la tua identità per eliminare tutti i dati"
+    "confirmDeleteAll": "Conferma la tua identità per eliminare tutti i dati",
+    "connectingWallet": "Connessione wallet...",
+    "connectWallet": "Connetti Wallet",
+    "walletLoginDesc": "Accedi con il tuo hardware wallet Solana. La biometria del tuo dispositivo protegge il tuo account — nessuna password necessaria.",
+    "walletAuthFailed": "Autenticazione wallet fallita",
+    "haveExistingAccount": "Ho già un account",
+    "legacyMigrateTitle": "Collega l'account esistente al wallet",
+    "migrateAndConnect": "Verifica e Connetti Wallet",
+    "backToNewUser": "← Nuovo utente? Connetti wallet direttamente"
   },
   "home": {
     "backup": "Backup",
@@ -714,7 +722,11 @@
     "onChainFailed": "Conversione incorporata non riuscita: {{reason}}",
     "onChainTooComplex": "Foto troppo complessa per SVG incorporato (>10KB). Prova un'immagine più semplice.",
     "applyingWatermark": "Applicazione filigrana...",
-    "encryptingImage": "Crittografia immagine..."
+    "encryptingImage": "Crittografia immagine...",
+    "requestingTimestamp": "Richiesta di marca temporale attendibile...",
+    "uploadingArweave": "Caricamento su archiviazione permanente...",
+    "embeddingOriginal": "Incorporamento dell'immagine originale...",
+    "mintingStandard": "Creazione record standard..."
   },
   "nftTransfer": {
     "title": "Trasferisci originale",

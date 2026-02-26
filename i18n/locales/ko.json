@@ -54,7 +54,15 @@
     "retryingConnection": "연결 재시도 중...",
     "stillConnecting": "연결 중...",
     "almostThere": "거의 다 왔어요...",
-    "confirmDeleteAll": "모든 데이터 삭제를 위해 신원 확인"
+    "confirmDeleteAll": "모든 데이터 삭제를 위해 신원 확인",
+    "connectingWallet": "지갑 연결 중...",
+    "connectWallet": "지갑 연결",
+    "walletLoginDesc": "Solana 하드웨어 지갑으로 로그인하세요. 기기 생체 인식이 계정을 안전하게 보호합니다 — 비밀번호가 필요 없습니다.",
+    "walletAuthFailed": "지갑 인증 실패",
+    "haveExistingAccount": "기존 계정이 있습니다",
+    "legacyMigrateTitle": "기존 계정을 지갑에 연결",
+    "migrateAndConnect": "확인 및 지갑 연결",
+    "backToNewUser": "← 신규 사용자입니까? 직접 지갑 연결"
   },
   "home": {
     "backup": "백업",
@@ -714,7 +722,11 @@
     "onChainFailed": "온체인 변환 실패: {{reason}}",
     "onChainTooComplex": "사진이 온체인 SVG에 너무 복잡합니다 (>10KB). 더 간단한 이미지를 시도하세요.",
     "applyingWatermark": "워터마크 적용 중...",
-    "encryptingImage": "이미지 암호화 중..."
+    "encryptingImage": "이미지 암호화 중...",
+    "requestingTimestamp": "신뢰할 수 있는 타임스탬프 요청 중...",
+    "uploadingArweave": "영구 저장소에 업로드 중...",
+    "embeddingOriginal": "원본 이미지 임베딩 중...",
+    "mintingStandard": "표준 레코드 생성 중..."
   },
   "nftTransfer": {
     "title": "원본 전송",

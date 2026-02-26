@@ -54,7 +54,15 @@
     "stillConnecting": "अभी भी जुड़ रहा है...",
     "almostThere": "लगभग वहाँ...",
     "confirmDeleteAll": "सभी डेटा हटाने के लिए पहचान की पुष्टि करें",
-    "verifyingSession": "सत्र सत्यापित हो रहा है..."
+    "verifyingSession": "सत्र सत्यापित हो रहा है...",
+    "connectingWallet": "वॉलेट कनेक्ट हो रहा है...",
+    "connectWallet": "वॉलेट कनेक्ट करें",
+    "walletLoginDesc": "अपने Solana हार्डवेयर वॉलेट से साइन इन करें। आपके डिवाइस के बायोमेट्रिक्स आपके खाते को सुरक्षित करते हैं — किसी पासवर्ड की आवश्यकता नहीं है।",
+    "walletAuthFailed": "वॉलेट प्रमाणीकरण विफल",
+    "haveExistingAccount": "मेरा पहले से खाता है",
+    "legacyMigrateTitle": "मौजूदा खाते को वॉलेट से लिंक करें",
+    "migrateAndConnect": "सत्यापित करें और वॉलेट कनेक्ट करें",
+    "backToNewUser": "← नए उपयोगकर्ता? सीधे वॉलेट कनेक्ट करें"
   },
   "home": {
     "backup": "बैकअप",
@@ -714,7 +722,11 @@
     "onChainFailed": "ऑन-चेन रूपांतरण विफल: {{reason}}",
     "onChainTooComplex": "फोटो ऑन-चेन SVG के लिए बहुत जटिल है (>10KB)। एक सरल छवि आज़माएं।",
     "applyingWatermark": "वॉटरमार्क लगा रहे हैं...",
-    "encryptingImage": "छवि एन्क्रिप्ट कर रहे हैं..."
+    "encryptingImage": "छवि एन्क्रिप्ट कर रहे हैं...",
+    "requestingTimestamp": "विश्वसनीय टाइमस्टैम्प का अनुरोध...",
+    "uploadingArweave": "स्थायी भंडारण में अपलोड...",
+    "embeddingOriginal": "मूल छवि एम्बेड करना...",
+    "mintingStandard": "मानक रिकॉर्ड बनाना..."
   },
   "nftTransfer": {
     "title": "मूल स्थानांतरित करें",

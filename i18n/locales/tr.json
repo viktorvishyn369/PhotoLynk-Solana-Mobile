@@ -54,7 +54,15 @@
     "retryingConnection": "Bağlantı yeniden deneniyor...",
     "stillConnecting": "Hala bağlıyorum.",
     "almostThere": "Neredeyse geldik.",
-    "confirmDeleteAll": "Tüm verileri silmek için kimliğinizi doğrulayın"
+    "confirmDeleteAll": "Tüm verileri silmek için kimliğinizi doğrulayın",
+    "connectingWallet": "Cüzdan bağlanıyor...",
+    "connectWallet": "Cüzdanı Bağla",
+    "walletLoginDesc": "Solana donanım cüzdanınızla giriş yapın. Cihazınızın biyometrisi hesabınızı güvenceye alır — şifreye gerek yoktur.",
+    "walletAuthFailed": "Cüzdan kimlik doğrulaması başarısız oldu",
+    "haveExistingAccount": "Mevcut bir hesabım var",
+    "legacyMigrateTitle": "Mevcut hesabı cüzdana bağla",
+    "migrateAndConnect": "Doğrula ve Cüzdanı Bağla",
+    "backToNewUser": "← Yeni kullanıcı mısınız? Doğrudan cüzdanı bağlayın"
   },
   "home": {
     "backup": "Yedekleme",
@@ -714,7 +722,11 @@
     "onChainFailed": "Zincir üstü dönüştürme başarısız: {{reason}}",
     "onChainTooComplex": "Fotoğraf zincir üstü SVG için çok karmaşık (>10KB). Daha basit bir görüntü deneyin.",
     "applyingWatermark": "Filigran ekleniyor...",
-    "encryptingImage": "Görüntü şifreleniyor..."
+    "encryptingImage": "Görüntü şifreleniyor...",
+    "requestingTimestamp": "Güvenilir zaman damgası isteniyor...",
+    "uploadingArweave": "Kalıcı depolamaya yükleniyor...",
+    "embeddingOriginal": "Orijinal görsel yerleştiriliyor...",
+    "mintingStandard": "Standart kayıt oluşturuluyor..."
   },
   "nftTransfer": {
     "title": "Orijinali aktar",

@@ -54,7 +54,15 @@
     "retryingConnection": "Tentando novamente a conexão...",
     "stillConnecting": "Ainda está se conectando...",
     "almostThere": "Quase lá...",
-    "confirmDeleteAll": "Confirme sua identidade para excluir todos os dados"
+    "confirmDeleteAll": "Confirme sua identidade para excluir todos os dados",
+    "connectingWallet": "Conectando carteira...",
+    "connectWallet": "Conectar Carteira",
+    "walletLoginDesc": "Faça login com sua carteira de hardware Solana. A biometria do seu dispositivo protege sua conta — não é necessária senha.",
+    "walletAuthFailed": "A autenticação da carteira falhou",
+    "haveExistingAccount": "Já tenho uma conta",
+    "legacyMigrateTitle": "Vincular conta existente à carteira",
+    "migrateAndConnect": "Verificar e Conectar Carteira",
+    "backToNewUser": "← Novo usuário? Conectar carteira diretamente"
   },
   "home": {
     "backup": "Backup",
@@ -1109,7 +1117,11 @@
     "confirmingTransaction": "Confirmando transação...",
     "finalizing": "Finalizando...",
     "mintedSuccessfully": "Certificado com sucesso!",
-    "mintingFailed": "Erro na certificação"
+    "mintingFailed": "Erro na certificação",
+    "requestingTimestamp": "Solicitando carimbo de data/hora confiável...",
+    "uploadingArweave": "Enviando para armazenamento permanente...",
+    "embeddingOriginal": "Incorporando imagem original...",
+    "mintingStandard": "Criando registro padrão..."
   },
   "nftWelcome": {
     "title": "Certifique seus originais",

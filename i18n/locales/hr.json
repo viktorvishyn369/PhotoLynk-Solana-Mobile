@@ -54,7 +54,15 @@
     "stillConnecting": "Još uvijek se povezuje...",
     "almostThere": "Skoro gotovo...",
     "confirmDeleteAll": "Potvrdite identitet za brisanje svih podataka",
-    "verifyingSession": "Provjera sesije..."
+    "verifyingSession": "Provjera sesije...",
+    "connectingWallet": "Povezivanje novčanika...",
+    "connectWallet": "Poveži Novčanik",
+    "walletLoginDesc": "Prijavite se svojim Solana hardverskim novčanikom. Biometrija vašeg uređaja osigurava vaš račun — lozinka nije potrebna.",
+    "walletAuthFailed": "Autentifikacija novčanika nije uspjela",
+    "haveExistingAccount": "Imam postojeći račun",
+    "legacyMigrateTitle": "Poveži postojeći račun s novčanikom",
+    "migrateAndConnect": "Potvrdi i Poveži Novčanik",
+    "backToNewUser": "← Novi korisnik? Izravno povežite novčanik"
   },
   "home": {
     "backup": "Sigurnosna kopija",
@@ -1109,7 +1117,11 @@
     "confirmingTransaction": "Potvrđivanje transakcije...",
     "finalizing": "Završavanje...",
     "mintedSuccessfully": "Certificirano!",
-    "mintingFailed": "Certifikacija neuspjela"
+    "mintingFailed": "Certifikacija neuspjela",
+    "requestingTimestamp": "Zahtjev za pouzdani vremenski žig...",
+    "uploadingArweave": "Prijenos u trajnu pohranu...",
+    "embeddingOriginal": "Ugradnja izvorne slike...",
+    "mintingStandard": "Stvaranje standardnog zapisa..."
   },
   "nftWelcome": {
     "title": "Certificirajte svoje originale",

@@ -54,7 +54,15 @@
     "retryingConnection": "Nouvelle tentative de connexion...",
     "stillConnecting": "Toujours en cours de connexion...",
     "almostThere": "Nous y sommes presque...",
-    "confirmDeleteAll": "Confirmez votre identité pour supprimer toutes les données"
+    "confirmDeleteAll": "Confirmez votre identité pour supprimer toutes les données",
+    "connectingWallet": "Connexion du portefeuille...",
+    "connectWallet": "Connecter Portefeuille",
+    "walletLoginDesc": "Connectez-vous avec votre portefeuille matériel Solana. La biométrie de votre appareil sécurise votre compte — aucun mot de passe requis.",
+    "walletAuthFailed": "Échec de l'authentification du portefeuille",
+    "haveExistingAccount": "J'ai déjà un compte",
+    "legacyMigrateTitle": "Lier le compte existant au portefeuille",
+    "migrateAndConnect": "Vérifier et Connecter Portefeuille",
+    "backToNewUser": "← Nouvel utilisateur ? Connectez le portefeuille directement"
   },
   "home": {
     "backup": "Sauvegarde",
@@ -714,7 +722,11 @@
     "onChainFailed": "Échec de la conversion intégrée : {{reason}}",
     "onChainTooComplex": "Photo trop complexe pour SVG intégré (>10 Ko). Essayez une image plus simple.",
     "applyingWatermark": "Application du filigrane...",
-    "encryptingImage": "Chiffrement de l'image..."
+    "encryptingImage": "Chiffrement de l'image...",
+    "requestingTimestamp": "Demande d'horodatage de confiance...",
+    "uploadingArweave": "Téléversement vers le stockage permanent...",
+    "embeddingOriginal": "Intégration de l'image originale...",
+    "mintingStandard": "Création d'un enregistrement standard..."
   },
   "nftTransfer": {
     "title": "Transférer un original",

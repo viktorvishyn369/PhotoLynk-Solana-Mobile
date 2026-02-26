@@ -54,7 +54,15 @@
     "stillConnecting": "Még mindig csatlakozik...",
     "almostThere": "Majdnem ott vagyunk...",
     "confirmDeleteAll": "Azonosság megerősítése az összes adat törléséhez",
-    "verifyingSession": "Munkamenet ellenőrzése..."
+    "verifyingSession": "Munkamenet ellenőrzése...",
+    "connectingWallet": "Pénztárca csatlakoztatása...",
+    "connectWallet": "Pénztárca Csatlakoztatása",
+    "walletLoginDesc": "Jelentkezzen be Solana hardvertárcájával. Eszköze biometrikus adatai védik fiókját — nincs szükség jelszóra.",
+    "walletAuthFailed": "A pénztárca hitelesítése sikertelen",
+    "haveExistingAccount": "Már van fiókom",
+    "legacyMigrateTitle": "Meglévő fiók összekapcsolása pénztárcával",
+    "migrateAndConnect": "Ellenőrzés és Csatlakoztatás",
+    "backToNewUser": "← Új felhasználó? Csatlakoztassa a pénztárcát közvetlenül"
   },
   "home": {
     "backup": "Biztonsági mentés",
@@ -1109,7 +1117,11 @@
     "confirmingTransaction": "Tranzakció megerősítése...",
     "finalizing": "Befejezés...",
     "mintedSuccessfully": "Tanúsítva!",
-    "mintingFailed": "Tanúsítási hiba"
+    "mintingFailed": "Tanúsítási hiba",
+    "requestingTimestamp": "Megbízható időbélyeg kérése...",
+    "uploadingArweave": "Feltöltés állandó tárhelyre...",
+    "embeddingOriginal": "Eredeti kép beágyazása...",
+    "mintingStandard": "Szabványos bejegyzés létrehozása..."
   },
   "nftWelcome": {
     "title": "Tanúsítsa eredetijeit",

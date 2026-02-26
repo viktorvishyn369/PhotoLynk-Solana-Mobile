@@ -54,7 +54,15 @@
     "retryingConnection": "Verbinding opnieuw proberen...",
     "stillConnecting": "Nog steeds aan het verbinden...",
     "almostThere": "We zijn er bijna...",
-    "confirmDeleteAll": "Bevestig identiteit om alle gegevens te verwijderen"
+    "confirmDeleteAll": "Bevestig identiteit om alle gegevens te verwijderen",
+    "connectingWallet": "Portemonnee verbinden...",
+    "connectWallet": "Portemonnee Verbinden",
+    "walletLoginDesc": "Meld u aan met uw Solana hardware wallet. De biometrie van uw apparaat beveiligt uw account — geen wachtwoord nodig.",
+    "walletAuthFailed": "Wallet-authenticatie mislukt",
+    "haveExistingAccount": "Ik heb al een account",
+    "legacyMigrateTitle": "Bestaand account aan wallet koppelen",
+    "migrateAndConnect": "Verifiëren & Wallet Verbinden",
+    "backToNewUser": "← Nieuwe gebruiker? Wallet direct verbinden"
   },
   "home": {
     "backup": "Back-up",
@@ -714,7 +722,11 @@
     "onChainFailed": "Ingebedde conversie mislukt: {{reason}}",
     "onChainTooComplex": "Foto te complex voor ingebedde SVG (>10KB). Probeer een eenvoudiger afbeelding.",
     "applyingWatermark": "Watermerk toevoegen...",
-    "encryptingImage": "Afbeelding versleutelen..."
+    "encryptingImage": "Afbeelding versleutelen...",
+    "requestingTimestamp": "Vertrouwd tijdstempel aanvragen...",
+    "uploadingArweave": "Uploaden naar permanente opslag...",
+    "embeddingOriginal": "Originele afbeelding insluiten...",
+    "mintingStandard": "Standaard record aanmaken..."
   },
   "nftTransfer": {
     "title": "Origineel overdragen",

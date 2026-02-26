@@ -2,7 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const { withDangerousMod } = require('@expo/config-plugins');
 
-function findAppDelegateSwift(iosProjectRoot) {
+function findAppDelegate(iosProjectRoot, filename) {
   const candidates = [];
   function walk(dir) {
     const entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -13,15 +13,23 @@ function findAppDelegateSwift(iosProjectRoot) {
         // Skip huge dirs
         if (e.name === 'Pods' || e.name === 'build') continue;
         walk(p);
-      } else if (e.isFile() && e.name === 'AppDelegate.swift') {
+      } else if (e.isFile() && e.name === filename) {
         candidates.push(p);
       }
     }
   }
   walk(iosProjectRoot);
-  // Prefer AppDelegate under an app target folder (ios/<AppName>/AppDelegate.swift)
-  const preferred = candidates.find((p) => /\/ios\/[^\/]+\/AppDelegate\.swift$/.test(p));
+  const escaped = filename.replace('.', '\\.');
+  const preferred = candidates.find((p) => new RegExp(`/ios/[^/]+/${escaped}$`).test(p));
   return preferred || candidates[0] || null;
+}
+
+function findAppDelegateSwift(iosProjectRoot) {
+  return findAppDelegate(iosProjectRoot, 'AppDelegate.swift');
+}
+
+function findAppDelegateObjC(iosProjectRoot) {
+  return findAppDelegate(iosProjectRoot, 'AppDelegate.mm');
 }
 
 function ensureLineAfterImport(contents, importLine) {
@@ -101,25 +109,134 @@ function patchAppDelegateSwift(contents) {
   return out;
 }
 
+function patchAppDelegateObjC(contents, headerContents) {
+  let out = contents;
+  let hdr = headerContents;
+
+  // Already patched?
+  if (out.includes('PhotoSyncLocalNetworkPromptPatch')) {
+    return { mm: out, h: hdr };
+  }
+
+  // --- Patch the header to add instance variables ---
+  if (!hdr.includes('_didStartReactNativeAfterBecomeActive')) {
+    hdr = hdr.replace(
+      /@interface AppDelegate\s*:\s*\w+/,
+      (match) => `${match} {
+#if DEBUG
+  // PhotoSyncLocalNetworkPromptPatch
+  BOOL _didStartReactNativeAfterBecomeActive;
+  id _didBecomeActiveObserver;
+  NSDictionary *_cachedLaunchOptions;
+  NSNetServiceBrowser *_localNetBrowser;
+#endif
+}`
+    );
+  }
+
+  // --- Patch the .mm to delay RN start in DEBUG ---
+  // Find the return [super application:...] line and inject before it
+  const returnPattern = /return \[super application:application didFinishLaunchingWithOptions:launchOptions\];/;
+  if (returnPattern.test(out) && !out.includes('_didBecomeActiveObserver')) {
+    out = out.replace(
+      returnPattern,
+      `#if DEBUG
+  // PhotoSyncLocalNetworkPromptPatch
+  _cachedLaunchOptions = launchOptions;
+  _didStartReactNativeAfterBecomeActive = NO;
+
+  // Show splash screen while waiting for local network prompt
+  UIStoryboard *storyboard = [UIStoryboard storyboardWithName:@"SplashScreen" bundle:nil];
+  UIViewController *splashVC = [storyboard instantiateInitialViewController];
+  if (splashVC && self.window) {
+    self.window.rootViewController = splashVC;
+    [self.window makeKeyAndVisible];
+  }
+
+  // Trigger the iOS Local Network permission prompt
+  _localNetBrowser = [[NSNetServiceBrowser alloc] init];
+  [_localNetBrowser searchForServicesOfType:@"_http._tcp." inDomain:@"local."];
+
+  // Start RN after app becomes active (after any system permission prompts)
+  __weak typeof(self) weakSelf = self;
+  _didBecomeActiveObserver = [[NSNotificationCenter defaultCenter]
+    addObserverForName:UIApplicationDidBecomeActiveNotification
+    object:nil
+    queue:[NSOperationQueue mainQueue]
+    usingBlock:^(NSNotification *note) {
+      __strong typeof(weakSelf) strongSelf = weakSelf;
+      if (!strongSelf || strongSelf->_didStartReactNativeAfterBecomeActive) return;
+      strongSelf->_didStartReactNativeAfterBecomeActive = YES;
+
+      [strongSelf->_localNetBrowser stop];
+      strongSelf->_localNetBrowser = nil;
+
+      if (strongSelf->_didBecomeActiveObserver) {
+        [[NSNotificationCenter defaultCenter] removeObserver:strongSelf->_didBecomeActiveObserver];
+        strongSelf->_didBecomeActiveObserver = nil;
+      }
+    }];
+
+  // Fail-safe: start RN after 20s if didBecomeActive never fires
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(20.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+    __strong typeof(weakSelf) strongSelf = weakSelf;
+    if (!strongSelf || strongSelf->_didStartReactNativeAfterBecomeActive) return;
+    strongSelf->_didStartReactNativeAfterBecomeActive = YES;
+    if (strongSelf->_didBecomeActiveObserver) {
+      [[NSNotificationCenter defaultCenter] removeObserver:strongSelf->_didBecomeActiveObserver];
+      strongSelf->_didBecomeActiveObserver = nil;
+    }
+  });
+#endif
+
+  return [super application:application didFinishLaunchingWithOptions:launchOptions];`
+    );
+  }
+
+  return { mm: out, h: hdr };
+}
+
 module.exports = function withIosLocalNetworkPrompt(config) {
   return withDangerousMod(config, [
     'ios',
     async (config) => {
       const iosRoot = config.modRequest.platformProjectRoot;
-      const appDelegatePath = findAppDelegateSwift(iosRoot);
-      if (!appDelegatePath) {
-        console.warn('⚠️ withIosLocalNetworkPrompt: AppDelegate.swift not found');
+
+      // Try Swift first
+      const swiftPath = findAppDelegateSwift(iosRoot);
+      if (swiftPath) {
+        const original = fs.readFileSync(swiftPath, 'utf8');
+        const patched = patchAppDelegateSwift(original);
+        if (patched !== original) {
+          fs.writeFileSync(swiftPath, patched);
+          console.log('✅ Patched AppDelegate.swift for Local Network prompt / delayed RN start');
+        } else {
+          console.log('ℹ️ AppDelegate.swift already patched');
+        }
         return config;
       }
 
-      const original = fs.readFileSync(appDelegatePath, 'utf8');
-      const patched = patchAppDelegateSwift(original);
-      if (patched !== original) {
-        fs.writeFileSync(appDelegatePath, patched);
-        console.log('✅ Patched AppDelegate.swift for Local Network prompt / delayed RN start');
-      } else {
-        console.log('ℹ️ AppDelegate.swift already patched');
+      // Fall back to ObjC++ (.mm + .h)
+      const mmPath = findAppDelegateObjC(iosRoot);
+      if (mmPath) {
+        const hPath = mmPath.replace(/\.mm$/, '.h');
+        const mmOriginal = fs.readFileSync(mmPath, 'utf8');
+        const hOriginal = fs.existsSync(hPath) ? fs.readFileSync(hPath, 'utf8') : '';
+        const { mm, h } = patchAppDelegateObjC(mmOriginal, hOriginal);
+        if (mm !== mmOriginal) {
+          fs.writeFileSync(mmPath, mm);
+          console.log('✅ Patched AppDelegate.mm for Local Network prompt / delayed RN start');
+        } else {
+          console.log('ℹ️ AppDelegate.mm already patched');
+        }
+        if (h !== hOriginal && hOriginal) {
+          fs.writeFileSync(hPath, h);
+          console.log('✅ Patched AppDelegate.h with ivar declarations');
+        }
+        return config;
       }
+
+      console.warn('⚠️ withIosLocalNetworkPrompt: Neither AppDelegate.swift nor AppDelegate.mm found');
       return config;
     },
   ]);

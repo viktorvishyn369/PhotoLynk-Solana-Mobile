@@ -54,7 +54,15 @@
     "stillConnecting": "Der er stadig forbindelse...",
     "almostThere": "Vi er der næsten...",
     "confirmDeleteAll": "Bekræft identitet for at slette alle data",
-    "verifyingSession": "Bekræfter session..."
+    "verifyingSession": "Bekræfter session...",
+    "connectingWallet": "Forbinder wallet...",
+    "connectWallet": "Forbind Wallet",
+    "walletLoginDesc": "Log ind med din Solana hardware wallet. Din enheds biometri sikrer din konto — ingen adgangskode nødvendig.",
+    "walletAuthFailed": "Wallet-godkendelse fejlede",
+    "haveExistingAccount": "Jeg har en eksisterende konto",
+    "legacyMigrateTitle": "Knyt eksisterende konto til wallet",
+    "migrateAndConnect": "Bekræft og Forbind Wallet",
+    "backToNewUser": "← Ny bruger? Forbind wallet direkte"
   },
   "home": {
     "backup": "Sikkerhedskopi",
@@ -1163,7 +1171,11 @@
     "confirmingTransaction": "Bekræfter transaktion...",
     "finalizing": "Afslutter...",
     "mintedSuccessfully": "Certificeret!",
-    "mintingFailed": "Certificering fejlede"
+    "mintingFailed": "Certificering fejlede",
+    "requestingTimestamp": "Anmoder om betroet tidsstempel...",
+    "uploadingArweave": "Uploader til permanent lager...",
+    "embeddingOriginal": "Indlejrer originalt billede...",
+    "mintingStandard": "Opretter standard optegnelse..."
   },
   "rawMode": {
     "uploading": "Uploader {{current}} af {{total}}: {{filename}}",

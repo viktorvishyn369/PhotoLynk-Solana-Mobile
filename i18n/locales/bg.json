@@ -54,7 +54,15 @@
     "stillConnecting": "Все още се свързвам...",
     "almostThere": "Почти дотук...",
     "confirmDeleteAll": "Потвърдете самоличността за да изтриете всички данни",
-    "verifyingSession": "Проверка на сесията..."
+    "verifyingSession": "Проверка на сесията...",
+    "connectingWallet": "Свързване с портфейла...",
+    "connectWallet": "Свържи портфейл",
+    "walletLoginDesc": "Влезте с вашия хардуерен портфейл Solana. Биометричните данни на устройството ви защитават акаунта — не е нужна парола.",
+    "walletAuthFailed": "Удостоверяването на портфейла неуспешно",
+    "haveExistingAccount": "Имам съществуващ акаунт",
+    "legacyMigrateTitle": "Свържете съществуващ акаунт с портфейл",
+    "migrateAndConnect": "Потвърди и Свържи Портфейл",
+    "backToNewUser": "← Нов потребител? Свържете портфейла директно"
   },
   "home": {
     "backup": "Резервно копие",
@@ -1109,7 +1117,11 @@
     "confirmingTransaction": "Потвърждаване на транзакция...",
     "finalizing": "Завършване...",
     "mintedSuccessfully": "Сертифицирано!",
-    "mintingFailed": "Грешка при сертифициране"
+    "mintingFailed": "Грешка при сертифициране",
+    "requestingTimestamp": "Заявка за доверен времеви печат...",
+    "uploadingArweave": "Качване в постоянно хранилище...",
+    "embeddingOriginal": "Вграждане на оригинално изображение...",
+    "mintingStandard": "Създаване на стандартен запис..."
   },
   "nftWelcome": {
     "title": "Сертифицирайте вашите оригинали",

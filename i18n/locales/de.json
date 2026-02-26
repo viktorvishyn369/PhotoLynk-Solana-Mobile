@@ -54,7 +54,15 @@
     "retryingConnection": "Verbindung erneut versuchen...",
     "stillConnecting": "Die Verbindung steht noch...",
     "almostThere": "Fast geschafft...",
-    "confirmDeleteAll": "Identität bestätigen um alle Daten zu löschen"
+    "confirmDeleteAll": "Identität bestätigen um alle Daten zu löschen",
+    "connectingWallet": "Wallet wird verbunden...",
+    "connectWallet": "Wallet verbinden",
+    "walletLoginDesc": "Melden Sie sich mit Ihrer Solana-Hardware-Wallet an. Die Biometrie Ihres Geräts sichert Ihr Konto — kein Passwort erforderlich.",
+    "walletAuthFailed": "Wallet-Authentifizierung fehlgeschlagen",
+    "haveExistingAccount": "Ich habe ein bestehendes Konto",
+    "legacyMigrateTitle": "Bestehendes Konto mit Wallet verknüpfen",
+    "migrateAndConnect": "Verifizieren & Wallet verbinden",
+    "backToNewUser": "← Neuer Benutzer? Wallet direkt verbinden"
   },
   "home": {
     "backup": "Sicherung",
@@ -714,7 +722,11 @@
     "onChainFailed": "Einbettungsfehler: {{reason}}",
     "onChainTooComplex": "Foto zu komplex für eingebettetes SVG (>10KB).",
     "applyingWatermark": "Wasserzeichen wird angewendet...",
-    "encryptingImage": "Bild wird verschlüsselt..."
+    "encryptingImage": "Bild wird verschlüsselt...",
+    "requestingTimestamp": "Vertrauenswürdiger Zeitstempel wird angefordert...",
+    "uploadingArweave": "Upload in permanenten Speicher...",
+    "embeddingOriginal": "Originalbild wird eingebettet...",
+    "mintingStandard": "Standardeintrag wird erstellt..."
   },
   "nftTransfer": {
     "title": "Original übertragen",

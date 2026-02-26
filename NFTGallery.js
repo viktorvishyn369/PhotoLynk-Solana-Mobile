@@ -1608,8 +1608,8 @@ const NFTGallery = ({
               </TouchableOpacity>
               </View>
               
-              {/* Certificate button — all certified editions */}
-              {(selectedNFT.certificationMode || selectedNFT.edition) && (
+              {/* Share Cert hidden for now — kept for future development */}
+              {false && (selectedNFT.certificationMode || selectedNFT.edition) && (
                 <TouchableOpacity
                   style={[styles.transferButton, { backgroundColor: COLORS.warning, marginBottom: 8 }]}
                   onPress={async () => {
@@ -1918,7 +1918,7 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: COLORS.background,
     paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight || 0 : 0,
-    paddingBottom: Platform.OS === 'android' ? ANDROID_NAV_BAR_HEIGHT : 0,
+    paddingBottom: 0,
   },
   header: {
     flexDirection: 'row',
@@ -2322,7 +2322,7 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 20,
     flex: 1,
     marginTop: 40,
-    paddingBottom: Platform.OS === 'android' ? ANDROID_NAV_BAR_HEIGHT : 0,
+    paddingBottom: 0,
     minHeight: '90%', // Increased height to ensure all content is visible and scrollable
     overflow: 'hidden',
   },
@@ -2330,7 +2330,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   detailScrollContent: {
-    paddingBottom: Platform.OS === 'android' ? ANDROID_NAV_BAR_HEIGHT + 60 : 40,
+    paddingBottom: 40,
   },
   detailHeader: {
     flexDirection: 'row',
@@ -2510,13 +2510,15 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: 'rgba(0,0,0,0.85)',
+    backgroundColor: 'rgba(0,0,0,1)',
     justifyContent: 'center',
     alignItems: 'center',
     padding: 24,
+    zIndex: 9999,
+    elevation: 9999,
   },
   darkAlertCard: {
-    backgroundColor: '#1a1a1a',
+    backgroundColor: '#1E1E1E',
     borderRadius: 16,
     padding: 24,
     width: '100%',
@@ -2533,7 +2535,7 @@ const styles = StyleSheet.create({
   },
   darkAlertMessage: {
     fontSize: 14,
-    color: '#a1a1aa',
+    color: '#CCC',
     textAlign: 'center',
     marginBottom: 24,
     lineHeight: 20,
@@ -2547,20 +2549,22 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     paddingHorizontal: 24,
     borderRadius: 8,
-    backgroundColor: '#2a2a2a',
+    backgroundColor: '#000000',
+    borderWidth: 1.5,
+    borderColor: '#FFFFFF',
     minWidth: 100,
   },
   darkAlertButtonPrimary: {
-    backgroundColor: COLORS.primary,
+    backgroundColor: '#000000',
   },
   darkAlertButtonText: {
     fontSize: 14,
-    fontWeight: '600',
-    color: '#a1a1aa',
+    fontWeight: '700',
+    color: '#FFFFFF',
     textAlign: 'center',
   },
   darkAlertButtonTextPrimary: {
-    color: '#fff',
+    color: '#FFFFFF',
   },
 });
 

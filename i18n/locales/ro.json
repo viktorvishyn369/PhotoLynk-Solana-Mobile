@@ -54,7 +54,15 @@
     "stillConnecting": "Încă se conectează...",
     "almostThere": "Aproape am ajuns...",
     "confirmDeleteAll": "Confirmați identitatea pentru ștergerea tuturor datelor",
-    "verifyingSession": "Se verifică sesiunea..."
+    "verifyingSession": "Se verifică sesiunea...",
+    "connectingWallet": "Se conectează portofelul...",
+    "connectWallet": "Conectare Portofel",
+    "walletLoginDesc": "Conectați-vă cu portofelul hardware Solana. Biometria dispozitivului dvs. securizează contul — nu este nevoie de parolă.",
+    "walletAuthFailed": "Autentificarea portofelului a eșuat",
+    "haveExistingAccount": "Am un cont existent",
+    "legacyMigrateTitle": "Asociați contul existent la portofel",
+    "migrateAndConnect": "Verificare și Conectare Portofel",
+    "backToNewUser": "← Utilizator nou? Conectați portofelul direct"
   },
   "home": {
     "backup": "Backup",
@@ -1109,7 +1117,11 @@
     "confirmingTransaction": "Confirmare tranzacție...",
     "finalizing": "Finalizare...",
     "mintedSuccessfully": "Certificat!",
-    "mintingFailed": "Eroare la certificare"
+    "mintingFailed": "Eroare la certificare",
+    "requestingTimestamp": "Se solicită marcaj temporal de încredere...",
+    "uploadingArweave": "Se încarcă în stocarea permanentă...",
+    "embeddingOriginal": "Se încorporează imaginea originală...",
+    "mintingStandard": "Se creează înregistrarea standard..."
   },
   "nftWelcome": {
     "title": "Certificați originalele dvs.",

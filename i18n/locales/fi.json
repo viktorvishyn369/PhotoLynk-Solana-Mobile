@@ -54,7 +54,15 @@
     "stillConnecting": "Yhdistän edelleen...",
     "almostThere": "Melkein perillä...",
     "confirmDeleteAll": "Vahvista henkilöllisyys poistaaksesi kaikki tiedot",
-    "verifyingSession": "Istuntoa vahvistetaan..."
+    "verifyingSession": "Istuntoa vahvistetaan...",
+    "connectingWallet": "Yhdistetään lompakkoa...",
+    "connectWallet": "Yhdistä Lompakko",
+    "walletLoginDesc": "Kirjaudu sisään Solana-laitteistolompakollasi. Laitteesi biometriikka suojaa tiliäsi — salasanaa ei tarvita.",
+    "walletAuthFailed": "Lompakon todennus epäonnistui",
+    "haveExistingAccount": "Minulla on jo tili",
+    "legacyMigrateTitle": "Yhdistä olemassa oleva tili lompakkoon",
+    "migrateAndConnect": "Vahvista ja Yhdistä Lompakko",
+    "backToNewUser": "← Uusi käyttäjä? Yhdistä lompakko suoraan"
   },
   "home": {
     "backup": "Varmuuskopio",
@@ -1163,7 +1171,11 @@
     "confirmingTransaction": "Tapahtuman vahvistus...",
     "finalizing": "Viimeistellään...",
     "mintedSuccessfully": "Sertifioitu!",
-    "mintingFailed": "Sertifiointi epäonnistui"
+    "mintingFailed": "Sertifiointi epäonnistui",
+    "requestingTimestamp": "Pyydetään luotettua aikaleimaa...",
+    "uploadingArweave": "Ladataan pysyvään tallennustilaan...",
+    "embeddingOriginal": "Upotetaan alkuperäistä kuvaa...",
+    "mintingStandard": "Luodaan vakiotietuetta..."
   },
   "rawMode": {
     "uploading": "Ladataan {{current}} / {{total}}: {{filename}}",

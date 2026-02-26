@@ -7,7 +7,7 @@ import * as FileSystem from 'expo-file-system';
 import axios from 'axios';
 
 import { v5 as uuidv5 } from 'uuid';
-import { normalizeEmailForDeviceUuid, normalizeHostInput, computeServerUrl, isSeekerIdFormat, normalizeSeekerIdForStorage } from './utils';
+import { normalizeEmailForDeviceUuid, normalizeHostInput, computeServerUrl, isSeekerIdFormat, normalizeSeekerIdForStorage, sanitizeStoreKey } from './utils';
 import { computeIosHardwareId, computeAndroidHardwareId } from './deviceId';
 import { t } from './i18n';
 
@@ -653,8 +653,8 @@ export const getDeviceUUID = async (userEmail = null, userPassword = null) => {
   const normalizedEmail = normalizeEmailForDeviceUuid(userEmail);
   if (!normalizedEmail) return null;
 
-  const persistedKey = `device_uuid_v3:${normalizedEmail}`;
-  const legacyKey = `device_uuid_v3:${String(userEmail).toLowerCase()}`;
+  const persistedKey = sanitizeStoreKey(`device_uuid_v3:${normalizedEmail}`);
+  const legacyKey = sanitizeStoreKey(`device_uuid_v3:${String(userEmail).toLowerCase()}`);
 
   let persisted = null;
   try {
@@ -688,6 +688,23 @@ export const getDeviceUUID = async (userEmail = null, userPassword = null) => {
         await SecureStore.setItemAsync('device_uuid', persisted);
       } catch (e) {}
     }
+    return persisted;
+  }
+
+  // Check if this email has a migrated UUID lock (legacy → wallet migration).
+  // If so, the persisted UUID is the original legacy UUID and must NOT be
+  // overwritten by the wallet-derived email:password hash.
+  const migrationLockKey = sanitizeStoreKey(`uuid_migrated_lock:${normalizedEmail}`);
+  let isMigrated = false;
+  try {
+    isMigrated = (await SecureStore.getItemAsync(migrationLockKey)) === 'true';
+  } catch (e) {}
+
+  if (isMigrated && persisted) {
+    // Legacy UUID preserved — skip re-derivation
+    try {
+      await SecureStore.setItemAsync('device_uuid', persisted);
+    } catch (e) {}
     return persisted;
   }
 

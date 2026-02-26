@@ -54,7 +54,15 @@
     "stillConnecting": "Masih terhubung...",
     "almostThere": "Hampir sampai...",
     "confirmDeleteAll": "Konfirmasi identitas untuk menghapus semua data",
-    "verifyingSession": "Memverifikasi sesi..."
+    "verifyingSession": "Memverifikasi sesi...",
+    "connectingWallet": "Menghubungkan dompet...",
+    "connectWallet": "Hubungkan Dompet",
+    "walletLoginDesc": "Masuk dengan dompet perangkat keras Solana Anda. Biometrik perangkat mengamankan akun Anda — tidak perlu kata sandi.",
+    "walletAuthFailed": "Autentikasi dompet gagal",
+    "haveExistingAccount": "Saya sudah punya akun",
+    "legacyMigrateTitle": "Tautkan akun yang ada ke dompet",
+    "migrateAndConnect": "Verifikasi & Hubungkan Dompet",
+    "backToNewUser": "← Pengguna baru? Langsung hubungkan dompet"
   },
   "home": {
     "backup": "Cadangan",
@@ -1109,7 +1117,11 @@
     "confirmingTransaction": "Mengonfirmasi transaksi...",
     "finalizing": "Menyelesaikan...",
     "mintedSuccessfully": "Tersertifikasi!",
-    "mintingFailed": "Sertifikasi gagal"
+    "mintingFailed": "Sertifikasi gagal",
+    "requestingTimestamp": "Meminta cap waktu tepercaya...",
+    "uploadingArweave": "Mengunggah ke penyimpanan permanen...",
+    "embeddingOriginal": "Menyematkan gambar asli...",
+    "mintingStandard": "Membuat catatan standar..."
   },
   "nftWelcome": {
     "title": "Sertifikasi asli Anda",

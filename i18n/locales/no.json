@@ -54,7 +54,15 @@
     "stillConnecting": "Fortsatt kontakt...",
     "almostThere": "Nesten framme...",
     "confirmDeleteAll": "Bekreft identitet for å slette alle data",
-    "verifyingSession": "Verifiserer økt..."
+    "verifyingSession": "Verifiserer økt...",
+    "connectingWallet": "Kobler til lommebok...",
+    "connectWallet": "Koble til Lommebok",
+    "walletLoginDesc": "Logg inn med din Solana maskinvare-lommebok. Enhetens biometri sikrer kontoen din — ingen passord er nødvendig.",
+    "walletAuthFailed": "Autentisering av lommebok mislyckades",
+    "haveExistingAccount": "Jeg har en eksisterende konto",
+    "legacyMigrateTitle": "Koble eksisterende konto til lommebok",
+    "migrateAndConnect": "Bekreft og Koble til Lommebok",
+    "backToNewUser": "← Ny bruker? Koble til lommebok direkte"
   },
   "home": {
     "backup": "Sikkerhetskopi",
@@ -1163,7 +1171,11 @@
     "confirmingTransaction": "Bekrefter transaksjon...",
     "finalizing": "Fullfører...",
     "mintedSuccessfully": "Sertifisert!",
-    "mintingFailed": "Sertifisering mislyktes"
+    "mintingFailed": "Sertifisering mislyktes",
+    "requestingTimestamp": "Ber om pålitelig tidsstempel...",
+    "uploadingArweave": "Laster opp til permanent lagring...",
+    "embeddingOriginal": "Bygger inn originalt bilde...",
+    "mintingStandard": "Oppretter standard oppføring..."
   },
   "rawMode": {
     "uploading": "Laster opp {{current}} av {{total}}: {{filename}}",

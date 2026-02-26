@@ -54,7 +54,15 @@
     "retryingConnection": "接続を再試行...",
     "stillConnecting": "まだつながっている...",
     "almostThere": "もう少しだ...",
-    "confirmDeleteAll": "全データ削除のため本人確認"
+    "confirmDeleteAll": "全データ削除のため本人確認",
+    "connectingWallet": "ウォレットに接続中...",
+    "connectWallet": "ウォレットを接続",
+    "walletLoginDesc": "Solanaハードウェアウォレットでサインインします。デバイスの生体認証でアカウントを保護します — パスワードは不要です。",
+    "walletAuthFailed": "ウォレット認証に失敗しました",
+    "haveExistingAccount": "すでにアカウントを持っています",
+    "legacyMigrateTitle": "既存のアカウントをウォレットにリンク",
+    "migrateAndConnect": "確認してウォレットを接続",
+    "backToNewUser": "← 新規ユーザーですか？直接ウォレットを接続"
   },
   "home": {
     "backup": "バックアップ",
@@ -714,7 +722,11 @@
     "onChainFailed": "オンチェーン変換に失敗: {{reason}}",
     "onChainTooComplex": "写真がオンチェーンSVGには複雑すぎます（>10KB）。よりシンプルな画像をお試しください。",
     "applyingWatermark": "透かしを適用中...",
-    "encryptingImage": "画像を暗号化中..."
+    "encryptingImage": "画像を暗号化中...",
+    "requestingTimestamp": "信頼できるタイムスタンプを要求中...",
+    "uploadingArweave": "永久ストレージにアップロード中...",
+    "embeddingOriginal": "オリジナル画像を埋め込み中...",
+    "mintingStandard": "標準レコードを作成中..."
   },
   "nftTransfer": {
     "title": "オリジナルを転送",

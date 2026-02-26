@@ -54,7 +54,15 @@
     "retryingConnection": "Ponowna próba połączenia...",
     "stillConnecting": "Wciąż się łączę...",
     "almostThere": "Już prawie...",
-    "confirmDeleteAll": "Potwierdź tożsamość aby usunąć wszystkie dane"
+    "confirmDeleteAll": "Potwierdź tożsamość aby usunąć wszystkie dane",
+    "connectingWallet": "Łączenie portfela...",
+    "connectWallet": "Połącz Portfel",
+    "walletLoginDesc": "Zaloguj się swoim portfelem sprzętowym Solana. Biometria Twojego urządzenia zabezpiecza Twoje konto — nie potrzeba hasła.",
+    "walletAuthFailed": "Uwierzytelnianie portfela nie powiodło się",
+    "haveExistingAccount": "Mam już konto",
+    "legacyMigrateTitle": "Połącz istniejące konto z portfelem",
+    "migrateAndConnect": "Zweryfikuj i Połącz Portfel",
+    "backToNewUser": "← Nowy użytkownik? Połącz portfel bezpośrednio"
   },
   "home": {
     "backup": "Kopia zapasowa",
@@ -714,7 +722,11 @@
     "onChainFailed": "Konwersja osadzona nie powiodła się: {{reason}}",
     "onChainTooComplex": "Zdjęcie zbyt złożone dla osadzonego SVG (>10KB). Spróbuj prostszego obrazu.",
     "applyingWatermark": "Dodawanie znaku wodnego...",
-    "encryptingImage": "Szyfrowanie obrazu..."
+    "encryptingImage": "Szyfrowanie obrazu...",
+    "requestingTimestamp": "Żądanie zaufanego znacznika czasu...",
+    "uploadingArweave": "Przesyłanie do trwałego magazynu...",
+    "embeddingOriginal": "Osadzanie oryginalnego obrazu...",
+    "mintingStandard": "Tworzenie standardowego rekordu..."
   },
   "nftTransfer": {
     "title": "Przekaż oryginał",

@@ -177,6 +177,18 @@ export const normalizeSeekerIdForStorage = (value) => {
   return trimmed || null;
 };
 
+// Sanitize a string for use as an expo-secure-store key.
+// Android SecureStore only allows alphanumeric characters, ".", "-", and "_".
+// We replace common illegal chars: ":" → "_", "@" → "_at_", and any other
+// non-allowed char → "_".
+export const sanitizeStoreKey = (key) => {
+  if (!key) return key;
+  return String(key)
+    .replace(/@/g, '_at_')
+    .replace(/:/g, '_')
+    .replace(/[^a-zA-Z0-9._-]/g, '_');
+};
+
 // Normalize for device UUID - just lowercase, keep as-is
 export const normalizeEmailForDeviceUuid = (value) => {
   const raw = value == null ? '' : String(value);

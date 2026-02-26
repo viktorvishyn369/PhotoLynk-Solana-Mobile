@@ -54,7 +54,15 @@
     "stillConnecting": "Joprojām savieno...",
     "almostThere": "Gandrīz ir...",
     "confirmDeleteAll": "Apstipriniet identitāti lai dzēstu visus datus",
-    "verifyingSession": "Sesijas pārbaude..."
+    "verifyingSession": "Sesijas pārbaude...",
+    "connectingWallet": "Maka savienošana...",
+    "connectWallet": "Pievienot Maku",
+    "walletLoginDesc": "Pierakstieties ar savu Solana aparatūras maku. Jūsu ierīces biometrija nodrošina jūsu kontu — parole nav nepieciešama.",
+    "walletAuthFailed": "Maka autentifikācija neizdevās",
+    "haveExistingAccount": "Man jau ir konts",
+    "legacyMigrateTitle": "Sasaistīt esošo kontu ar maku",
+    "migrateAndConnect": "Pārbaudīt un Pievienot Maku",
+    "backToNewUser": "← Jauns lietotājs? Pievienojiet maku tieši"
   },
   "home": {
     "backup": "Dublējums",
@@ -1163,7 +1171,11 @@
     "confirmingTransaction": "Darījuma apstiprināšana...",
     "finalizing": "Pabeigšana...",
     "mintedSuccessfully": "Sertificēts!",
-    "mintingFailed": "Sertificēšana neizdevās"
+    "mintingFailed": "Sertificēšana neizdevās",
+    "requestingTimestamp": "Pieprasīts uzticams laika zīmogs...",
+    "uploadingArweave": "Augšupielāde pastāvīgā krātuvē...",
+    "embeddingOriginal": "Oriģinālā attēla iegulšana...",
+    "mintingStandard": "Standarta ieraksta izveide..."
   },
   "rawMode": {
     "uploading": "Augšupielāde {{current}} no {{total}}: {{filename}}",

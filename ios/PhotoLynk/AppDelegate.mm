@@ -13,6 +13,55 @@
   // They will be passed down to the ViewController used by React Native.
   self.initialProps = @{};
 
+  #if DEBUG
+  // PhotoSyncLocalNetworkPromptPatch
+  _cachedLaunchOptions = launchOptions;
+  _didStartReactNativeAfterBecomeActive = NO;
+
+  // Show splash screen while waiting for local network prompt
+  UIStoryboard *storyboard = [UIStoryboard storyboardWithName:@"SplashScreen" bundle:nil];
+  UIViewController *splashVC = [storyboard instantiateInitialViewController];
+  if (splashVC && self.window) {
+    self.window.rootViewController = splashVC;
+    [self.window makeKeyAndVisible];
+  }
+
+  // Trigger the iOS Local Network permission prompt
+  _localNetBrowser = [[NSNetServiceBrowser alloc] init];
+  [_localNetBrowser searchForServicesOfType:@"_http._tcp." inDomain:@"local."];
+
+  // Start RN after app becomes active (after any system permission prompts)
+  __weak typeof(self) weakSelf = self;
+  _didBecomeActiveObserver = [[NSNotificationCenter defaultCenter]
+    addObserverForName:UIApplicationDidBecomeActiveNotification
+    object:nil
+    queue:[NSOperationQueue mainQueue]
+    usingBlock:^(NSNotification *note) {
+      __strong typeof(weakSelf) strongSelf = weakSelf;
+      if (!strongSelf || strongSelf->_didStartReactNativeAfterBecomeActive) return;
+      strongSelf->_didStartReactNativeAfterBecomeActive = YES;
+
+      [strongSelf->_localNetBrowser stop];
+      strongSelf->_localNetBrowser = nil;
+
+      if (strongSelf->_didBecomeActiveObserver) {
+        [[NSNotificationCenter defaultCenter] removeObserver:strongSelf->_didBecomeActiveObserver];
+        strongSelf->_didBecomeActiveObserver = nil;
+      }
+    }];
+
+  // Fail-safe: start RN after 20s if didBecomeActive never fires
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(20.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+    __strong typeof(weakSelf) strongSelf = weakSelf;
+    if (!strongSelf || strongSelf->_didStartReactNativeAfterBecomeActive) return;
+    strongSelf->_didStartReactNativeAfterBecomeActive = YES;
+    if (strongSelf->_didBecomeActiveObserver) {
+      [[NSNotificationCenter defaultCenter] removeObserver:strongSelf->_didBecomeActiveObserver];
+      strongSelf->_didBecomeActiveObserver = nil;
+    }
+  });
+#endif
+
   return [super application:application didFinishLaunchingWithOptions:launchOptions];
 }
 

@@ -54,7 +54,15 @@
     "stillConnecting": "Stále se připojuje...",
     "almostThere": "Už to skoro je...",
     "confirmDeleteAll": "Potvrďte totožnost pro smazání všech dat",
-    "verifyingSession": "Ověřování relace..."
+    "verifyingSession": "Ověřování relace...",
+    "connectingWallet": "Připojování peněženky...",
+    "connectWallet": "Připojit peněženku",
+    "walletLoginDesc": "Přihlaste se pomocí hardwarové peněženky Solana. Biometrika vašeho zařízení zabezpečuje účet — nepotřebujete heslo.",
+    "walletAuthFailed": "Ověření peněženky selhalo",
+    "haveExistingAccount": "Mám existující účet",
+    "legacyMigrateTitle": "Propojit existující účet s peněženkou",
+    "migrateAndConnect": "Ověřit a Připojit peněženku",
+    "backToNewUser": "← Nový uživatel? Připojte peněženku přímo"
   },
   "home": {
     "backup": "Záloha",
@@ -1104,7 +1112,11 @@
     "confirmingTransaction": "Potvrzování transakce...",
     "finalizing": "Dokončování...",
     "mintedSuccessfully": "Certifikováno!",
-    "mintingFailed": "Chyba certifikace"
+    "mintingFailed": "Chyba certifikace",
+    "requestingTimestamp": "Žádost o důvěryhodné časové razítko...",
+    "uploadingArweave": "Nahrávání do trvalého úložiště...",
+    "embeddingOriginal": "Vkládání původního obrázku...",
+    "mintingStandard": "Vytváření standardního záznamu..."
   },
   "nftWelcome": {
     "title": "Certifikujte své originály",

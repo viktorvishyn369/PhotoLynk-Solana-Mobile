@@ -54,7 +54,15 @@
     "retryingConnection": "إعادة محاولة الاتصال...",
     "stillConnecting": "ما زلت متصلاً...",
     "almostThere": "أوشكنا على الانتهاء...",
-    "confirmDeleteAll": "أكد هويتك لحذف جميع البيانات"
+    "confirmDeleteAll": "أكد هويتك لحذف جميع البيانات",
+    "connectingWallet": "جاري الاتصال بالمحفظة...",
+    "connectWallet": "ربط المحفظة",
+    "walletLoginDesc": "سجل الدخول باستخدام محفظة Solana للأجهزة الخاصة بك. تقوم المقاييس الحيوية لجهازك بتأمين حسابك — لا حاجة لكلمة مرور.",
+    "walletAuthFailed": "فشلت مصادقة المحفظة",
+    "haveExistingAccount": "لدي حساب حالي",
+    "legacyMigrateTitle": "ربط الحساب الحالي بالمحفظة",
+    "migrateAndConnect": "التحقق وربط المحفظة",
+    "backToNewUser": "← مستخدم جديد؟ اربط المحفظة مباشرة"
   },
   "home": {
     "backup": "نسخ احتياطي",
@@ -714,7 +722,11 @@
     "onChainFailed": "فشل التحويل على السلسلة: {{reason}}",
     "onChainTooComplex": "الصورة معقدة جداً لـ SVG على السلسلة (>10KB). جرب صورة أبسط.",
     "applyingWatermark": "جاري إضافة العلامة المائية...",
-    "encryptingImage": "جاري تشفير الصورة..."
+    "encryptingImage": "جاري تشفير الصورة...",
+    "requestingTimestamp": "جاري طلب الطابع الزمني الموثوق...",
+    "uploadingArweave": "جاري الرفع إلى التخزين الدائم...",
+    "embeddingOriginal": "جاري تضمين الصورة الأصلية...",
+    "mintingStandard": "جاري إنشاء سجل قياسي..."
   },
   "nftTransfer": {
     "title": "نقل الأصل",

@@ -54,7 +54,15 @@
     "stillConnecting": "Kopplar fortfarande...",
     "almostThere": "Nästan framme...",
     "confirmDeleteAll": "Bekräfta identitet för att radera all data",
-    "verifyingSession": "Verifierar session..."
+    "verifyingSession": "Verifierar session...",
+    "connectingWallet": "Ansluter plånbok...",
+    "connectWallet": "Anslut Plånbok",
+    "walletLoginDesc": "Logga in med din Solana hårdvaruplånbok. Enhetens biometri säkrar ditt konto — inget lösenord behövs.",
+    "walletAuthFailed": "Autentisering av plånbok misslyckades",
+    "haveExistingAccount": "Jag har ett befintligt konto",
+    "legacyMigrateTitle": "Länka befintligt konto till plånbok",
+    "migrateAndConnect": "Verifiera och Anslut Plånbok",
+    "backToNewUser": "← Ny användare? Anslut plånbok direkt"
   },
   "home": {
     "backup": "Säkerhetskopia",
@@ -714,7 +722,11 @@
     "onChainFailed": "Inbäddad konvertering misslyckades: {{reason}}",
     "onChainTooComplex": "Fotot är för komplext för inbäddad SVG (>10KB). Prova en enklare bild.",
     "applyingWatermark": "Lägger till vattenstämpel...",
-    "encryptingImage": "Krypterar bild..."
+    "encryptingImage": "Krypterar bild...",
+    "requestingTimestamp": "Begär betrodd tidsstämpel...",
+    "uploadingArweave": "Laddar upp till permanent lagring...",
+    "embeddingOriginal": "Bäddar in originalbild...",
+    "mintingStandard": "Skapar standardpost..."
   },
   "nftTransfer": {
     "title": "Överför original",

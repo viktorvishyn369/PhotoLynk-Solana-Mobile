@@ -641,7 +641,9 @@ const NFTPhotoPicker = ({
               />
 
               {/* ── 4. Privacy Level cards (matches desktop .nft-cert-options) ── */}
+              <View style={styles.mintCertSection}>
               <Text style={styles.mintSectionLabel}>{t('nftMint.certificationModeLabel')}</Text>
+              <Text style={styles.mintCertSectionDesc}>{t('nftMint.certificationModeDesc')}</Text>
               <View style={[styles.mintCardRow, { flexDirection: 'column', gap: 10 }]}>
                 <TouchableOpacity
                   style={[styles.mintCertCard, certificationMode === 'private' && styles.mintCertCardActive]}
@@ -652,6 +654,7 @@ const NFTPhotoPicker = ({
                     <Feather name="lock" size={16} color={certificationMode === 'private' ? '#a78bfa' : COLORS.textSecondary} />
                     <Text style={[styles.mintCertCardName, certificationMode === 'private' && { color: '#fff' }]}>{t('nftMint.privateCertifiedTitle')}</Text>
                   </View>
+                  <Text style={styles.mintCertCardDesc}>{t('nftMint.privateCertifiedDesc')}</Text>
                   <View style={styles.mintCertChips}>
                     <View style={styles.chipGreen}><Text style={styles.chipGreenText}>{t('nftMint.chipZeroKnowledge')}</Text></View>
                     <View style={styles.chipGreen}><Text style={styles.chipGreenText}>{t('nftMint.chipExifPreserved')}</Text></View>
@@ -668,12 +671,14 @@ const NFTPhotoPicker = ({
                     <Feather name="globe" size={16} color={certificationMode === 'public' ? '#a78bfa' : COLORS.textSecondary} />
                     <Text style={[styles.mintCertCardName, certificationMode === 'public' && { color: '#fff' }]}>{t('nftMint.publicCertifiedTitle')}</Text>
                   </View>
+                  <Text style={styles.mintCertCardDesc}>{t('nftMint.publicCertifiedDesc')}</Text>
                   <View style={styles.mintCertChips}>
                     <View style={styles.chipGreen}><Text style={styles.chipGreenText}>{t('nftMint.chipFullQuality')}</Text></View>
                     <View style={styles.chipAmber}><Text style={styles.chipAmberText}>{t('nftMint.chipPubliclyVisible')}</Text></View>
                     <View style={styles.chipGreen}><Text style={styles.chipGreenText}>{t('nftMint.chipTransferable')}</Text></View>
                   </View>
                 </TouchableOpacity>
+              </View>
               </View>
 
               {/* ── 5. Watermark toggle (public only, matches desktop #watermark-option) ── */}
@@ -1288,7 +1293,7 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   mintSectionLabel: {
-    fontSize: 10,
+    fontSize: 11,
     fontWeight: '600',
     color: '#555555',
     textTransform: 'uppercase',
@@ -1346,6 +1351,27 @@ const styles = StyleSheet.create({
     color: COLORS.accent,
     textAlign: 'center',
   },
+  // Grey card wrapper matching info/settings tab style
+  mintCertSection: {
+    backgroundColor: '#111114',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#252530',
+    padding: 14,
+    marginBottom: 10,
+  },
+  mintCertSectionDesc: {
+    fontSize: 11,
+    color: COLORS.textSecondary,
+    lineHeight: 16,
+    marginBottom: 10,
+  },
+  mintCertCardDesc: {
+    fontSize: 11,
+    color: COLORS.textSecondary,
+    lineHeight: 16,
+    marginBottom: 8,
+  },
   // Desktop-matching certification mode cards (.nft-cert-card)
   mintCertCard: {
     paddingVertical: 14,
@@ -1366,7 +1392,7 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   mintCertCardName: {
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: '600',
     color: '#e4e4e7',
   },
@@ -1382,7 +1408,7 @@ const styles = StyleSheet.create({
     borderRadius: 4,
   },
   chipGreenText: {
-    fontSize: 9,
+    fontSize: 10,
     fontWeight: '600',
     color: '#4ade80',
   },
@@ -1393,7 +1419,7 @@ const styles = StyleSheet.create({
     borderRadius: 4,
   },
   chipAmberText: {
-    fontSize: 9,
+    fontSize: 10,
     fontWeight: '600',
     color: '#fbbf24',
   },
@@ -1418,15 +1444,15 @@ const styles = StyleSheet.create({
     marginRight: 10,
   },
   mintToggleTitle: {
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '500',
     color: '#e4e4e7',
   },
   mintToggleDesc: {
-    fontSize: 10,
+    fontSize: 11,
     color: '#71717a',
     marginTop: 1,
-    lineHeight: 14,
+    lineHeight: 15,
   },
   // Desktop-matching cost display (.nft-cost-display)
   mintCostRow: {
@@ -1442,12 +1468,12 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   mintCostLabel: {
-    fontSize: 11,
+    fontSize: 12,
     color: '#71717a',
     fontWeight: '500',
   },
   mintCostValue: {
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: '700',
     color: '#14F195',
   },
@@ -1849,7 +1875,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     padding: 20,
-    paddingBottom: 20 + ANDROID_NAV_BAR_HEIGHT,
+    paddingBottom: 20,
     zIndex: 999,
   },
   welcomeModal: {
@@ -1858,7 +1884,7 @@ const styles = StyleSheet.create({
     padding: 16,
     width: '100%',
     maxWidth: 380,
-    maxHeight: SCREEN_HEIGHT - 60 - ANDROID_NAV_BAR_HEIGHT,
+    maxHeight: SCREEN_HEIGHT - 60,
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.08)',
   },

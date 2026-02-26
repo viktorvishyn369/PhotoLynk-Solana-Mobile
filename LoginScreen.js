@@ -593,7 +593,7 @@ const styles = StyleSheet.create({
     flexGrow: 1,
     paddingHorizontal: scaleSpacing(20),
     paddingTop: Platform.OS === 'ios' ? scaleSpacing(20) : (StatusBar.currentHeight || 24) + scaleSpacing(12),
-    paddingBottom: Platform.OS === 'android' ? ANDROID_NAV_BAR_HEIGHT + scaleSpacing(30) : scaleSpacing(30),
+    paddingBottom: scaleSpacing(30),
   },
   // Header
   header: {

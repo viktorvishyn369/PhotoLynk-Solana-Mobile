@@ -54,7 +54,15 @@
     "stillConnecting": "Vis dar jungiasi...",
     "almostThere": "Beveik ten...",
     "confirmDeleteAll": "Patvirtinkite tapatybę kad ištrintumėte visus duomenis",
-    "verifyingSession": "Tikrinama sesija..."
+    "verifyingSession": "Tikrinama sesija...",
+    "connectingWallet": "Jungiama piniginė...",
+    "connectWallet": "Prijungti Piniginę",
+    "walletLoginDesc": "Prisijunkite su savo Solana aparatine pinigine. Jūsų įrenginio biometrija apsaugo jūsų paskyrą — slaptažodžio nereikia.",
+    "walletAuthFailed": "Piniginės autentifikavimas nepavyko",
+    "haveExistingAccount": "Turiu esamą paskyrą",
+    "legacyMigrateTitle": "Susieti esamą paskyrą su pinigine",
+    "migrateAndConnect": "Patvirtinti ir Prijungti Piniginę",
+    "backToNewUser": "← Naujas vartotojas? Prijunkite piniginę tiesiogiai"
   },
   "home": {
     "backup": "Atsarginė kopija",
@@ -1163,7 +1171,11 @@
     "confirmingTransaction": "Patvirtinama operacija...",
     "finalizing": "Baigiama...",
     "mintedSuccessfully": "Sertifikuota!",
-    "mintingFailed": "Sertifikavimas nepavyko"
+    "mintingFailed": "Sertifikavimas nepavyko",
+    "requestingTimestamp": "Prašomas patikimas laiko žymeklis...",
+    "uploadingArweave": "Įkeliama į nuolatinę saugyklą...",
+    "embeddingOriginal": "Įterpiamas originalus vaizdas...",
+    "mintingStandard": "Kuriamas standartinis įrašas..."
   },
   "rawMode": {
     "uploading": "Įkeliama {{current}} iš {{total}}: {{filename}}",

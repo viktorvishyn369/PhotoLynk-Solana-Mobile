@@ -483,7 +483,7 @@ const styles = StyleSheet.create({
     flexGrow: 1,
     paddingHorizontal: scaleSpacing(16),
     paddingTop: scaleSpacing(4),
-    paddingBottom: Platform.OS === 'android' ? ANDROID_NAV_BAR_HEIGHT + scaleSpacing(16) : scaleSpacing(20),
+    paddingBottom: scaleSpacing(20),
     justifyContent: 'space-between',
   },
   sectionsContainer: {

@@ -52,6 +52,7 @@ import {
   isValidUrl,
   computeFileIdentity,
   getMimeFromFilename,
+  sanitizeStoreKey,
 } from './utils';
 import { computeAndroidHardwareId, computeIosHardwareId } from './deviceId';
 import { makeHistoryKey, loadRestoreHistory, saveRestoreHistory, clearRestoreHistory } from './restoreHistory';
@@ -167,6 +168,7 @@ import { startSimilarShotsReviewCore, buildDefaultSimilarSelection as buildDefau
 import { buildResultMessage, checkTierAvailability } from './uiHelpers';
 import NFTOperations, { checkStealthCloudEligibility } from './nftOperations';
 import * as WalletAdapter from './WalletAdapter';
+import { handleWalletAuth, isWalletAuthMode, setWalletAuthMode, deriveWalletEmail, deriveWalletPassword, reAuthWithWallet, migrateFromLegacy, isLegacyMigrated, getMasterKeyCredentials, WALLET_EMAIL_DOMAIN } from './walletAuth';
 import NFTPhotoPicker from './NFTPhotoPicker';
 import NFTGallery from './NFTGallery';
 import NFTTransferModal from './NFTTransferModal';
@@ -313,6 +315,13 @@ export default function App() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [termsAccepted, setTermsAccepted] = useState(false);
+  const [showWalletLogin, setShowWalletLogin] = useState(false); // Wallet login overlay visible
+  const [walletAuthLoading, setWalletAuthLoading] = useState(false); // Wallet auth in progress
+  const [walletAuthStatus, setWalletAuthStatus] = useState(''); // Status message for wallet auth
+  const [walletAuthError, setWalletAuthError] = useState(''); // Error message for wallet auth
+  const [showLegacyFields, setShowLegacyFields] = useState(false); // Show legacy email+password fields for migration
+  const [legacyEmail, setLegacyEmail] = useState(''); // Legacy email for migration
+  const [legacyPassword, setLegacyPassword] = useState(''); // Legacy password for migration
   const [serverType, setServerType] = useState('stealthcloud'); // 'local' | 'remote' | 'stealthcloud'
   const [localHost, setLocalHost] = useState('');
   const [remoteHost, setRemoteHost] = useState('');
@@ -515,8 +524,8 @@ export default function App() {
         await SecureStore.setItemAsync('local_host', serverIp);
         await SecureStore.setItemAsync('server_type', 'local');
 
-        // On auth screen (login/register): just set IP, user must press login button
-        if (view === 'auth') {
+        // On wallet login overlay (not yet authenticated): just set IP, user will login via wallet
+        if (showWalletLogin || !token) {
           showDarkAlert(t('login.connected'), t('login.serverIpSetTo', { ip: serverIp + ':' + parsed.port }));
           return;
         }
@@ -536,10 +545,21 @@ export default function App() {
           try {
             console.log('[QR] Sending pairing request to:', `http://${serverIp}:${parsed.pairingPort}/api/pair`);
             const pairingUrl = `http://${serverIp}:${parsed.pairingPort}/api/pair`;
+            // Include device_uuid so desktop uses the actual UUID (critical for migrated users
+            // where email:password no longer derives the correct legacy UUID)
+            const pairDeviceUuid = await getDeviceUUID(pairEmail, pairPassword);
+            // Include legacy MK creds so desktop derives the correct PBKDF2 master key
+            // for StealthCloud decryption (migrated users use original legacy credentials)
+            const mkCreds = await getMasterKeyCredentials();
+            const pairingBody = { email: pairEmail, password: pairPassword, token: parsed.token, device_uuid: pairDeviceUuid };
+            if (mkCreds) {
+              pairingBody.mk_email = mkCreds.email;
+              pairingBody.mk_password = mkCreds.password;
+            }
             const response = await fetch(pairingUrl, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ email: pairEmail, password: pairPassword, token: parsed.token }),
+              body: JSON.stringify(pairingBody),
             });
             const result = await response.json();
             if (result.success) {
@@ -2691,6 +2711,10 @@ export default function App() {
             'Computing integrity proof...': t('nftStatus.computingIntegrity'),
             'Building metadata...': t('nftStatus.buildingMetadata'),
             'Creating NFT on Solana...': t('nftStatus.creatingOnSolana'),
+            'Requesting trusted timestamp (RFC 3161)...': t('nftStatus.requestingTimestamp'),
+            'Uploading to Arweave (permanent)...': t('nftStatus.uploadingArweave'),
+            'Embedding original image...': t('nftStatus.embeddingOriginal'),
+            'Minting standard NFT...': t('nftStatus.mintingStandard'),
             'Minting compressed NFT...': t('nftStatus.mintingCompressed'),
             'Signing transaction...': t('nftStatus.signingTransaction'),
             'Confirming transaction...': t('nftStatus.confirmingTransaction'),
@@ -2715,13 +2739,8 @@ export default function App() {
         // Invalidate DAS cache so next scan picks up the new NFT
         NFTOperations.invalidateDasCache();
         
-        // Show success — simple certification confirmation
-        const addressLabel = t('nftMint.certId');
-        
-        showDarkAlert(
-          t('nftMint.certifiedSuccess'),
-          `${t('nftMint.photoCertified', { name })}\n\n${addressLabel}:\n${result.mintAddress?.slice(0, 20)}...\n\n${t('nftMint.viewInOriginalsAndProofs')}`
-        );
+        // Show checkmark success popup for consistency with backup/sync/cleanup
+        showCompletionTickBriefly(`${t('nftMint.certifiedSuccess')}\n${name}`);
       } else {
         const errMsg = result.error || t('alerts.error');
         const translatedErr = errMsg.includes('too complex for on-chain') ? t('nftStatus.onChainTooComplex') : errMsg.includes('On-chain compression failed') ? t('nftStatus.onChainFailed', { reason: errMsg.replace(/^On-chain compression failed:\s*/, '') }) : errMsg;
@@ -3903,13 +3922,13 @@ export default function App() {
       setGlassModeEnabled(savedGlassMode === 'true');
     }
 
-    // If first launch after reinstall, skip auto-login and show register screen
+    // If first launch after reinstall, show wallet login overlay on home
     if (isFirstLaunchAfterReinstall) {
-      console.log('[FirstLaunch] Skipping auto-login - showing register screen');
+      console.log('[FirstLaunch] Skipping auto-login - showing wallet login');
       setIsFirstRun(true);
-      setAuthMode('register');
       setStatus('');
-      setView('auth');
+      setView('home');
+      setShowWalletLogin(true);
       return;
     }
 
@@ -3939,7 +3958,7 @@ export default function App() {
         if (cached) {
           uuid = cached;
           try {
-            await SecureStore.setItemAsync(`device_uuid_v3:${storedEmail}`, cached);
+            await SecureStore.setItemAsync(sanitizeStoreKey(`device_uuid_v3:${storedEmail}`), cached);
           } catch (e) {
             // ignore
           }
@@ -3976,7 +3995,12 @@ export default function App() {
         // Token valid or network error with offline access
         if (validationResult.savedPassword) {
           setStatus(t('status.securingSession'));
-          await cacheStealthCloudMasterKey(storedEmail, validationResult.savedPassword);
+          const mkCreds = await getMasterKeyCredentials();
+          if (mkCreds) {
+            await cacheStealthCloudMasterKey(mkCreds.email, mkCreds.password);
+          } else {
+            await cacheStealthCloudMasterKey(storedEmail, validationResult.savedPassword);
+          }
         }
         setTokenSafe(storedToken);
         if (storedUserId) setUserId(parseInt(storedUserId));
@@ -3997,10 +4021,11 @@ export default function App() {
     });
 
     if (reauthResult.biometricCancelled) {
-      console.log('[Auth] Showing login screen after biometric cancel');
+      console.log('[Auth] Biometric cancelled - showing wallet login overlay');
       if (storedEmail && !email) setEmail(storedEmail);
       setStatus('');
-      setView('auth');
+      setView('home');
+      setShowWalletLogin(true);
       return;
     }
 
@@ -4010,7 +4035,12 @@ export default function App() {
       if (storedEmail && !email) setEmail(storedEmail);
 
       setStatus(t('status.securingSession'));
-      await cacheStealthCloudMasterKey(storedEmail, reauthResult.savedPassword);
+      const mkCreds2 = await getMasterKeyCredentials();
+      if (mkCreds2) {
+        await cacheStealthCloudMasterKey(mkCreds2.email, mkCreds2.password);
+      } else {
+        await cacheStealthCloudMasterKey(storedEmail, reauthResult.savedPassword);
+      }
 
       setTokenSafe(reauthResult.token);
       setStatus('');
@@ -4018,16 +4048,134 @@ export default function App() {
       return;
     }
 
-    // Case 3: No token and no credentials - require manual login
+    // Case 3: No token and no credentials - show wallet login overlay
     if (storedEmail && !email) setEmail(storedEmail);
-    console.log('No valid session - requiring manual login');
+    console.log('No valid session - showing wallet login overlay');
     setStatus('');
-    setView('auth');
+    setView('home');
+    setShowWalletLogin(true);
     } catch (e) {
       console.error('AutoLogin: checkLogin failed', e?.message || e);
       setLoadingSafe(false);
       setStatus('');
-      setView('auth');
+      setView('home');
+      setShowWalletLogin(true);
+    }
+  };
+
+  /**
+   * Performs wallet-based login via MWA hardware wallet.
+   * Called from the wallet login overlay. Connects wallet, auto-registers
+   * if needed, stores credentials, caches master key, and dismisses overlay.
+   */
+  const performWalletLogin = async () => {
+    setWalletAuthLoading(true);
+    setWalletAuthError('');
+    setWalletAuthStatus(t('auth.connectingWallet') || 'Connecting wallet...');
+
+    try {
+      const result = await handleWalletAuth({
+        serverType,
+        localHost,
+        remoteHost,
+        onStatus: (msg) => setWalletAuthStatus(msg),
+      });
+
+      if (result.success) {
+        // Auth successful — update app state
+        setTokenSafe(result.token);
+        if (result.userId) setUserId(result.userId);
+        if (result.email) setEmail(result.email);
+        if (result.deviceId) setDeviceUuid(result.deviceId);
+        if (result.walletAddress) setQsWalletAddress(result.walletAddress);
+
+        // Restore saved settings
+        const savedAutoUpload = await SecureStore.getItemAsync('auto_upload_enabled');
+        if (AUTO_UPLOAD_FEATURE_ENABLED && savedAutoUpload === 'true') {
+          setAutoUploadEnabledSafe(true);
+        } else {
+          setAutoUploadEnabledSafe(false);
+          try { await SecureStore.setItemAsync('auto_upload_enabled', 'false'); } catch (e) {}
+        }
+
+        // Dismiss overlay
+        setShowWalletLogin(false);
+        setWalletAuthLoading(false);
+        setWalletAuthStatus('');
+        setWalletAuthError('');
+        setView('home');
+      } else if (result.userCancelled) {
+        // User cancelled wallet prompt — stay on overlay
+        setWalletAuthLoading(false);
+        setWalletAuthStatus('');
+      } else {
+        // Error
+        setWalletAuthLoading(false);
+        setWalletAuthError(result.error || t('alerts.connectionFailed') || 'Connection failed');
+        setWalletAuthStatus('');
+      }
+    } catch (e) {
+      setWalletAuthLoading(false);
+      setWalletAuthError(e?.message || 'Wallet authentication failed');
+      setWalletAuthStatus('');
+    }
+  };
+
+  /**
+   * Performs legacy email+password → wallet migration.
+   * Verifies old credentials, connects wallet, preserves legacy UUID,
+   * registers wallet account on server, switches to wallet auth.
+   */
+  const performLegacyMigration = async () => {
+    if (!legacyEmail?.trim() || !legacyPassword?.trim()) {
+      setWalletAuthError(t('auth.invalidEmail') || 'Please enter your email and password');
+      return;
+    }
+
+    setWalletAuthLoading(true);
+    setWalletAuthError('');
+    setWalletAuthStatus(t('auth.verifyingSession') || 'Verifying account...');
+
+    try {
+      const result = await migrateFromLegacy({
+        legacyEmail: legacyEmail.trim(),
+        legacyPassword: legacyPassword.trim(),
+        serverType,
+        localHost,
+        remoteHost,
+        onStatus: (msg) => setWalletAuthStatus(msg),
+      });
+
+      if (result.success) {
+        // Migration successful — update app state
+        setTokenSafe(result.token);
+        if (result.userId) setUserId(result.userId);
+        if (result.email) setEmail(result.email);
+        if (result.deviceId) setDeviceUuid(result.deviceId);
+        if (result.walletAddress) setQsWalletAddress(result.walletAddress);
+
+        // Dismiss overlay + clear legacy fields
+        setShowWalletLogin(false);
+        setShowLegacyFields(false);
+        setLegacyEmail('');
+        setLegacyPassword('');
+        setWalletAuthLoading(false);
+        setWalletAuthStatus('');
+        setWalletAuthError('');
+        setView('home');
+      } else if (result.userCancelled) {
+        // User cancelled wallet prompt — stay on overlay
+        setWalletAuthLoading(false);
+        setWalletAuthStatus('');
+      } else {
+        setWalletAuthLoading(false);
+        setWalletAuthError(result.error || t('auth.loginFailed') || 'Migration failed');
+        setWalletAuthStatus('');
+      }
+    } catch (e) {
+      setWalletAuthLoading(false);
+      setWalletAuthError(e?.message || 'Migration failed');
+      setWalletAuthStatus('');
     }
   };
 
@@ -4295,7 +4443,12 @@ export default function App() {
 
         // Step 4: Finalizing (cache master key)
         setAuthLoadingLabel(t('common.finalizing'));
-        await cacheStealthCloudMasterKey(normalizedEmail, effectivePassword);
+        const mkCredsLogin = await getMasterKeyCredentials();
+        if (mkCredsLogin) {
+          await cacheStealthCloudMasterKey(mkCredsLogin.email, mkCredsLogin.password);
+        } else {
+          await cacheStealthCloudMasterKey(normalizedEmail, effectivePassword);
+        }
         await new Promise(resolve => setTimeout(resolve, 500));
 
         setTokenSafe(token);
@@ -4338,7 +4491,12 @@ export default function App() {
 
         // Step 4: Finalizing (cache master key)
         setAuthLoadingLabel(t('common.finalizing'));
-        await cacheStealthCloudMasterKey(normalizedEmail, effectivePassword);
+        const mkCredsReg = await getMasterKeyCredentials();
+        if (mkCredsReg) {
+          await cacheStealthCloudMasterKey(mkCredsReg.email, mkCredsReg.password);
+        } else {
+          await cacheStealthCloudMasterKey(normalizedEmail, effectivePassword);
+        }
         await new Promise(resolve => setTimeout(resolve, 500));
 
         setTokenSafe(token);
@@ -4577,8 +4735,12 @@ export default function App() {
     setStatus(t('status.idle'));
     setLoadingSafe(false);
     
-    // Change view last
-    setView('auth');
+    // Clear wallet auth mode on logout
+    await setWalletAuthMode(false);
+
+    // Show wallet login overlay instead of old auth screen
+    setView('home');
+    setShowWalletLogin(true);
     setAuthLoadingLabel(t('auth.signingIn'));
     
     // DO NOT reset abort flag here - it must stay true until user starts a new operation
@@ -4987,7 +5149,8 @@ export default function App() {
     );
   }
 
-  if (view === 'auth') {
+  /* Old LoginScreen hidden — wallet-based auth replaces it. Logic preserved for future development. */
+  if (false && view === 'auth') {
     return (
       <SafeAreaView style={styles.container}>
         <StatusBar barStyle="light-content" backgroundColor="#060608" />
@@ -5059,15 +5222,15 @@ export default function App() {
       )}
 
       {customAlert && (
-        <View style={[styles.overlay, { backgroundColor: 'rgba(0,0,0,0.97)' }]}>
-          <View style={[styles.overlayCard, { backgroundColor: '#000000', maxWidth: isTablet ? 450 : 320 }]}>
+        <View style={[styles.overlay, glassModeEnabled && styles.overlayGlass]}>
+          <View style={[styles.overlayCard, glassModeEnabled && styles.overlayCardGlass, { backgroundColor: glassModeEnabled ? 'rgba(30, 30, 30, 0.9)' : '#1E1E1E', maxWidth: isTablet ? 480 : 340 }]}>
             <Text style={[styles.overlayTitle, { fontSize: scale(18), marginBottom: scaleSpacing(8) }]}>{customAlert.title}</Text>
-            <Text style={{ color: '#FFFFFF', fontSize: scale(14), textAlign: 'center', marginBottom: scaleSpacing(20), lineHeight: scale(20) }}>{customAlert.message}</Text>
+            <Text style={{ color: '#CCC', fontSize: scale(14), textAlign: 'center', marginBottom: scaleSpacing(14), lineHeight: scale(20) }}>{customAlert.message}</Text>
             <View style={{ flexDirection: 'row', justifyContent: 'center', gap: scaleSpacing(12), flexWrap: 'wrap' }}>
               {(customAlert.buttons || []).map((btn, idx) => (
                 <TouchableOpacity
                   key={idx}
-                  style={[styles.overlayBtnPrimary, { paddingVertical: scaleSpacing(10), paddingHorizontal: scaleSpacing(16), minWidth: isTablet ? 100 : 70 }]}
+                  style={[styles.overlayBtnPrimary, glassModeEnabled && styles.overlayBtnPrimaryGlass, { paddingVertical: scaleSpacing(10), paddingHorizontal: scaleSpacing(24), minWidth: isTablet ? 110 : 90 }]}
                   onPress={() => { closeDarkAlert(); if (btn.onPress) btn.onPress(); }}>
                   <Text style={styles.overlayBtnPrimaryText} numberOfLines={1}>{btn.text}</Text>
                 </TouchableOpacity>
@@ -5124,7 +5287,7 @@ export default function App() {
                 <View style={{width: isTablet ? 280 : 240, height: isTablet ? 280 : 240, borderWidth: 2, borderColor: '#03E1FF', borderRadius: scaleSpacing(16)}} />
               </View>
               {/* Bottom bar with cancel button */}
-              <View style={{paddingBottom: Platform.OS === 'android' ? ANDROID_NAV_BAR_HEIGHT + scaleSpacing(16) : scaleSpacing(50), paddingHorizontal: scaleSpacing(20), backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center'}}>
+              <View style={{paddingBottom: scaleSpacing(16), paddingHorizontal: scaleSpacing(20), backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center'}}>
                 <TouchableOpacity
                   style={{paddingVertical: scaleSpacing(14), paddingHorizontal: scaleSpacing(50), backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: scaleSpacing(12), borderWidth: 1, borderColor: 'rgba(255,255,255,0.3)'}}
                   onPress={() => setQrScannerOpen(false)}>
@@ -5144,7 +5307,7 @@ export default function App() {
                 </Text>
               </View>
               {/* Bottom bar with cancel button */}
-              <View style={{position: 'absolute', bottom: 0, left: 0, right: 0, paddingBottom: Platform.OS === 'android' ? ANDROID_NAV_BAR_HEIGHT + scaleSpacing(16) : scaleSpacing(50), paddingHorizontal: scaleSpacing(20), alignItems: 'center'}}>
+              <View style={{position: 'absolute', bottom: 0, left: 0, right: 0, paddingBottom: scaleSpacing(16), paddingHorizontal: scaleSpacing(20), alignItems: 'center'}}>
                 <TouchableOpacity
                   style={{paddingVertical: scaleSpacing(14), paddingHorizontal: scaleSpacing(50), backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: scaleSpacing(12), borderWidth: 1, borderColor: 'rgba(255,255,255,0.3)'}}
                   onPress={() => setQrScannerOpen(false)}>
@@ -5379,7 +5542,8 @@ export default function App() {
                   if (newServerType) { try { setServerType(newServerType); } catch (e) {} }
                   await handleAuth('login', { email: savedEmail, password: savedPassword, serverType: newServerType || serverType });
                 } else {
-                  setView('auth');
+                  // No saved credentials — show wallet login overlay
+                  setShowWalletLogin(true);
                 }
               } catch (e) {
                 showDarkAlert(t('alerts.error'), e.message || t('alerts.connectionFailed'));
@@ -5466,7 +5630,7 @@ export default function App() {
               <View style={{flex: 1, justifyContent: 'center', alignItems: 'center'}}>
                 <View style={{width: isTablet ? 280 : 240, height: isTablet ? 280 : 240, borderWidth: 2, borderColor: '#03E1FF', borderRadius: scaleSpacing(16)}} />
               </View>
-              <View style={{paddingBottom: Platform.OS === 'android' ? ANDROID_NAV_BAR_HEIGHT + scaleSpacing(16) : scaleSpacing(50), paddingHorizontal: scaleSpacing(20), backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center'}}>
+              <View style={{paddingBottom: scaleSpacing(16), paddingHorizontal: scaleSpacing(20), backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center'}}>
                 <TouchableOpacity
                   style={{paddingVertical: scaleSpacing(14), paddingHorizontal: scaleSpacing(50), backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: scaleSpacing(12), borderWidth: 1, borderColor: 'rgba(255,255,255,0.3)'}}
                   onPress={() => setQrScannerOpen(false)}>
@@ -5484,7 +5648,7 @@ export default function App() {
                   {t('qrScanner.instruction')}
                 </Text>
               </View>
-              <View style={{position: 'absolute', bottom: 0, left: 0, right: 0, paddingBottom: Platform.OS === 'android' ? ANDROID_NAV_BAR_HEIGHT + scaleSpacing(16) : scaleSpacing(50), paddingHorizontal: scaleSpacing(20), alignItems: 'center'}}>
+              <View style={{position: 'absolute', bottom: 0, left: 0, right: 0, paddingBottom: scaleSpacing(16), paddingHorizontal: scaleSpacing(20), alignItems: 'center'}}>
                 <TouchableOpacity
                   style={{paddingVertical: scaleSpacing(14), paddingHorizontal: scaleSpacing(50), backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: scaleSpacing(12), borderWidth: 1, borderColor: 'rgba(255,255,255,0.3)'}}
                   onPress={() => setQrScannerOpen(false)}>
@@ -5649,7 +5813,7 @@ export default function App() {
             </View>
 
             {/* Bottom action bar */}
-            <View style={{ backgroundColor: 'rgba(0,0,0,0.95)', paddingBottom: Platform.OS === 'ios' ? 34 : 60, paddingTop: 12, paddingHorizontal: 16 }}>
+            <View style={{ backgroundColor: 'rgba(0,0,0,0.95)', paddingBottom: 16, paddingTop: 12, paddingHorizontal: 16 }}>
               {/* Toggle selection button */}
               <TouchableOpacity
                 style={{ backgroundColor: isSelected ? '#333' : '#FF3B30', paddingVertical: 14, borderRadius: 12, marginBottom: 10, alignItems: 'center', paddingHorizontal: 8 }}
@@ -6337,7 +6501,7 @@ export default function App() {
           </ScrollView>
 
           {/* Bottom action bar */}
-          <View style={{ backgroundColor: 'rgba(0,0,0,0.95)', paddingBottom: Platform.OS === 'ios' ? 34 : 60, paddingTop: 12, paddingHorizontal: 16 }}>
+          <View style={{ backgroundColor: 'rgba(0,0,0,0.95)', paddingBottom: 16, paddingTop: 12, paddingHorizontal: 16 }}>
             <View style={{ flexDirection: 'row', gap: 10 }}>
               <TouchableOpacity
                 style={{ flex: 1, backgroundColor: '#222', paddingVertical: 14, borderRadius: 12, alignItems: 'center', borderWidth: 1, borderColor: '#444' }}
@@ -6417,15 +6581,15 @@ export default function App() {
       })()}
 
       {customAlert && (
-        <View style={[styles.overlay, { backgroundColor: 'rgba(0,0,0,0.97)', zIndex: 9999 }]}>
-          <View style={[styles.overlayCard, { backgroundColor: '#000000', maxWidth: isTablet ? 450 : 320 }]}>
+        <View style={[styles.overlay, glassModeEnabled && styles.overlayGlass, { zIndex: 9999 }]}>
+          <View style={[styles.overlayCard, glassModeEnabled && styles.overlayCardGlass, { backgroundColor: glassModeEnabled ? 'rgba(30, 30, 30, 0.9)' : '#1E1E1E', maxWidth: isTablet ? 480 : 340 }]}>
             <Text style={[styles.overlayTitle, { fontSize: scale(18), marginBottom: scaleSpacing(8) }]}>{customAlert.title}</Text>
-            <Text style={{ color: '#FFFFFF', fontSize: scale(14), textAlign: 'center', marginBottom: scaleSpacing(20), lineHeight: scale(20) }}>{customAlert.message}</Text>
+            <Text style={{ color: '#CCC', fontSize: scale(14), textAlign: 'center', marginBottom: scaleSpacing(14), lineHeight: scale(20) }}>{customAlert.message}</Text>
             <View style={{ flexDirection: 'row', justifyContent: 'center', gap: scaleSpacing(12), flexWrap: 'wrap' }}>
               {(customAlert.buttons || []).map((btn, idx) => (
                 <TouchableOpacity
                   key={idx}
-                  style={[styles.overlayBtnPrimary, { paddingVertical: scaleSpacing(10), paddingHorizontal: scaleSpacing(16), minWidth: isTablet ? 100 : 70 }]}
+                  style={[styles.overlayBtnPrimary, glassModeEnabled && styles.overlayBtnPrimaryGlass, { paddingVertical: scaleSpacing(10), paddingHorizontal: scaleSpacing(24), minWidth: isTablet ? 110 : 90 }]}
                   onPress={() => {
                     closeDarkAlert();
                     if (btn.onPress) btn.onPress();
@@ -6559,6 +6723,259 @@ export default function App() {
         onTransferComplete={handleNftTransferComplete}
         authToken={token}
       />
+
+      {/* ============================================================ */}
+      {/* Wallet Login Overlay — branded hardware wallet auth           */}
+      {/* Appears on app startup when no valid session exists.          */}
+      {/* Replaces old LoginScreen (which is preserved but hidden).     */}
+      {/* ============================================================ */}
+      {showWalletLogin && (
+        <View style={{
+          position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+          backgroundColor: 'rgba(0,0,0,0.97)',
+          justifyContent: 'center', alignItems: 'center',
+          zIndex: 10000,
+        }}>
+          <View style={{
+            width: '88%', maxWidth: isTablet ? 440 : 360,
+            backgroundColor: '#0A0A0C',
+            borderRadius: scaleSpacing(24),
+            borderWidth: 1, borderColor: 'rgba(3,225,255,0.15)',
+            paddingVertical: scaleSpacing(36),
+            paddingHorizontal: scaleSpacing(28),
+            alignItems: 'center',
+          }}>
+            {/* App Icon */}
+            <Image
+              source={require('./assets/splash-icon.png')}
+              style={{ width: scale(72), height: scale(72), marginBottom: scaleSpacing(16), borderRadius: scale(16) }}
+              resizeMode="contain"
+            />
+
+            {/* App Name */}
+            <Text style={{
+              color: '#FFFFFF', fontSize: scale(24), fontWeight: '800',
+              letterSpacing: 1, marginBottom: scaleSpacing(4),
+            }}>
+              {APP_DISPLAY_NAME}
+            </Text>
+
+            {/* Subtitle */}
+            <Text style={{
+              color: '#03E1FF', fontSize: scale(13), fontWeight: '600',
+              marginBottom: scaleSpacing(24), letterSpacing: 0.5,
+            }}>
+              SOLANA SEEKER
+            </Text>
+
+            {/* Divider */}
+            <View style={{
+              width: '100%', height: 1,
+              backgroundColor: 'rgba(255,255,255,0.06)',
+              marginBottom: scaleSpacing(24),
+            }} />
+
+            {/* Description */}
+            <Text style={{
+              color: '#AAA', fontSize: scale(13), textAlign: 'center',
+              lineHeight: scale(20), marginBottom: scaleSpacing(28),
+              paddingHorizontal: scaleSpacing(4),
+            }}>
+              {t('auth.walletLoginDesc') || 'Sign in with your Solana hardware wallet. Your device biometrics secure your account — no password needed.'}
+            </Text>
+
+            {/* Error message */}
+            {walletAuthError ? (
+              <View style={{
+                backgroundColor: 'rgba(255,59,48,0.12)',
+                borderRadius: scaleSpacing(10),
+                paddingVertical: scaleSpacing(10),
+                paddingHorizontal: scaleSpacing(14),
+                marginBottom: scaleSpacing(18),
+                width: '100%',
+              }}>
+                <Text style={{
+                  color: '#FF6B6B', fontSize: scale(12), textAlign: 'center',
+                  lineHeight: scale(17),
+                }}>
+                  {walletAuthError}
+                </Text>
+              </View>
+            ) : null}
+
+            {/* Auth actions */}
+            {walletAuthLoading ? (
+              <View style={{ alignItems: 'center', marginBottom: scaleSpacing(8) }}>
+                <GradientSpinner size={isTablet ? 56 : 44} />
+                <Text style={{
+                  color: '#888', fontSize: scale(12), marginTop: scaleSpacing(12),
+                  textAlign: 'center',
+                }}>
+                  {walletAuthStatus || t('common.loading') || 'Loading...'}
+                </Text>
+              </View>
+            ) : showLegacyFields ? (
+              /* ── Legacy migration mode ── */
+              <View style={{ width: '100%' }}>
+                <Text style={{
+                  color: '#CCC', fontSize: scale(13), fontWeight: '600',
+                  marginBottom: scaleSpacing(14), textAlign: 'center',
+                }}>
+                  {t('auth.legacyMigrateTitle') || 'Link existing account to wallet'}
+                </Text>
+
+                {/* Legacy Email */}
+                <TextInput
+                  style={{
+                    backgroundColor: 'rgba(255,255,255,0.07)',
+                    borderRadius: scaleSpacing(10),
+                    paddingVertical: scaleSpacing(12),
+                    paddingHorizontal: scaleSpacing(14),
+                    color: '#FFF', fontSize: scale(14),
+                    marginBottom: scaleSpacing(10),
+                    borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
+                  }}
+                  placeholder={t('auth.email') || 'Email'}
+                  placeholderTextColor="#666"
+                  value={legacyEmail}
+                  onChangeText={setLegacyEmail}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  keyboardType="email-address"
+                  textContentType="emailAddress"
+                />
+
+                {/* Legacy Password */}
+                <TextInput
+                  style={{
+                    backgroundColor: 'rgba(255,255,255,0.07)',
+                    borderRadius: scaleSpacing(10),
+                    paddingVertical: scaleSpacing(12),
+                    paddingHorizontal: scaleSpacing(14),
+                    color: '#FFF', fontSize: scale(14),
+                    marginBottom: scaleSpacing(16),
+                    borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
+                  }}
+                  placeholder={t('auth.password') || 'Password'}
+                  placeholderTextColor="#666"
+                  value={legacyPassword}
+                  onChangeText={setLegacyPassword}
+                  secureTextEntry
+                  textContentType="password"
+                />
+
+                {/* Migrate + Connect Wallet Button */}
+                <TouchableOpacity
+                  style={{
+                    width: '100%',
+                    backgroundColor: '#03E1FF',
+                    borderRadius: scaleSpacing(14),
+                    paddingVertical: scaleSpacing(16),
+                    alignItems: 'center',
+                    flexDirection: 'row',
+                    justifyContent: 'center',
+                    gap: scaleSpacing(10),
+                  }}
+                  activeOpacity={0.8}
+                  onPress={performLegacyMigration}
+                >
+                  <Feather name="link" size={scale(18)} color="#000" />
+                  <Text style={{
+                    color: '#000000', fontSize: scale(15), fontWeight: '700',
+                    letterSpacing: 0.3,
+                  }}>
+                    {t('auth.migrateAndConnect') || 'Verify & Connect Wallet'}
+                  </Text>
+                </TouchableOpacity>
+
+                {/* Back to new user */}
+                <TouchableOpacity
+                  style={{ marginTop: scaleSpacing(14), alignItems: 'center' }}
+                  onPress={() => {
+                    setShowLegacyFields(false);
+                    setWalletAuthError('');
+                    setLegacyEmail('');
+                    setLegacyPassword('');
+                  }}
+                >
+                  <Text style={{ color: '#888', fontSize: scale(12) }}>
+                    {t('auth.backToNewUser') || '← New user? Connect wallet directly'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              /* ── New user / wallet login mode ── */
+              <View style={{ width: '100%', alignItems: 'center' }}>
+                {/* Connect Wallet Button */}
+                <TouchableOpacity
+                  style={{
+                    width: '100%',
+                    backgroundColor: '#03E1FF',
+                    borderRadius: scaleSpacing(14),
+                    paddingVertical: scaleSpacing(16),
+                    alignItems: 'center',
+                    flexDirection: 'row',
+                    justifyContent: 'center',
+                    gap: scaleSpacing(10),
+                  }}
+                  activeOpacity={0.8}
+                  onPress={performWalletLogin}
+                >
+                  <Feather name="shield" size={scale(20)} color="#000" />
+                  <Text style={{
+                    color: '#000000', fontSize: scale(16), fontWeight: '700',
+                    letterSpacing: 0.3,
+                  }}>
+                    {t('auth.connectWallet') || 'Connect Wallet'}
+                  </Text>
+                </TouchableOpacity>
+
+                {/* "I have an existing account" link */}
+                <TouchableOpacity
+                  style={{ marginTop: scaleSpacing(16) }}
+                  onPress={() => {
+                    setShowLegacyFields(true);
+                    setWalletAuthError('');
+                  }}
+                >
+                  <Text style={{ color: '#888', fontSize: scale(12), textDecorationLine: 'underline' }}>
+                    {t('auth.haveExistingAccount') || 'I have an existing account'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
+            {/* Server type indicator (small, below button) */}
+            <Text style={{
+              color: '#555', fontSize: scale(10), marginTop: scaleSpacing(16),
+              textAlign: 'center',
+            }}>
+              {serverType === 'stealthcloud' ? 'StealthCloud' : serverType === 'local' ? `Local · ${localHost || '—'}` : `Remote · ${remoteHost || '—'}`}
+            </Text>
+
+            {/* QR Scanner link for local/remote pairing */}
+            {serverType !== 'stealthcloud' && (
+              <TouchableOpacity
+                style={{ marginTop: scaleSpacing(10) }}
+                onPress={async () => {
+                  if (!cameraPermission?.granted) {
+                    const result = await requestCameraPermission();
+                    if (!result.granted) {
+                      showDarkAlert(t('login.cameraPermissionTitle'), t('login.cameraPermissionMessage'));
+                      return;
+                    }
+                  }
+                  setQrScannerOpen(true);
+                }}
+              >
+                <Text style={{ color: '#03E1FF', fontSize: scale(12), textDecorationLine: 'underline' }}>
+                  {t('login.scanQrCode') || 'Scan QR to pair with desktop'}
+                </Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        </View>
+      )}
 
     </View>
   );

@@ -633,6 +633,8 @@ const buildLocalHashIndex = async (resolveReadableFilePath, onStatus, onProgress
   let hashErrors = 0;
   let resolveErrors = 0;
   
+  let cacheHitCount = 0;
+  
   for (let i = 0; i < allAssets.length; i++) {
     const asset = allAssets[i];
     const filename = asset.filename;
@@ -645,9 +647,51 @@ const buildLocalHashIndex = async (resolveReadableFilePath, onStatus, onProgress
       // Base name for cross-platform variant matching
       const baseName = extractBaseFilename(filename);
       
-      // Try to get actual file path and compute hashes for cross-device dedup
+      // FAST PATH: If ANY hash is already cached, skip expensive file resolution
+      // After local backup, images may only have phash (not fhash) — still use fast path
+      const isVideo = asset.mediaType === 'video' || (asset.duration && asset.duration > 0);
+      const cachedFileHash = getCachedHash(asset, 'file');
+      const cachedPhash = isVideo ? null : getCachedHash(asset, 'perceptual');
+      const anyCached = !!(cachedFileHash || cachedPhash);
+      
+      if (anyCached) {
+        // Add cached hashes directly — no file I/O needed
+        if (cachedFileHash) localSets.fileHashes.add(cachedFileHash);
+        if (cachedPhash) localSets.perceptualHashes.add(cachedPhash);
+        hashedCount++;
+        cacheHitCount++;
+        
+        // Use asset.fileSize from MediaLibrary metadata for manifestId (avoids getInfoAsync)
+        const metaSize = asset.fileSize ? Number(asset.fileSize) : null;
+        if (metaSize) {
+          const fileIdentity = computeFileIdentity(filename, metaSize);
+          if (fileIdentity) localSets.manifestIds.add(sha256(`file:${fileIdentity}`));
+          if (baseName) {
+            if (!localSets.baseNameSizes.has(baseName)) localSets.baseNameSizes.set(baseName, new Set());
+            localSets.baseNameSizes.get(baseName).add(metaSize);
+          }
+        }
+        
+        if (baseName && asset.creationTime) {
+          const dateStr = normalizeDateForCompare(asset.creationTime);
+          if (dateStr) {
+            if (!localSets.baseNameDates.has(baseName)) localSets.baseNameDates.set(baseName, new Set());
+            localSets.baseNameDates.get(baseName).add(dateStr);
+          }
+        }
+        
+        // Progress update every 100 cached files
+        if (cacheHitCount % 100 === 0) {
+          const progress = progressStart + (progressEnd - progressStart) * (0.3 + 0.7 * (i / allAssets.length));
+          updateProgress(onProgress, Math.min(progress, progressEnd));
+          updateStatus(onStatus, t('status.syncHashing', { current: i + 1, total: allAssets.length, filename: formatFilenameForStatus(filename) }));
+          await quickYield();
+        }
+        continue;
+      }
+      
+      // SLOW PATH: Need to resolve file and compute missing hashes
       try {
-        // resolveReadableFilePath expects { assetId, assetInfo } format
         if (typeof resolveReadableFilePath !== 'function') {
           throw new Error('resolveReadableFilePath is not a function');
         }
@@ -655,7 +699,6 @@ const buildLocalHashIndex = async (resolveReadableFilePath, onStatus, onProgress
         const filePath = resolved?.filePath || resolved;
         
         if (filePath && typeof filePath === 'string') {
-          // Log first few files for debugging
           if (i < 3) console.log(`[Sync] File ${i}: ${filename} -> ${filePath.substring(0, 80)}...`);
           
           // Get actual file size
@@ -664,7 +707,6 @@ const buildLocalHashIndex = async (resolveReadableFilePath, onStatus, onProgress
             const fileUri = filePath.startsWith('file://') ? filePath : (filePath.startsWith('/') ? `file://${filePath}` : filePath);
             const info = await FileSystem.getInfoAsync(fileUri);
             fileSize = info?.size ? Number(info.size) : null;
-            if (i < 3) console.log(`[Sync] File ${i}: size=${fileSize}`);
           } catch (e) {
             if (i < 3) console.log(`[Sync] File ${i}: size error: ${e.message}`);
           }
@@ -672,63 +714,41 @@ const buildLocalHashIndex = async (resolveReadableFilePath, onStatus, onProgress
           // Compute manifestId with actual file size
           if (fileSize) {
             const fileIdentity = computeFileIdentity(filename, fileSize);
-            if (fileIdentity) {
-              const manifestId = sha256(`file:${fileIdentity}`);
-              localSets.manifestIds.add(manifestId);
-              if (i < 3) console.log(`[Sync] File ${i}: manifestId=${manifestId.substring(0, 16)}...`);
-            }
-            
-            // Base name + actual size for fallback
+            if (fileIdentity) localSets.manifestIds.add(sha256(`file:${fileIdentity}`));
             if (baseName) {
               if (!localSets.baseNameSizes.has(baseName)) localSets.baseNameSizes.set(baseName, new Set());
               localSets.baseNameSizes.get(baseName).add(fileSize);
             }
           }
           
-          // Compute file hash for videos (cross-device dedup)
-          // USE CACHE: Check if hash was already computed for this asset to avoid re-hashing
-          const isVideo = asset.mediaType === 'video' || (asset.duration && asset.duration > 0);
+          // Compute file hash (use cache or compute fresh)
           if (isVideo) {
             try {
-              // Try cache first
-              let fileHash = getCachedHash(asset, 'file');
+              let fileHash = cachedFileHash;
               if (!fileHash) {
-                if (i < 5) console.log(`[Sync] File ${i}: computing video hash...`);
                 fileHash = await computeExactFileHash(filePath);
                 if (fileHash) setCachedHash(asset, 'file', fileHash);
-              } else {
-                if (i < 5) console.log(`[Sync] File ${i}: using cached video hash`);
               }
               if (fileHash) {
                 localSets.fileHashes.add(fileHash);
                 hashedCount++;
-                if (i < 5) console.log(`[Sync] File ${i}: videoHash=${fileHash.substring(0, 16)}...`);
-              } else {
-                if (i < 5) console.log(`[Sync] File ${i}: videoHash=null`);
               }
             } catch (e) { 
               hashErrors++;
-              if (i < 10) console.log(`[Sync] File ${i}: videoHash error: ${e.message}`);
             }
           } else {
-            // Compute fileHash + perceptual hash for images (cross-device dedup)
-            // fileHash lets shouldSkipServerFile match by exact bytes (critical for iOS renamed files)
-            // USE CACHE: Check if hash was already computed for this asset
             try {
-              let fileHash = getCachedHash(asset, 'file');
+              let fileHash = cachedFileHash;
               if (!fileHash) {
                 fileHash = await computeExactFileHash(filePath);
                 if (fileHash) setCachedHash(asset, 'file', fileHash);
               }
-              if (fileHash) {
-                localSets.fileHashes.add(fileHash);
-                if (i < 5) console.log(`[Sync] File ${i}: fileHash=${fileHash.substring(0, 16)}...`);
-              }
+              if (fileHash) localSets.fileHashes.add(fileHash);
             } catch (e) {
               if (i < 10) console.log(`[Sync] File ${i}: fileHash error: ${e.message}`);
             }
             try {
-              let phash = getCachedHash(asset, 'perceptual');
+              let phash = cachedPhash;
               if (!phash) {
                 phash = await computePerceptualHash(filePath);
                 if (phash) setCachedHash(asset, 'perceptual', phash);
@@ -736,21 +756,17 @@ const buildLocalHashIndex = async (resolveReadableFilePath, onStatus, onProgress
               if (phash) {
                 localSets.perceptualHashes.add(phash);
                 hashedCount++;
-                if (i < 5) console.log(`[Sync] File ${i}: phash=${phash}`);
               }
             } catch (e) { 
               hashErrors++;
-              if (i < 10) console.log(`[Sync] File ${i}: phash error: ${e.message}`);
             }
           }
         } else {
-          if (i < 5) console.log(`[Sync] File ${i}: ${filename} - no valid filePath`);
           resolveErrors++;
         }
       } catch (e) {
         resolveErrors++;
         if (i < 10) console.log(`[Sync] File ${i}: ${filename} - resolve error: ${e.message}`);
-        // Fall back to metadata-only if file access fails
         const duration = asset.duration || 0;
         const approxSize = asset.width && asset.height ? (asset.width * asset.height) : 0;
         if (baseName && approxSize > 0) {
@@ -775,6 +791,8 @@ const buildLocalHashIndex = async (resolveReadableFilePath, onStatus, onProgress
     updateStatus(onStatus, t('status.syncHashing', { current: i + 1, total: allAssets.length, filename: formatFilenameForStatus(filename || 'file') }));
     await quickYield();
   }
+  
+  console.log(`[Sync] Cache fast-path: ${cacheHitCount}/${allAssets.length} assets skipped file I/O`);
 
   // Final progress update
   updateProgress(onProgress, progressEnd, true);
@@ -867,7 +885,12 @@ export const stealthCloudRestoreCore = async ({
   onStatus(t('status.syncScanningLocal'));
   updateProgress(onProgress, 0.01, true); // Start at 1% so user sees action
 
-  const localSets = await buildLocalHashIndex(resolveReadableFilePath, onStatus, onProgress, 0.01, 0.10);
+  // Choose Files mode: use lightweight metadata-only scan (no hashing)
+  // since user explicitly chose files — full device hashing is unnecessary
+  const isSelectMode = manifestIds && Array.isArray(manifestIds) && manifestIds.length > 0;
+  const localSets = isSelectMode
+    ? await scanLocalPhotosForDedup(onStatus, onProgress, 0.01, 0.10)
+    : await buildLocalHashIndex(resolveReadableFilePath, onStatus, onProgress, 0.01, 0.10);
   
   updateProgress(onProgress, 0.10, true);
   await yieldToUi();
@@ -1258,8 +1281,12 @@ export const localRemoteRestoreCore = async ({
   onStatus(t('status.syncScanningLocal'));
   updateProgress(onProgress, 0.01, true); // Start at 1% so user sees action
 
-  // Use buildLocalHashIndex for perceptual hash matching (handles iOS file renaming)
-  const localSets = await buildLocalHashIndex(resolveReadableFilePath, onStatus, onProgress, 0.01, 0.10);
+  // Choose Files mode: use lightweight metadata-only scan (no hashing)
+  // since user explicitly chose files — full device hashing is unnecessary
+  const isSelectMode = onlyFilenames && Array.isArray(onlyFilenames) && onlyFilenames.length > 0;
+  const localSets = isSelectMode
+    ? await scanLocalPhotosForDedup(onStatus, onProgress, 0.01, 0.10)
+    : await buildLocalHashIndex(resolveReadableFilePath, onStatus, onProgress, 0.01, 0.10);
   
   updateProgress(onProgress, 0.10, true);
   await yieldToUi();

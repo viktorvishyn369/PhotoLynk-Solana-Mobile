@@ -54,7 +54,15 @@
     "stillConnecting": "Ikka ühendab...",
     "almostThere": "Peaaegu valmis...",
     "confirmDeleteAll": "Kinnitage identiteet kõigi andmete kustutamiseks",
-    "verifyingSession": "Seansi kontrollimine..."
+    "verifyingSession": "Seansi kontrollimine...",
+    "connectingWallet": "Rahakoti ühendamine...",
+    "connectWallet": "Ühenda Rahakott",
+    "walletLoginDesc": "Logi sisse oma Solana riistvaralise rahakotiga. Sinu seadme biomeetria turvab sinu kontot — parooli pole vaja.",
+    "walletAuthFailed": "Rahakoti autentimine ebaõnnestus",
+    "haveExistingAccount": "Mul on juba konto",
+    "legacyMigrateTitle": "Seo olemasolev konto rahakotiga",
+    "migrateAndConnect": "Kinnita ja Ühenda Rahakott",
+    "backToNewUser": "← Uus kasutaja? Ühenda rahakott otse"
   },
   "home": {
     "backup": "Varundus",
@@ -1158,7 +1166,11 @@
     "confirmingTransaction": "Tehingu kinnitamine...",
     "finalizing": "Lõpetamine...",
     "mintedSuccessfully": "Sertifitseeritud!",
-    "mintingFailed": "Sertifitseerimine ebaõnnestus"
+    "mintingFailed": "Sertifitseerimine ebaõnnestus",
+    "requestingTimestamp": "Usaldusväärse ajatempli päring...",
+    "uploadingArweave": "Üleslaadimine püsimällu...",
+    "embeddingOriginal": "Algse pildi manustamine...",
+    "mintingStandard": "Standardkirje loomine..."
   },
   "rawMode": {
     "uploading": "Üleslaadimine {{current}} / {{total}}: {{filename}}",

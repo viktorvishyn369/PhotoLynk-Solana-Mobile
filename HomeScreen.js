@@ -33,7 +33,7 @@ import { GradientSpinner } from './uiComponents';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const SCREEN_HEIGHT_FULL = Dimensions.get('screen').height;
-const ANDROID_NAV_BAR_HEIGHT = Platform.OS === 'android' ? Math.max(48, SCREEN_HEIGHT_FULL - SCREEN_HEIGHT) : 0;
+const ANDROID_NAV_BAR_HEIGHT = Platform.OS === 'android' ? Math.max(0, SCREEN_HEIGHT_FULL - SCREEN_HEIGHT) : 0;
 const MIN_DIMENSION = Math.min(SCREEN_WIDTH, SCREEN_HEIGHT);
 
 const isVerySmallPhone = MIN_DIMENSION < 340;
@@ -108,7 +108,7 @@ const TAB_DEFS = [
 
 // Tab bar height (including bottom safe area on Android)
 const TAB_BAR_HEIGHT = scale(56);
-const TAB_BAR_TOTAL = TAB_BAR_HEIGHT + (Platform.OS === 'android' ? ANDROID_NAV_BAR_HEIGHT : 0);
+const TAB_BAR_TOTAL = TAB_BAR_HEIGHT;
 
 // ─── ANIMATED PRESSABLE (scale on press) ────────────────────────────
 const AnimatedPressable = ({ children, style, onPress, onLongPress, delayLongPress, disabled, activeOpacity = 0.9 }) => {
@@ -635,7 +635,7 @@ const styles = StyleSheet.create({
   tabBar: {
     flexDirection: 'row',
     paddingTop: scaleSpacing(6),
-    paddingBottom: Platform.OS === 'android' ? ANDROID_NAV_BAR_HEIGHT + scaleSpacing(4) : scaleSpacing(6),
+    paddingBottom: scaleSpacing(6),
     paddingHorizontal: scaleSpacing(8),
     position: 'relative',
   },

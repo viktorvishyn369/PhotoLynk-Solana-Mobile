@@ -7,7 +7,7 @@ import * as Network from 'expo-network';
 import * as Battery from 'expo-battery';
 import * as KeepAwake from 'expo-keep-awake';
 import { v5 as uuidv5 } from 'uuid';
-import { normalizeEmailForDeviceUuid } from './utils';
+import { normalizeEmailForDeviceUuid, sanitizeStoreKey } from './utils';
 
 // Constants
 export const AUTO_UPLOAD_KEEP_AWAKE_TAG = 'photolynk-auto-upload-runner';
@@ -246,10 +246,17 @@ export const autoUploadGetDeviceUuidFromEmail = async (userEmail, clientBuild) =
   const password = await SecureStore.getItemAsync(SAVED_PASSWORD_KEY, { requireAuthentication: false });
   if (!password) return null;
   const combined = normalizedEmail + ':' + password;
-  const persistedKey = `device_uuid_v3:${normalizedEmail}`;
+  const persistedKey = sanitizeStoreKey(`device_uuid_v3:${normalizedEmail}`);
   let persisted = null;
   try { persisted = await SecureStore.getItemAsync(persistedKey); } catch (e) { persisted = null; }
   if (persisted) return persisted;
+  // If a migration lock exists, the UUID must come from the persisted key (set during
+  // legacy→wallet migration). If it's missing here, fall back to device_uuid store.
+  let isMigrated = false;
+  try { isMigrated = (await SecureStore.getItemAsync(sanitizeStoreKey(`uuid_migrated_lock:${normalizedEmail}`))) === 'true'; } catch (e) {}
+  if (isMigrated) {
+    try { const fallback = await SecureStore.getItemAsync('device_uuid'); if (fallback) return fallback; } catch (e) {}
+  }
   const newUuid = uuidv5(combined, uuidv5.DNS);
   try { await SecureStore.setItemAsync(persistedKey, newUuid); } catch (e) {}
   return newUuid;
