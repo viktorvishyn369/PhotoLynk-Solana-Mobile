@@ -358,7 +358,7 @@ const CertificatesViewer = ({ visible, onClose, serverUrl, getAuthHeaders, onSho
         </TouchableOpacity>
       </View>
       {/* Microcopy — trust reinforcement */}
-      <Text style={{ fontSize: 9, color: '#6b7280', marginTop: 4, marginBottom: 6 }}>SHA-256 anchored · Immutable · Timestamped</Text>
+      <Text style={{ fontSize: 9, color: '#6b7280', marginTop: 4, marginBottom: 6 }}>{t('certificates.sha256Microcopy')}</Text>
       {/* Standards as pillars — full descriptive labels */}
       <View style={styles.certCardMeta}>
         <View style={[styles.certTag, { borderColor: (item.certificationMode === 'public' || (!item.certificationMode && item.edition === 'open')) ? 'rgba(16,185,129,0.3)' : 'rgba(139,92,246,0.3)' }]}>
@@ -401,13 +401,13 @@ const CertificatesViewer = ({ visible, onClose, serverUrl, getAuthHeaders, onSho
         {item.license && (
           <View style={[styles.certTag, { borderColor: 'rgba(245,158,11,0.3)' }]}>
             <Feather name="file-text" size={10} color="#f59e0b" />
-            <Text style={[styles.certTagText, { color: '#f59e0b' }]}>{item.license === 'arr' ? 'All Rights Reserved' : item.license}</Text>
+            <Text style={[styles.certTagText, { color: '#f59e0b' }]}>{item.license === 'arr' ? t('certificates.allRightsReserved') : item.license}</Text>
           </View>
         )}
         {item.storageType === 'onchain' && (
           <View style={[styles.certTag, { borderColor: 'rgba(107,114,128,0.3)', backgroundColor: 'rgba(107,114,128,0.06)' }]}>
             <Feather name="code" size={10} color="#9ca3af" />
-            <Text style={[styles.certTagText, { color: '#9ca3af' }]}>Embedded SVG</Text>
+            <Text style={[styles.certTagText, { color: '#9ca3af' }]}>{t('certificates.embeddedSvg')}</Text>
           </View>
         )}
         {item.storageType === 'cloud' && (
@@ -456,7 +456,7 @@ const CertificatesViewer = ({ visible, onClose, serverUrl, getAuthHeaders, onSho
           <View style={styles.detailDivider} />
 
           <DetailRow label={t('certificates.certification') || 'Certification'} value={(c.certificationMode === 'public' || (!c.certificationMode && c.edition === 'open')) ? (t('certificates.publicCertification') || 'Public Certified') : (t('certificates.privateCertification') || 'Private Certified')} />
-          <DetailRow label={t('certificates.license')} value={({'arr':'All Rights Reserved','cc-by':'CC BY 4.0','cc-by-sa':'CC BY-SA 4.0','cc-by-nc':'CC BY-NC 4.0','cc-by-nc-sa':'CC BY-NC-SA 4.0','cc-by-nd':'CC BY-ND 4.0','cc-by-nc-nd':'CC BY-NC-ND 4.0','cc0':'CC0 1.0 (Public Domain)','commercial':'Commercial License'})[c.license] || c.license || 'All Rights Reserved'} />
+          <DetailRow label={t('certificates.license')} value={({'arr':t('certificates.allRightsReserved'),'cc-by':'CC BY 4.0','cc-by-sa':'CC BY-SA 4.0','cc-by-nc':'CC BY-NC 4.0','cc-by-nc-sa':'CC BY-NC-SA 4.0','cc-by-nd':'CC BY-ND 4.0','cc-by-nc-nd':'CC BY-NC-ND 4.0','cc0':'CC0 1.0 (Public Domain)','commercial':t('nftMint.licenseCommercial')})[c.license] || c.license || t('certificates.allRightsReserved')} />
           <DetailRow label={t('certificates.issued')} value={formatDate(c.issuedAt)} />
 
           <View style={styles.detailDivider} />

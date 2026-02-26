@@ -29,7 +29,7 @@ import Clipboard from '@react-native-clipboard/clipboard';
 import * as FileSystem from 'expo-file-system';
 import NFTOperations, { decryptNFTImage } from './nftOperations';
 import { getStealthCloudMasterKey } from './backgroundTask';
-import { t } from './i18n';
+import { t, getCurrentLanguage } from './i18n';
 
 // Import shared cache utilities (avoids circular dependency with nftOperations)
 import NFTImageCache from './nftImageCache';
@@ -1147,7 +1147,7 @@ const NFTGallery = ({
                 }}
               >
                 <Feather name="award" size={10} color="#fff" />
-                <Text style={{ fontSize: 8, color: '#fff', fontWeight: '700' }}>Certified</Text>
+                <Text style={{ fontSize: 8, color: '#fff', fontWeight: '700' }}>{t('nftAlbum.certified')}</Text>
               </TouchableOpacity>
             );
           }
@@ -1164,17 +1164,17 @@ const NFTGallery = ({
             <View style={styles.dateBadge}>
               <Feather name="calendar" size={10} color="rgba(255,255,255,0.7)" />
               <Text style={styles.nftDate}>
-                {new Date(item.createdAt).toLocaleDateString()}
+                {new Date(item.createdAt).toLocaleDateString(getCurrentLanguage())}
               </Text>
             </View>
             {/* Certification badge */}
             {(item.certificationMode === 'private' || item.edition === 'limited') ? (
               <View style={[styles.solanaBadge, { backgroundColor: 'rgba(153, 69, 255, 0.3)' }]}>
-                <Text style={{ fontSize: 8, color: '#9945FF', fontWeight: '600' }}>🔐 Private</Text>
+                <Text style={{ fontSize: 8, color: '#9945FF', fontWeight: '600' }}>🔐 {t('nftAlbum.privateBadge')}</Text>
               </View>
             ) : (item.certificationMode === 'public' || item.edition === 'open') ? (
               <View style={[styles.solanaBadge, { backgroundColor: 'rgba(34, 197, 94, 0.3)' }]}>
-                <Text style={{ fontSize: 8, color: '#22c55e', fontWeight: '600' }}>🌍 Public</Text>
+                <Text style={{ fontSize: 8, color: '#22c55e', fontWeight: '600' }}>🌍 {t('nftAlbum.publicBadge')}</Text>
               </View>
             ) : (
               <View style={styles.solanaBadge}>
@@ -1329,7 +1329,7 @@ const NFTGallery = ({
                   ) : (
                     <View style={[styles.detailImage, styles.noImagePlaceholder]}>
                       <Feather name="image" size={48} color={COLORS.textSecondary} />
-                      <Text style={styles.noImageText}>No image available</Text>
+                      <Text style={styles.noImageText}>{t('nftAlbum.noImageAvailable')}</Text>
                     </View>
                   );
                 }
@@ -1362,7 +1362,7 @@ const NFTGallery = ({
                 ) : (
                   <View style={[styles.detailImage, styles.noImagePlaceholder]}>
                     <Feather name="image" size={48} color={COLORS.textSecondary} />
-                    <Text style={styles.noImageText}>No image available</Text>
+                    <Text style={styles.noImageText}>{t('nftAlbum.noImageAvailable')}</Text>
                   </View>
                 );
               })()}
@@ -1372,8 +1372,8 @@ const NFTGallery = ({
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 16, paddingVertical: 12, backgroundColor: (selectedNFT.certificationMode === 'private' || selectedNFT.edition === 'limited') ? 'rgba(153,69,255,0.08)' : 'rgba(34,197,94,0.08)', borderBottomWidth: 1, borderBottomColor: COLORS.border }}>
                   <Feather name="shield" size={24} color={(selectedNFT.certificationMode === 'private' || selectedNFT.edition === 'limited') ? '#9945FF' : '#22c55e'} />
                   <View style={{ flex: 1 }}>
-                    <Text style={{ fontSize: 14, fontWeight: '700', color: (selectedNFT.certificationMode === 'private' || selectedNFT.edition === 'limited') ? '#9945FF' : '#22c55e' }}>{t('certificates.certificateOfAuth') || 'Certificate of Authenticity'}</Text>
-                    <Text style={{ fontSize: 11, color: COLORS.textSecondary, marginTop: 2 }}>{(selectedNFT.certificationMode === 'private' || selectedNFT.edition === 'limited') ? (t('nftAlbum.privateCertDesc') || 'Encrypted • EXIF preserved • Zero-knowledge') : (t('nftAlbum.publicCertDesc') || 'Decentralized storage • Blockchain anchored')}</Text>
+                    <Text style={{ fontSize: 14, fontWeight: '700', color: (selectedNFT.certificationMode === 'private' || selectedNFT.edition === 'limited') ? '#9945FF' : '#22c55e' }}>{t('certificates.certificateOfAuth')}</Text>
+                    <Text style={{ fontSize: 11, color: COLORS.textSecondary, marginTop: 2 }}>{(selectedNFT.certificationMode === 'private' || selectedNFT.edition === 'limited') ? t('nftAlbum.privateCertDesc') : t('nftAlbum.publicCertDesc')}</Text>
                   </View>
                 </View>
               )}
@@ -1404,7 +1404,7 @@ const NFTGallery = ({
                       <View style={styles.exifItem}>
                         <Feather name="calendar" size={14} color={COLORS.textSecondary} />
                         <Text style={styles.exifText}>
-                          {new Date(selectedNFT.exifData.dateTaken).toLocaleDateString()}
+                          {new Date(selectedNFT.exifData.dateTaken).toLocaleDateString(getCurrentLanguage())}
                         </Text>
                       </View>
                     )}
@@ -1508,7 +1508,7 @@ const NFTGallery = ({
                     if (url) {
                       openLink(url);
                     } else {
-                      showDarkAlert(t('common.error'), 'Image URL not available');
+                      showDarkAlert(t('common.error'), t('nftAlbum.imageUrlNotAvailable'));
                     }
                     return;
                   }
@@ -1521,7 +1521,7 @@ const NFTGallery = ({
                       const cid = extractIPFSCid(url);
                       openLink(cid ? `https://ipfs.io/ipfs/${cid}` : url);
                     } else {
-                      showDarkAlert(t('common.error'), 'Image URL not available');
+                      showDarkAlert(t('common.error'), t('nftAlbum.imageUrlNotAvailable'));
                     }
                     return;
                   }
@@ -1597,13 +1597,13 @@ const NFTGallery = ({
                       openLink(imageUrl);
                     }
                   } else {
-                    showDarkAlert(t('common.error'), 'Image URL not available');
+                    showDarkAlert(t('common.error'), t('nftAlbum.imageUrlNotAvailable'));
                   }
                 }}
               >
                 <Feather name="image" size={16} color={COLORS.text} />
                 <Text style={styles.actionButtonText}>
-                  {selectedNFT.storageType === 'onchain' || (selectedNFT.imageUrl || '').startsWith('data:') ? 'Metadata' : (selectedNFT.thumbnailUrl || selectedNFT.imageUrl || '').includes('stealthlynk.io') ? 'Image' : t('nftAlbum.ipfs')}
+                  {selectedNFT.storageType === 'onchain' || (selectedNFT.imageUrl || '').startsWith('data:') ? t('nftAlbum.metadata') : (selectedNFT.thumbnailUrl || selectedNFT.imageUrl || '').includes('stealthlynk.io') ? t('nftAlbum.imageBtn') : t('nftAlbum.ipfs')}
                 </Text>
               </TouchableOpacity>
               </View>
@@ -1626,7 +1626,7 @@ const NFTGallery = ({
                   }}
                 >
                   <Feather name="award" size={18} color="#fff" />
-                  <Text style={styles.transferButtonText}>{t('certificates.shareCert') || 'Share Certificate'}</Text>
+                  <Text style={styles.transferButtonText}>{t('certificates.shareCert')}</Text>
                 </TouchableOpacity>
               )}
 
@@ -1665,7 +1665,7 @@ const NFTGallery = ({
             <Feather name="x" size={24} color={COLORS.text} />
           </TouchableOpacity>
           <View style={styles.headerCenter}>
-            <Text style={styles.headerTitle}>{t('nftAlbum.myAlbum')}</Text>
+            <Text numberOfLines={1} style={styles.headerTitle}>{t('nftAlbum.myAlbum')}</Text>
             <Text style={styles.headerSubtitle}>{nfts.length} {t('nftAlbum.memories')}</Text>
           </View>
           <TouchableOpacity onPress={clearAllNFTs} style={styles.headerRight}>
@@ -1683,7 +1683,7 @@ const NFTGallery = ({
               onPress={() => { setNftFilter('all'); setCurrentPage(0); }}
             >
               <Feather name="grid" size={14} color={nftFilter === 'all' ? '#fff' : COLORS.textSecondary} />
-              <Text style={[styles.filterToggleText, nftFilter === 'all' && styles.filterToggleTextActive]}>
+              <Text numberOfLines={1} style={[styles.filterToggleText, nftFilter === 'all' && styles.filterToggleTextActive]}>
                 {t('nftAlbum.allNfts')}
               </Text>
             </TouchableOpacity>
@@ -1694,11 +1694,11 @@ const NFTGallery = ({
               <View style={{ alignItems: 'center' }}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
                   <Feather name="globe" size={14} color={nftFilter === 'public' ? '#9945FF' : COLORS.textSecondary} />
-                  <Text style={[styles.filterToggleText, nftFilter === 'public' && { color: '#9945FF' }]}>
+                  <Text numberOfLines={1} style={[styles.filterToggleText, nftFilter === 'public' && { color: '#9945FF' }]}>
                     {t('nftAlbum.publicFilter')}
                   </Text>
                 </View>
-                <Text style={{ fontSize: 8, color: COLORS.textSecondary, marginTop: 2 }}>{t('nftAlbum.publicFilterDesc')}</Text>
+                <Text numberOfLines={1} style={{ fontSize: 8, color: COLORS.textSecondary, marginTop: 2 }}>{t('nftAlbum.publicFilterDesc')}</Text>
               </View>
             </TouchableOpacity>
             <TouchableOpacity
@@ -1708,11 +1708,11 @@ const NFTGallery = ({
               <View style={{ alignItems: 'center' }}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
                   <Feather name="lock" size={14} color={nftFilter === 'private' ? '#22c55e' : COLORS.textSecondary} />
-                  <Text style={[styles.filterToggleText, nftFilter === 'private' && { color: '#22c55e' }]}>
+                  <Text numberOfLines={1} style={[styles.filterToggleText, nftFilter === 'private' && { color: '#22c55e' }]}>
                     {t('nftAlbum.privateFilter')}
                   </Text>
                 </View>
-                <Text style={{ fontSize: 8, color: COLORS.textSecondary, marginTop: 2 }}>{t('nftAlbum.privateFilterDesc')}</Text>
+                <Text numberOfLines={1} style={{ fontSize: 8, color: COLORS.textSecondary, marginTop: 2 }}>{t('nftAlbum.privateFilterDesc')}</Text>
               </View>
             </TouchableOpacity>
           </View>
@@ -1952,24 +1952,28 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   filterToggle: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 14,
+    justifyContent: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
     paddingVertical: 8,
     borderRadius: 20,
     backgroundColor: COLORS.surface,
     borderWidth: 1,
     borderColor: COLORS.border,
+    overflow: 'hidden',
   },
   filterToggleActive: {
     backgroundColor: COLORS.primary,
     borderColor: COLORS.primary,
   },
   filterToggleText: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '500',
     color: COLORS.textSecondary,
+    flexShrink: 1,
   },
   filterToggleTextActive: {
     color: '#fff',

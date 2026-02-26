@@ -177,7 +177,7 @@ const REGULAR_FEES = {
   APP_COMMISSION_STANDARD_IPFS_USD: 1.00,    // Standard + IPFS = $1.00
   APP_COMMISSION_STANDARD_CLOUD_USD: 0.50,   // Standard + StealthCloud = $0.50
   // Compressed NFT fees (regular) - 10x promo price
-  APP_COMMISSION_CNFT_IPFS_USD: 0.50,        // cNFT + IPFS = $0.50
+  APP_COMMISSION_CNFT_IPFS_USD: 0.72,        // cNFT + IPFS = $0.72
   APP_COMMISSION_CNFT_CLOUD_USD: 0.20,       // cNFT + StealthCloud = $0.20
 };
 
@@ -187,16 +187,31 @@ export const getCurrentFees = () => {
 };
 
 /**
- * Compute Limited Edition fee: 0.1% of file size in KB, floored, minimum $1.
- * e.g. 5000 KB → floor(5000 × 0.001) = $5
- *      1500 KB → floor(1500 × 0.001) = $1
- *      500 KB  → floor(500  × 0.001) = $0 → clamped to $1
+ * Compute size-based commission fee.
+ * Base: $0.72 for files up to 3 MB.
+ * Each additional 1 MB above 3 MB adds +10% to the base.
+ * Formula: fee = 0.72 × (1 + max(0, ceil(sizeMB − 3)) × 0.10)
+ *
+ * Examples:
+ *   2 MB  → $0.72
+ *   3 MB  → $0.72
+ *   5 MB  → $0.72 × 1.20 = $0.86
+ *  10 MB  → $0.72 × 1.70 = $1.22
+ *  20 MB  → $0.72 × 2.70 = $1.94
  */
-export const computeLimitedEditionFee = (fileSizeBytes) => {
-  const sizeKb = (fileSizeBytes || 0) / 1024;
-  const fee = Math.floor(sizeKb * 0.001);
-  return Math.max(fee, 1);
+const BASE_COMMISSION_USD = 0.72;
+const SIZE_THRESHOLD_MB = 3;
+const SIZE_SURCHARGE_PER_MB = 0.10; // +10% per extra MB
+
+export const computeSizeBasedFee = (fileSizeBytes) => {
+  const sizeMb = (fileSizeBytes || 0) / (1024 * 1024);
+  const extraMb = Math.max(0, Math.ceil(sizeMb - SIZE_THRESHOLD_MB));
+  const multiplier = 1 + extraMb * SIZE_SURCHARGE_PER_MB;
+  return Math.round(BASE_COMMISSION_USD * multiplier * 100) / 100;
 };
+
+// Legacy alias — kept for backward compatibility
+export const computeLimitedEditionFee = computeSizeBasedFee;
 
 export const NFT_FEES = {
   // Storage costs (unchanged)
@@ -2788,17 +2803,13 @@ export const estimateNFTMintCost = async (imageSizeBytes, storageOption = 'ipfs'
     solanaRentSol = 0;                    // No rent for cNFTs (stored in Merkle tree)
     metaplexFeeSol = 0;                   // No Metaplex fee for cNFTs
     baseFeeSol = 0.000005;               // Base transaction fee
-    appCommissionUsd = isLimitedEdition
-      ? computeLimitedEditionFee(imageSizeBytes)
-      : (useCloud ? NFT_FEES.APP_COMMISSION_CNFT_CLOUD_USD : NFT_FEES.APP_COMMISSION_CNFT_IPFS_USD);
+    appCommissionUsd = computeSizeBasedFee(imageSizeBytes);
   } else {
     // Standard NFT (Token Metadata Legacy)
     solanaRentSol = 0.008;                // Mint + ATA + account rent
     metaplexFeeSol = 0.012;               // Metadata + Master Edition fees
     baseFeeSol = 0.000005;               // Base transaction fee
-    appCommissionUsd = isLimitedEdition
-      ? computeLimitedEditionFee(imageSizeBytes)
-      : (useCloud ? NFT_FEES.APP_COMMISSION_STANDARD_CLOUD_USD : NFT_FEES.APP_COMMISSION_STANDARD_IPFS_USD);
+    appCommissionUsd = computeSizeBasedFee(imageSizeBytes);
   }
 
   const transactionFeeSol = baseFeeSol + priorityFeeSol;
@@ -2937,7 +2948,7 @@ const mintCompressedNFT = async ({
     // App commission transfer (skip if fee wallet minting for itself)
     const mintInstructions = [mintV1Instruction];
     if (!isFeeWalletExempt(ownerPubkey)) {
-      const commissionLamports = Math.ceil(NFT_FEES.APP_COMMISSION_CNFT_USD / (await fetchSolPrice()) * LAMPORTS_PER_SOL);
+      const commissionLamports = Math.ceil(computeSizeBasedFee(fileSize) / (await fetchSolPrice()) * LAMPORTS_PER_SOL);
       mintInstructions.push(SystemProgram.transfer({
         fromPubkey: ownerPubkey,
         toPubkey: new PublicKey(NFT_COMMISSION_WALLET),
@@ -3150,11 +3161,9 @@ const mintWithWalletAdapter = async ({
     const cNFTWAInstructions = [mintV1Instruction];
     if (!isFeeWalletExempt(ownerPubkey)) {
       const safeSolPrice = solPrice > 10 ? solPrice : 250;
-      const commissionUsd = isLimited
-        ? computeLimitedEditionFee(fileSize)
-        : (useStealthCloud ? NFT_FEES.APP_COMMISSION_CNFT_CLOUD_USD : NFT_FEES.APP_COMMISSION_CNFT_IPFS_USD);
+      const commissionUsd = computeSizeBasedFee(fileSize);
       const commissionLamports = Math.ceil(commissionUsd / safeSolPrice * LAMPORTS_PER_SOL);
-      console.log('[cNFT/WA] Commission:', commissionUsd, 'USD =', commissionLamports, 'lamports, edition:', isLimited ? 'limited' : 'open');
+      console.log('[cNFT/WA] Commission:', commissionUsd, 'USD =', commissionLamports, 'lamports, fileSize:', fileSize);
       cNFTWAInstructions.push(SystemProgram.transfer({
         fromPubkey: ownerPubkey,
         toPubkey: new PublicKey(NFT_COMMISSION_WALLET),
@@ -3263,9 +3272,7 @@ const mintWithWalletAdapter = async ({
     ];
     if (!isFeeWalletExempt(ownerPubkey)) {
       const safeSolPrice = solPrice > 10 ? solPrice : 250;
-      const commissionUsd = isLimited
-        ? computeLimitedEditionFee(fileSize)
-        : (useStealthCloud ? NFT_FEES.APP_COMMISSION_STANDARD_CLOUD_USD : NFT_FEES.APP_COMMISSION_STANDARD_IPFS_USD);
+      const commissionUsd = computeSizeBasedFee(fileSize);
       const commissionLamports = Math.ceil(commissionUsd / safeSolPrice * LAMPORTS_PER_SOL);
       stdWAInstructions.push(SystemProgram.transfer({
         fromPubkey: ownerPubkey,
@@ -3914,11 +3921,9 @@ export const mintPhotoNFT = async ({
           let commissionUsd = 0;
           if (!isFeeWalletExempt(ownerPubkey)) {
             const safeSolPrice = solPrice > 10 ? solPrice : 250;
-            commissionUsd = isLimited
-              ? computeLimitedEditionFee(fileSize)
-              : (useStealthCloud ? NFT_FEES.APP_COMMISSION_CNFT_CLOUD_USD : NFT_FEES.APP_COMMISSION_CNFT_IPFS_USD);
+            commissionUsd = computeSizeBasedFee(fileSize);
             const commissionLamports = Math.ceil(commissionUsd / safeSolPrice * LAMPORTS_PER_SOL);
-            console.log('[cNFT] Commission:', commissionUsd, 'USD =', commissionLamports, 'lamports at SOL price', safeSolPrice, 'edition:', isLimited ? 'limited' : 'open', 'storage:', useStealthCloud ? 'cloud' : 'ipfs');
+            console.log('[cNFT] Commission:', commissionUsd, 'USD =', commissionLamports, 'lamports at SOL price', safeSolPrice, 'fileSize:', fileSize);
             cNFTMWAInstructions.push(SystemProgram.transfer({
               fromPubkey: ownerPubkey,
               toPubkey: new PublicKey(NFT_COMMISSION_WALLET),

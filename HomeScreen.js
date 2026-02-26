@@ -100,10 +100,10 @@ const COLORS = {
 };
 
 // ─── TAB DEFINITIONS ────────────────────────────────────────────────
-const TABS = [
-  { key: 'home',     icon: 'image',    label: 'Home',     color: COLORS.primary },
-  { key: 'info',     icon: 'info',     label: 'Info',     color: COLORS.gold },
-  { key: 'settings', icon: 'settings', label: 'Settings', color: COLORS.textMuted },
+const TAB_DEFS = [
+  { key: 'home',     icon: 'image',    labelKey: 'home.home',     color: COLORS.primary },
+  { key: 'info',     icon: 'info',     labelKey: 'home.info',     color: COLORS.gold },
+  { key: 'settings', icon: 'settings', labelKey: 'home.settings', color: COLORS.textMuted },
 ];
 
 // Tab bar height (including bottom safe area on Android)
@@ -217,7 +217,7 @@ export const HomeScreen = ({
     ]).start();
   }, [qsCollapsed]);
 
-  const serverLabel = serverType === 'stealthcloud' ? 'StealthCloud' : serverType === 'remote' ? 'Remote Server' : 'Local Server';
+  const serverLabel = serverType === 'stealthcloud' ? 'StealthCloud' : serverType === 'remote' ? t('home.remoteServer') : t('home.localServer');
   const serverIcon = serverType === 'stealthcloud' ? 'cloud' : serverType === 'remote' ? 'globe' : 'wifi';
 
   // Status detection
@@ -540,7 +540,7 @@ export const HomeScreen = ({
         <LinearGradient colors={['transparent', `${COLORS.tabBarBorder}50`, 'transparent']}
           start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
           style={{ position: 'absolute', top: 0, left: 0, right: 0, height: StyleSheet.hairlineWidth }} />
-        {TABS.map((tab) => {
+        {TAB_DEFS.map((tab) => {
           const active = activeTab === tab.key;
           return (
             <TouchableOpacity
@@ -560,7 +560,7 @@ export const HomeScreen = ({
                 </View>
               )}
               <Text style={[styles.tabLabel, active ? { color: tab.color, fontWeight: '700', textShadowColor: `${tab.color}50`, textShadowOffset: { width: 0, height: 0 }, textShadowRadius: isAndroid ? 2 : 6 } : { color: COLORS.textDim }]}>
-                {tab.label}
+                {t(tab.labelKey)}
               </Text>
             </TouchableOpacity>
           );

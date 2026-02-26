@@ -2654,7 +2654,7 @@ export default function App() {
           masterKey = await getStealthCloudMasterKey();
         } catch (e) {
           console.warn('[NFT] Could not get master key for encryption:', e?.message);
-          showDarkAlert(t('alerts.error'), 'Encryption requires login credentials. Please re-login and try again.');
+          showDarkAlert(t('alerts.error'), t('alerts.encryptionRequiresLogin'));
           setNftMinting(false);
           setLoadingSafe(false);
           setStatus(t('status.idle'));
