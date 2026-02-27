@@ -1301,7 +1301,8 @@ export const stealthCloudBackupCore = async ({
     if (!asset) return null;
     const filename = asset?.filename || `file_${asset.id}`;
     const size = asset?.fileSize || 0;
-    return computeFileIdentity(filename, size);
+    const fileIdentity = computeFileIdentity(filename, size);
+    return fileIdentity ? sha256(`file:${fileIdentity}`) : null;
   };
   
   const { toUpload: assetsToUpload, alreadyOnServer: preFilterSkipped } = preFilterAssetsWithCache(
@@ -1579,7 +1580,8 @@ export const stealthCloudBackupSelectedCore = async ({
     if (!asset) return null;
     const filename = asset?.filename || `file_${asset.id}`;
     const size = asset?.fileSize || 0;
-    return computeFileIdentity(filename, size);
+    const fileIdentity = computeFileIdentity(filename, size);
+    return fileIdentity ? sha256(`file:${fileIdentity}`) : null;
   };
   
   const { toUpload: assetsToUpload, alreadyOnServer: preFilterSkipped } = preFilterAssetsWithCache(
