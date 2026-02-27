@@ -5084,6 +5084,18 @@ export const getStoredNFTs = async () => {
       return nft;
     });
 
+    // Convert legacy ipfs:// scheme URLs to gateway URLs (old standard NFTs stored raw ipfs:// URIs)
+    for (const nft of nfts) {
+      if (nft.imageUrl && nft.imageUrl.startsWith('ipfs://')) {
+        nft.imageUrl = 'https://nftstorage.link/ipfs/' + nft.imageUrl.replace(/^ipfs:\/\/(ipfs\/)?/, '');
+        needsSave = true;
+      }
+      if (nft.arweaveUrl && nft.arweaveUrl.startsWith('ipfs://')) {
+        nft.arweaveUrl = 'https://nftstorage.link/ipfs/' + nft.arweaveUrl.replace(/^ipfs:\/\/(ipfs\/)?/, '');
+        needsSave = true;
+      }
+    }
+
     // Strip bloated fields (metadata, exifData, large data URIs) to prevent OOM
     for (const nft of nfts) {
       if (nft.imageUrl && nft.imageUrl.startsWith('data:') && !nft.imageUrl.startsWith('data:image/svg') && nft.imageUrl.length > 5000) {
@@ -5590,7 +5602,9 @@ export const fetchNFTsFromBlockchain = async (walletAddress, knownMints = null) 
           const licenseVal = getAttr('License') || null;
           const encProps = (metadata.properties && metadata.properties.encryption) ? metadata.properties.encryption : {};
           const hasRealEncKeys = !!(encProps.wrappedKey && encProps.nonce && encProps.wrapNonce);
-          const imgUrl = metadata.image || '';
+          let imgUrl = metadata.image || '';
+          // Convert ipfs:// scheme to gateway URL (old standard NFTs use raw ipfs:// URIs)
+          if (imgUrl.startsWith('ipfs://')) imgUrl = 'https://nftstorage.link/ipfs/' + imgUrl.replace(/^ipfs:\/\/(ipfs\/)?/, '');
           const storageType = (imgUrl.includes('stealthlynk.io') || imgUrl.includes('stealthcloud')) ? 'cloud' : imgUrl.startsWith('data:') ? 'onchain' : (imgUrl.includes('akrd.net') || imgUrl.includes('arweave.net')) ? 'arweave' : 'ipfs';
 
           nfts.push({
@@ -5923,6 +5937,8 @@ const fetchCompressedNFTs = async (walletAddress, knownMints = null) => {
       const storageAttr = getAttr('Storage');
       const originalImgUrl = (metadataJson && metadataJson.image) ? metadataJson.image : imageUrl;
       if (metadataJson && metadataJson.image && !imageUrl) imageUrl = metadataJson.image;
+      // Convert ipfs:// scheme to gateway URL (old NFTs may store raw ipfs:// URIs in metadata)
+      if (imageUrl && imageUrl.startsWith('ipfs://')) imageUrl = 'https://nftstorage.link/ipfs/' + imageUrl.replace(/^ipfs:\/\/(ipfs\/)?/, '');
       const storageType = storageAttr === 'StealthCloud' ? 'cloud' : storageAttr === 'Arweave' ? 'arweave' : storageAttr === 'Embedded SVG' ? 'onchain' : storageAttr === 'IPFS' ? 'ipfs' : (originalImgUrl && (originalImgUrl.includes('stealthlynk.io') || originalImgUrl.includes('stealthcloud'))) ? 'cloud' : (originalImgUrl && originalImgUrl.startsWith('data:')) ? 'onchain' : (originalImgUrl && (originalImgUrl.includes('akrd.net') || originalImgUrl.includes('arweave.net'))) ? 'arweave' : 'ipfs';
 
       return {

@@ -87,10 +87,13 @@ const IPFS_GATEWAYS = [
   'https://cloudflare-ipfs.com/ipfs/', // Cloudflare - fast CDN
 ];
 
-// Extract CID from any IPFS URL
+// Extract CID from any IPFS URL (supports /ipfs/CID, ipfs://CID, and ipfs://ipfs/CID)
 const extractIPFSCid = (url) => {
   if (!url) return null;
-  // Match /ipfs/CID pattern
+  // Match ipfs://CID or ipfs://ipfs/CID (raw IPFS scheme used by old standard NFTs)
+  const ipfsScheme = url.match(/^ipfs:\/\/(?:ipfs\/)?([a-zA-Z0-9]+)/);
+  if (ipfsScheme) return ipfsScheme[1];
+  // Match /ipfs/CID pattern (gateway URLs)
   const match = url.match(/\/ipfs\/([a-zA-Z0-9]+)/);
   return match ? match[1] : null;
 };
