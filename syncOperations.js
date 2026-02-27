@@ -503,13 +503,22 @@ const buildDedupSetsFromServerMeta = (manifests) => {
 /**
  * Check if a server file should be skipped (already exists locally)
  * Uses same dedup logic as backup: manifestId, fileHash, perceptualHash (1-bit)
+ * Plus filename match as fallback (critical for sync-selected where hashes aren't computed)
  */
 const shouldSkipServerFile = (serverFile, localSets) => {
-  const { manifestId, fileHash, perceptualHash } = serverFile;
+  const { manifestId, fileHash, perceptualHash, filename } = serverFile;
   
   // Check by manifestId (filename + size hash)
   if (manifestId && localSets.manifestIds.has(manifestId)) {
     return { skip: true, reason: 'manifestId' };
+  }
+  
+  // Check by normalized filename (same device: exact filename match is reliable)
+  if (filename && localSets.filenames.size > 0) {
+    const normalized = normalizeFilenameForCompare(filename);
+    if (normalized && localSets.filenames.has(normalized)) {
+      return { skip: true, reason: 'filename' };
+    }
   }
   
   // Check by file hash (exact byte match - images and videos)
@@ -559,11 +568,11 @@ const scanLocalPhotosForDedup = async (onStatus, onProgress, progressStart, prog
       const normalized = normalizeFilenameForCompare(filename);
       if (normalized) localSets.filenames.add(normalized);
       
-      // Compute manifestId (filename + size) - use asset metadata
-      const fileSize = asset.width && asset.height ? (asset.width * asset.height) : null;
-      const duration = asset.duration || 0;
+      // Compute manifestId (filename + size) - must match how backup computes it
+      // Backup uses actual file size in bytes (assetInfo.fileSize), so we must use the same
+      const fileSize = asset.fileSize ? Number(asset.fileSize) : 0;
       
-      const fileIdentity = computeFileIdentity(filename, duration > 0 ? Math.round(duration * 1000) : (fileSize || 0));
+      const fileIdentity = computeFileIdentity(filename, fileSize);
       if (fileIdentity) {
         const manifestId = sha256(`file:${fileIdentity}`);
         localSets.manifestIds.add(manifestId);
@@ -885,12 +894,10 @@ export const stealthCloudRestoreCore = async ({
   onStatus(t('status.syncScanningLocal'));
   updateProgress(onProgress, 0.01, true); // Start at 1% so user sees action
 
-  // Choose Files mode: use lightweight metadata-only scan (no hashing)
-  // since user explicitly chose files — full device hashing is unnecessary
-  const isSelectMode = manifestIds && Array.isArray(manifestIds) && manifestIds.length > 0;
-  const localSets = isSelectMode
-    ? await scanLocalPhotosForDedup(onStatus, onProgress, 0.01, 0.10)
-    : await buildLocalHashIndex(resolveReadableFilePath, onStatus, onProgress, 0.01, 0.10);
+  // Always use full hash-based local index for reliable dedup
+  // Hash cache makes this fast on subsequent runs; lightweight scan missed duplicates
+  // because Expo getAssetsAsync doesn't return fileSize and iOS can rename files
+  const localSets = await buildLocalHashIndex(resolveReadableFilePath, onStatus, onProgress, 0.01, 0.10);
   
   updateProgress(onProgress, 0.10, true);
   await yieldToUi();
@@ -1281,12 +1288,10 @@ export const localRemoteRestoreCore = async ({
   onStatus(t('status.syncScanningLocal'));
   updateProgress(onProgress, 0.01, true); // Start at 1% so user sees action
 
-  // Choose Files mode: use lightweight metadata-only scan (no hashing)
-  // since user explicitly chose files — full device hashing is unnecessary
-  const isSelectMode = onlyFilenames && Array.isArray(onlyFilenames) && onlyFilenames.length > 0;
-  const localSets = isSelectMode
-    ? await scanLocalPhotosForDedup(onStatus, onProgress, 0.01, 0.10)
-    : await buildLocalHashIndex(resolveReadableFilePath, onStatus, onProgress, 0.01, 0.10);
+  // Always use full hash-based local index for reliable dedup
+  // Hash cache makes this fast on subsequent runs; lightweight scan missed duplicates
+  // because Expo getAssetsAsync doesn't return fileSize and iOS can rename files
+  const localSets = await buildLocalHashIndex(resolveReadableFilePath, onStatus, onProgress, 0.01, 0.10);
   
   updateProgress(onProgress, 0.10, true);
   await yieldToUi();
