@@ -684,7 +684,7 @@
         "photoCertified": "사진 \"{{name}}\"이(가) 인증되었습니다.",
         "certId": "기록 ID",
         "viewInOriginalsAndProofs": "원본에서 보기",
-        "certifyOriginal": "원본 인증",
+        "certifyOriginal": "사진 인증",
         "certificationModeLabel": "인증 모드",
         "certificationModeDesc": "위변조 방지 인증을 생성하세요. 프라이버시 수준을 선택하세요.",
         "privateCertifiedTitle": "비공개 원본",

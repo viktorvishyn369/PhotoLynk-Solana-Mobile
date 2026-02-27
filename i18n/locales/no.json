@@ -684,7 +684,7 @@
         "photoMintedOnSolana": "Ditt foto \"{{name}}\" har blitt sertifisert.",
         "standardInfo": "Standardposter oppretter en unik permanent identifikator for hver sertifisering.",
         "loadingPhotos": "Laster bilder...",
-        "certifyOriginal": "Sertifiser original",
+        "certifyOriginal": "Sertifiser foto",
         "certificationModeLabel": "Sertifiseringsmodus",
         "certificationModeDesc": "Opprett en manipulasjonssikker sertifisering. Velg personvernnivå.",
         "privateCertifiedTitle": "Privat original",

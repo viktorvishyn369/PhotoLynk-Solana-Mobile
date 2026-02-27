@@ -630,7 +630,7 @@
         "photoMintedOnSolana": "Vaša fotografija \"{{name}}\" je certificirana.",
         "standardInfo": "Standardni zapisi stvaraju jedinstveni trajni identifikator za svaku certifikaciju.",
         "loadingPhotos": "Učitavanje fotografija...",
-        "certifyOriginal": "Certificiraj original",
+        "certifyOriginal": "Certificiraj fotografiju",
         "certificationModeLabel": "Način certificiranja",
         "certificationModeDesc": "Stvorite certifikat otporan na manipulaciju. Odaberite razinu privatnosti.",
         "privateCertifiedTitle": "Privatni original",

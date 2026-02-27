@@ -630,7 +630,7 @@
         "photoMintedOnSolana": "Vaše fotografie \"{{name}}\" byla certifikována.",
         "standardInfo": "Standardní záznamy vytvářejí jedinečný trvalý identifikátor pro každou certifikaci.",
         "loadingPhotos": "Načítání fotek...",
-        "certifyOriginal": "Certifikovat originál",
+        "certifyOriginal": "Certifikovat fotku",
         "certificationModeLabel": "Režim certifikace",
         "certificationModeDesc": "Vytvořte certifikaci odolnou proti manipulaci. Zvolte úroveň soukromí.",
         "privateCertifiedTitle": "Soukromý originál",

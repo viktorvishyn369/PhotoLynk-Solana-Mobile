@@ -630,7 +630,7 @@
         "photoMintedOnSolana": "Foto Anda \"{{name}}\" telah disertifikasi.",
         "standardInfo": "Catatan standar membuat pengidentifikasi permanen unik untuk setiap sertifikasi.",
         "loadingPhotos": "Memuat foto...",
-        "certifyOriginal": "Sertifikasi asli",
+        "certifyOriginal": "Sertifikasi foto",
         "certificationModeLabel": "Mode Sertifikasi",
         "certificationModeDesc": "Buat sertifikasi anti-pemalsuan. Pilih tingkat privasi Anda.",
         "privateCertifiedTitle": "Asli Privat",

@@ -684,7 +684,7 @@
         "photoMintedOnSolana": "Jūsu foto \"{{name}}\" tika sertificēts.",
         "standardInfo": "Standarta ieraksti izveido unikālu pastāvīgu identifikatoru katram sertifikātam.",
         "loadingPhotos": "Foto ielāde...",
-        "certifyOriginal": "Sertificēt oriģinālu",
+        "certifyOriginal": "Sertificēt fotoattēlu",
         "certificationModeLabel": "Sertifikācijas režīms",
         "certificationModeDesc": "Izveidojiet viltošanai izturīgu sertifikātu. Izvēlieties konfidencialitātes līmeni.",
         "privateCertifiedTitle": "Privāts oriģināls",

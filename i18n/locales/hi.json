@@ -684,7 +684,7 @@
         "photoCertified": "आपकी फ़ोटो \"{{name}}\" प्रमाणित हो गई है।",
         "certId": "रिकॉर्ड ID",
         "viewInOriginalsAndProofs": "मूल में देखें",
-        "certifyOriginal": "मूल प्रमाणित करें",
+        "certifyOriginal": "फ़ोटो प्रमाणित करें",
         "certificationModeLabel": "प्रमाणन मोड",
         "certificationModeDesc": "छेड़छाड़-रोधी प्रमाणन बनाएं। अपना गोपनीयता स्तर चुनें।",
         "privateCertifiedTitle": "निजी मूल",

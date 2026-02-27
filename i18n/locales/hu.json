@@ -630,7 +630,7 @@
         "photoMintedOnSolana": "A fényképed \"{{name}}\" tanúsítva lett.",
         "standardInfo": "A standard bejegyzések egyedi állandó azonosítót hoznak létre minden tanúsításhoz.",
         "loadingPhotos": "Fényképek betöltése...",
-        "certifyOriginal": "Eredeti tanúsítása",
+        "certifyOriginal": "Fotó tanúsítása",
         "certificationModeLabel": "Tanúsítási mód",
         "certificationModeDesc": "Hozzon létre hamisításbiztos tanúsítványt. Válassza ki az adatvédelmi szintet.",
         "privateCertifiedTitle": "Privát eredeti",

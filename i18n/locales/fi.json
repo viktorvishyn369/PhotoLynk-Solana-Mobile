@@ -684,7 +684,7 @@
         "photoMintedOnSolana": "Valokuvasi \"{{name}}\" on sertifioitu.",
         "standardInfo": "Vakiotietueet luovat yksilöllisen pysyvän tunnisteen jokaiselle todistukselle.",
         "loadingPhotos": "Ladataan kuvia...",
-        "certifyOriginal": "Sertifioi alkuperäinen",
+        "certifyOriginal": "Sertifioi valokuva",
         "certificationModeLabel": "Sertifiointitila",
         "certificationModeDesc": "Luo väärentämätön sertifikaatti. Valitse yksityisyystasosi.",
         "privateCertifiedTitle": "Yksityinen alkuperäinen",

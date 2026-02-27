@@ -630,7 +630,7 @@
         "photoMintedOnSolana": "Foto ta \"{{name}}\" a fost certificată.",
         "standardInfo": "Înregistrările standard creează un identificator permanent unic pentru fiecare certificare.",
         "loadingPhotos": "Se încarcă fotografii...",
-        "certifyOriginal": "Certifică original",
+        "certifyOriginal": "Certifică fotografia",
         "certificationModeLabel": "Mod de certificare",
         "certificationModeDesc": "Creați o certificare rezistentă la manipulare. Alegeți nivelul de confidențialitate.",
         "privateCertifiedTitle": "Original privat",

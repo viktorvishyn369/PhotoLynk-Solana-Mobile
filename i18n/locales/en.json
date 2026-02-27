@@ -786,7 +786,7 @@
         "photoCertified": "Your photo \"{{name}}\" has been certified.",
         "certId": "Record ID",
         "viewInOriginalsAndProofs": "View in your Originals and Proofs.",
-        "certifyOriginal": "Certify Original",
+        "certifyOriginal": "Certify Photo",
         "certificationModeLabel": "Certification Mode",
         "certificationModeDesc": "Create a tamper-proof certification. Choose your privacy level.",
         "privateCertifiedTitle": "Private Certified",

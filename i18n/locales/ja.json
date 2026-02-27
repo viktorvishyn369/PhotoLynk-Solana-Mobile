@@ -684,7 +684,7 @@
         "photoCertified": "写真「{{name}}」が認証されました。",
         "certId": "記録ID",
         "viewInOriginalsAndProofs": "オリジナルで表示",
-        "certifyOriginal": "オリジナルを認証",
+        "certifyOriginal": "写真を認証",
         "certificationModeLabel": "認証モード",
         "certificationModeDesc": "改ざん防止証明を作成。プライバシーレベルを選択してください。",
         "privateCertifiedTitle": "プライベート原本",

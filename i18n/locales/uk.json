@@ -684,7 +684,7 @@
         "photoCertified": "Ваше фото \"{{name}}\" сертифіковано.",
         "certId": "ID запису",
         "viewInOriginalsAndProofs": "Переглянте у розділі Оригінали.",
-        "certifyOriginal": "Сертифікувати оригінал",
+        "certifyOriginal": "Сертифікувати фото",
         "certificationModeLabel": "Режим сертифікації",
         "certificationModeDesc": "Створіть сертифікацію, захищену від підробки. Оберіть рівень конфіденційності.",
         "privateCertifiedTitle": "Приватний оригінал",

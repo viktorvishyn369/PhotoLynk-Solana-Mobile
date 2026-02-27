@@ -684,7 +684,7 @@
         "photoMintedOnSolana": "Jūsų nuotrauka \"{{name}}\" buvo sertifikuota.",
         "standardInfo": "Standartiniai įrašai sukuria unikalų nuolatinį identifikatorių kiekvienam sertifikatui.",
         "loadingPhotos": "Kraunamos nuotraukos...",
-        "certifyOriginal": "Sertifikuoti originalą",
+        "certifyOriginal": "Sertifikuoti nuotrauką",
         "certificationModeLabel": "Sertifikavimo režimas",
         "certificationModeDesc": "Sukurkite apsaugotą nuo klastojimo sertifikatą. Pasirinkite privatumo lygį.",
         "privateCertifiedTitle": "Privatus originalas",

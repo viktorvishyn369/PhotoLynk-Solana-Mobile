@@ -684,7 +684,7 @@
         "photoCertified": "تم توثيق صورتك \"{{name}}\".",
         "certId": "معرف السجل",
         "viewInOriginalsAndProofs": "عرض في الأصول",
-        "certifyOriginal": "وثّق الأصل",
+        "certifyOriginal": "وثّق الصورة",
         "certificationModeLabel": "وضع التوثيق",
         "certificationModeDesc": "إنشاء شهادة مقاومة للتلاعب. اختر مستوى الخصوصية.",
         "privateCertifiedTitle": "أصل خاص",

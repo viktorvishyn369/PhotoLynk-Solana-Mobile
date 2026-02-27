@@ -684,7 +684,7 @@
         "photoCertified": "您的照片 \"{{name}}\" 已认证。",
         "certId": "记录ID",
         "viewInOriginalsAndProofs": "在原创中查看",
-        "certifyOriginal": "认证原创",
+        "certifyOriginal": "认证照片",
         "certificationModeLabel": "认证模式",
         "certificationModeDesc": "创建防篡改认证。选择您的隐私级别。",
         "privateCertifiedTitle": "私密原件",

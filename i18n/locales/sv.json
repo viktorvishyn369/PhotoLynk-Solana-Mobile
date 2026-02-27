@@ -684,7 +684,7 @@
         "photoCertified": "Ditt foto \"{{name}}\" har certifierats.",
         "certId": "Register-ID",
         "viewInOriginalsAndProofs": "Visa i Original.",
-        "certifyOriginal": "Certifiera original",
+        "certifyOriginal": "Certifiera foto",
         "certificationModeLabel": "Certifieringsläge",
         "certificationModeDesc": "Skapa en manipuleringssäker certifiering. Välj din integritetsnivå.",
         "privateCertifiedTitle": "Privat original",

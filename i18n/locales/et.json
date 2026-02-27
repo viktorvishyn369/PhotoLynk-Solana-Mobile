@@ -684,7 +684,7 @@
         "photoMintedOnSolana": "Sinu foto \"{{name}}\" on sertifitseeritud.",
         "standardInfo": "Standardkirjed loovad unikaalse püsiva identifikaatori iga sertifikaadi jaoks.",
         "loadingPhotos": "Fotode laadimine...",
-        "certifyOriginal": "Sertifitseeri originaal",
+        "certifyOriginal": "Sertifitseeri foto",
         "certificationModeLabel": "Sertifitseerimisrežiim",
         "certificationModeDesc": "Looge võltsimiskindel sertifikaat. Valige privaatsustase.",
         "privateCertifiedTitle": "Privaatne originaal",

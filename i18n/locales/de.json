@@ -684,7 +684,7 @@
         "photoCertified": "Ihr Foto \"{{name}}\" wurde zertifiziert.",
         "certId": "Aufzeichnungs-ID",
         "viewInOriginalsAndProofs": "In Originale ansehen.",
-        "certifyOriginal": "Original zertifizieren",
+        "certifyOriginal": "Foto zertifizieren",
         "certificationModeLabel": "Zertifizierungsmodus",
         "certificationModeDesc": "Erstellen Sie eine manipulationssichere Zertifizierung. Wählen Sie Ihre Datenschutzstufe.",
         "privateCertifiedTitle": "Privates Original",

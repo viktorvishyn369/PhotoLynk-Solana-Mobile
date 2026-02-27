@@ -638,7 +638,7 @@
         "certifiedSuccess": "Successfully Certified!",
         "photoCertified": "Your photo \"{{name}}\" has been certified.",
         "viewInOriginalsAndProofs": "View in Originals.",
-        "certifyOriginal": "Certify Original",
+        "certifyOriginal": "Certify Photo",
         "certificationModeLabel": "Certification Mode",
         "certificationModeDesc": "Create a tamper-proof certification. Choose your privacy level.",
         "privateCertifiedTitle": "Private Original",

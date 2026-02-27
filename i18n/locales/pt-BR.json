@@ -630,7 +630,7 @@
         "photoMintedOnSolana": "Sua foto \"{{name}}\" foi certificada para autenticidade.",
         "standardInfo": "Os registros padrão criam um identificador permanente único para cada certificação.",
         "loadingPhotos": "Carregando fotos...",
-        "certifyOriginal": "Certificar original",
+        "certifyOriginal": "Certificar foto",
         "certificationModeLabel": "Modo de certificação",
         "certificationModeDesc": "Crie uma certificação à prova de adulteração. Escolha seu nível de privacidade.",
         "privateCertifiedTitle": "Original privado",
