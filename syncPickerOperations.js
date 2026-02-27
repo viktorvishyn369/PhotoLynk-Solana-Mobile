@@ -213,7 +213,7 @@ export const fetchThumbnailBase64 = async (filename, config, SERVER_URL, retryCo
       }
       return null;
     }
-    const base64 = Buffer.from(response.data, 'binary').toString('base64');
+    const base64 = Buffer.from(new Uint8Array(response.data)).toString('base64');
     console.log('[THUMB] OK:', filename, 'size:', response.data.byteLength);
     return `data:image/jpeg;base64,${base64}`;
   } catch (e) {

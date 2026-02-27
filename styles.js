@@ -1,5 +1,5 @@
 // PhotoLynk Mobile App - Styles
-import { StyleSheet, Platform, Dimensions, PixelRatio } from 'react-native';
+import { StyleSheet, Platform, Dimensions, PixelRatio, StatusBar } from 'react-native';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -139,7 +139,7 @@ export const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: scaleSpacing(20),
-    paddingTop: Math.min(60, SCREEN_HEIGHT * 0.04 + 20),
+    paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 24) : 44,
     paddingBottom: scaleSpacing(16),
     backgroundColor: '#0A0A0A',
   },

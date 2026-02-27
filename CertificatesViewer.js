@@ -25,7 +25,8 @@ import { Feather } from '@expo/vector-icons';
 import Clipboard from '@react-native-clipboard/clipboard';
 import NFTOperations from './nftOperations';
 import * as WalletAdapter from './WalletAdapter';
-import { t } from './i18n';
+import { t, getCurrentLanguage } from './i18n';
+import * as Application from 'expo-application';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const SCREEN_HEIGHT_FULL = Dimensions.get('screen').height;
@@ -66,7 +67,7 @@ const CertificatesViewer = ({ visible, onClose, serverUrl, getAuthHeaders, onSho
         try {
           const authConfig = await getAuthHeaders();
           const headers = authConfig?.headers || authConfig;
-          await NFTOperations.syncCertificatesFromServer(serverUrl, headers);
+          await NFTOperations.syncCertificatesFromServer('https://stealthlynk.io', headers);
         } catch (_) {}
       }
       const certs = await NFTOperations.getStoredCertificates();
@@ -325,7 +326,8 @@ const CertificatesViewer = ({ visible, onClose, serverUrl, getAuthHeaders, onSho
     if (!dateStr) return 'N/A';
     try {
       const d = new Date(dateStr);
-      return d.toLocaleString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+      const lang = getCurrentLanguage() || 'en';
+      return d.toLocaleString(lang, { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
     } catch { return dateStr; }
   };
 
@@ -534,10 +536,16 @@ const CertificatesViewer = ({ visible, onClose, serverUrl, getAuthHeaders, onSho
                 contentHash={c.contentHash}
                 onCopy={(cmd) => { Clipboard.setString(cmd); showDarkAlert(t('certificates.rfc3161CopiedTitle'), t('certificates.rfc3161CopiedMsg')); }}
               />
-              {!c.rfc3161Token && (
+              {!c.rfc3161Token && loadingDetail && (
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4, paddingHorizontal: 4 }}>
                   <ActivityIndicator size="small" color="#10b981" />
                   <Text style={{ fontSize: 10, color: '#6b7280' }}>{t('certificates.recoveringToken') || 'Recovering full token from on-chain metadata...'}</Text>
+                </View>
+              )}
+              {!c.rfc3161Token && !loadingDetail && (
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4, paddingHorizontal: 4 }}>
+                  <Feather name="check-circle" size={12} color="#10b981" />
+                  <Text style={{ fontSize: 10, color: '#6b7280' }}>{t('certificates.tokenOnChain') || 'Full token stored on-chain — verified via metadata'}</Text>
                 </View>
               )}
             </>
@@ -547,7 +555,7 @@ const CertificatesViewer = ({ visible, onClose, serverUrl, getAuthHeaders, onSho
               <View style={styles.detailDivider} />
               <Text style={styles.detailSectionTitle}>{t('certificates.c2paTitle')}</Text>
               <DetailRow label={t('certificates.c2paStandard')} value={t('certificates.c2paStandardValue')} />
-              <DetailRow label={t('certificates.c2paClaimGenerator')} value={c.c2paManifest?.claim_generator || 'PhotoLynk/1.0'} />
+              <DetailRow label={t('certificates.c2paClaimGenerator')} value={c.c2paManifest?.claim_generator || `PhotoLynk/${Application.nativeApplicationVersion || '2.0.0'}`} />
               <DetailRow label={t('certificates.c2paCreated')} value={c.c2paManifest?.claim?.created || c.issuedAt || 'N/A'} />
             </>
           )}
@@ -599,16 +607,6 @@ const CertificatesViewer = ({ visible, onClose, serverUrl, getAuthHeaders, onSho
             </>
           )}
 
-          {/* Archive action — moved from card to detail only */}
-          <View style={styles.detailDivider} />
-          <TouchableOpacity
-            style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(107,114,128,0.1)', borderRadius: 10, paddingVertical: 12, marginTop: 4, gap: 8 }}
-            activeOpacity={0.7}
-            onPress={() => handleDelete(c)}
-          >
-            <Feather name="archive" size={16} color="#6b7280" />
-            <Text style={{ color: '#6b7280', fontWeight: '500', fontSize: 13 }}>{t('certificates.archiveFromView') || 'Archive from view'}</Text>
-          </TouchableOpacity>
         </View>
         </ScrollView>
       </View>
@@ -629,7 +627,7 @@ const CertificatesViewer = ({ visible, onClose, serverUrl, getAuthHeaders, onSho
 
   return (
     <View style={styles.fullOverlay}>
-      <StatusBar backgroundColor="#0a0a0a" barStyle="light-content" />
+      <StatusBar backgroundColor="transparent" barStyle="light-content" translucent />
       <View style={styles.container}>
         <View style={styles.header}>
           <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
@@ -787,7 +785,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 16,
-    paddingTop: Platform.OS === 'ios' ? 50 : 16,
+    paddingTop: Platform.OS === 'ios' ? 44 : 16,
     paddingBottom: 12,
     borderBottomWidth: 1,
     borderBottomColor: COLORS.border,

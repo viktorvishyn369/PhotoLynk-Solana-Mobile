@@ -573,7 +573,7 @@ const DecryptedNFTImage = ({ nft, style, isDetail = false, getAuthHeaders = null
     return (
       <View style={[style, { justifyContent: 'center', alignItems: 'center', backgroundColor: COLORS.surface }]}>
         <ActivityIndicator size={isDetail ? 'large' : 'small'} color={COLORS.primary} />
-        <Text style={{ fontSize: 8, color: COLORS.primary, marginTop: 4 }}>Decrypting...</Text>
+        <Text style={{ fontSize: 8, color: COLORS.primary, marginTop: 4 }}>{t('nftAlbum.decrypting')}</Text>
       </View>
     );
   }
@@ -582,7 +582,7 @@ const DecryptedNFTImage = ({ nft, style, isDetail = false, getAuthHeaders = null
     return (
       <View style={[style, { justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(153,69,255,0.06)' }]}>
         <Feather name="lock" size={isDetail ? 48 : 24} color="#9945FF" />
-        <Text style={{ fontSize: isDetail ? 14 : 8, color: '#9945FF', fontWeight: '600', marginTop: 4, textAlign: 'center' }}>{`Encrypted\n& Certified`}</Text>
+        <Text style={{ fontSize: isDetail ? 14 : 8, color: '#9945FF', fontWeight: '600', marginTop: 4, textAlign: 'center' }}>{t('nftAlbum.encryptedCertified')}</Text>
       </View>
     );
   }
@@ -692,7 +692,7 @@ const NFTGallery = ({
         try {
           const authConfig = await getAuthHeaders();
           const headers = authConfig?.headers || authConfig;
-          await NFTOperations.syncNFTsFromServer(serverUrl, headers);
+          await NFTOperations.syncNFTsFromServer('https://stealthlynk.io', headers);
         } catch (syncErr) {
           console.log('[NFTGallery] Server sync failed, using local:', syncErr.message);
         } finally {
@@ -729,7 +729,7 @@ const NFTGallery = ({
           headers = authConfig?.headers || authConfig;
         } catch (_) {}
       }
-      const result = await NFTOperations.discoverAndImportNFTs(walletAddr, serverUrl, headers);
+      const result = await NFTOperations.discoverAndImportNFTs(walletAddr, 'https://stealthlynk.io', headers);
       if (result.success && (result.imported > 0 || result.updated > 0)) {
         console.log(`[NFTGallery] Auto-scan: ${result.imported} new, ${result.updated || 0} updated`);
         // Reload full list from storage to pick up updated encryptionData/edition
@@ -810,7 +810,7 @@ const NFTGallery = ({
         try {
           const authConfig = await getAuthHeaders();
           const headers = authConfig?.headers || authConfig;
-          await NFTOperations.syncNFTsFromServer(serverUrl, headers);
+          await NFTOperations.syncNFTsFromServer('https://stealthlynk.io', headers);
         } catch (syncErr) {
           console.log('[NFTGallery] Server sync failed, using local:', syncErr.message);
         } finally {
@@ -839,7 +839,7 @@ const NFTGallery = ({
     try {
       const authConfig = await getAuthHeaders();
       const headers = authConfig?.headers || authConfig;
-      const result = await NFTOperations.backupNFTsToServer(serverUrl, headers);
+      const result = await NFTOperations.backupNFTsToServer('https://stealthlynk.io', headers);
       if (result.success) {
         showDarkAlert(t('nftAlbum.backupComplete'), t('nftAlbum.nftsBackedUp', { count: result.backed }));
       } else {
@@ -852,43 +852,13 @@ const NFTGallery = ({
     }
   };
   
-  // Scan wallet for NFTs from blockchain
+  // Scan wallet for NFTs from blockchain (manual button press)
   const scanWalletForNFTs = async () => {
-    if (scanInProgressRef.current) return; // prevent concurrent scans
+    // Don't block manual scan if auto-scan is running — user explicitly pressed the button
     scanInProgressRef.current = true;
     setSyncing(true);
     try {
-      // Get wallet address from connected wallet
-      const { transact } = await import('@solana-mobile/mobile-wallet-adapter-protocol-web3js');
-      
-      let walletAddress = null;
-      await transact(async (wallet) => {
-        const authResult = await wallet.authorize({
-          cluster: 'mainnet-beta',
-          identity: {
-            name: 'PhotoLynk',
-            uri: 'https://photolynk.app',
-            icon: 'favicon.ico',
-          },
-        });
-        
-        const address = authResult.accounts[0].address;
-        const addressBytes = typeof address === 'string'
-          ? Uint8Array.from(atob(address), c => c.charCodeAt(0))
-          : new Uint8Array(address);
-        
-        const { PublicKey } = await import('@solana/web3.js');
-        walletAddress = new PublicKey(addressBytes).toBase58();
-      });
-      
-      if (!walletAddress) {
-        showDarkAlert(t('common.error'), t('nftAlbum.couldNotGetWallet'));
-        return;
-      }
-      
-      console.log('[NFTGallery] Scanning wallet:', walletAddress);
-      
-      // Get auth headers for server sync
+      // Get auth headers for server sync (StealthCloud)
       let headers = null;
       if (getAuthHeaders) {
         try {
@@ -898,21 +868,65 @@ const NFTGallery = ({
           console.log('[NFTGallery] No auth headers available');
         }
       }
-      
-      // Discover and import NFTs
-      const result = await NFTOperations.discoverAndImportNFTs(walletAddress, serverUrl, headers);
-      
-      if (result.success) {
-        if (result.imported > 0) {
-          showDarkAlert(t('nftAlbum.nftsFound'), t('nftAlbum.importedNfts', { count: result.imported }));
-          await loadNFTsAppendOnly(false); // Append only; keep current page/navigation
-        } else if (result.total > 0) {
-          showDarkAlert(t('nftAlbum.alreadySynced'), t('nftAlbum.allAlreadyInAlbum', { count: result.total }));
-        } else {
-          showDarkAlert(t('nftAlbum.noNftsFound'), t('nftAlbum.noNftsInWallet'));
+
+      // Sync from server first (fast restore — works even without wallet)
+      if (headers) {
+        try {
+          await NFTOperations.syncNFTsFromServer('https://stealthlynk.io', headers);
+        } catch (e) {
+          console.log('[NFTGallery] Server sync during scan failed:', e?.message);
         }
-      } else {
-        showDarkAlert(t('nftAlbum.scanFailed'), result.error || t('nftAlbum.couldNotScan'));
+      }
+
+      // Try to get wallet address from stored NFTs first (no wallet prompt needed)
+      let walletAddress = null;
+      try {
+        const storedNFTs = await NFTOperations.getStoredNFTs();
+        walletAddress = storedNFTs.find(n => n.ownerAddress)?.ownerAddress || null;
+      } catch (_) {}
+
+      // If no stored wallet, prompt wallet connection
+      if (!walletAddress) {
+        try {
+          const { transact } = await import('@solana-mobile/mobile-wallet-adapter-protocol-web3js');
+          await transact(async (wallet) => {
+            const authResult = await wallet.authorize({
+              cluster: 'mainnet-beta',
+              identity: {
+                name: 'PhotoLynk',
+                uri: 'https://photolynk.app',
+                icon: 'favicon.ico',
+              },
+            });
+            const address = authResult.accounts[0].address;
+            const addressBytes = typeof address === 'string'
+              ? Uint8Array.from(atob(address), c => c.charCodeAt(0))
+              : new Uint8Array(address);
+            const { PublicKey } = await import('@solana/web3.js');
+            walletAddress = new PublicKey(addressBytes).toBase58();
+          });
+        } catch (e) {
+          console.log('[NFTGallery] Wallet transact failed:', e?.message);
+        }
+      }
+
+      if (walletAddress) {
+        console.log('[NFTGallery] Scanning wallet:', walletAddress);
+        // Discover and import NFTs from blockchain
+        const result = await NFTOperations.discoverAndImportNFTs(walletAddress, 'https://stealthlynk.io', headers);
+        if (result.success && result.imported > 0) {
+          showDarkAlert(t('nftAlbum.nftsFound'), t('nftAlbum.importedNfts', { count: result.imported }));
+        }
+      }
+
+      // Always reload from storage — server sync may have added NFTs even if blockchain scan found 0
+      await loadNFTsAppendOnly(false);
+
+      const storedCount = (await NFTOperations.getStoredNFTs()).length;
+      if (!walletAddress && storedCount === 0) {
+        showDarkAlert(t('nftAlbum.noNftsFound'), t('nftAlbum.noNftsInWallet'));
+      } else if (storedCount > 0 && !walletAddress) {
+        showDarkAlert(t('nftAlbum.alreadySynced'), t('nftAlbum.allAlreadyInAlbum', { count: storedCount }));
       }
     } catch (e) {
       console.error('[NFTGallery] Scan failed:', e);
@@ -1928,7 +1942,7 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     borderBottomWidth: 1,
     borderBottomColor: COLORS.border,
-    paddingTop: Platform.OS === 'ios' ? 50 : 12,
+    paddingTop: Platform.OS === 'ios' ? 44 : 12,
   },
   closeButton: {
     padding: 8,

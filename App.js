@@ -277,9 +277,10 @@ export default function App() {
     // Ensure adapter initializes (restores previous connection and can emit change)
     WalletAdapter.initializeWalletAdapter().catch(() => {});
 
-    const unsubscribe = WalletAdapter.onWalletChanged(async (nextAddress, prevAddress) => {
+    const unsubscribe = WalletAdapter.onWalletChanged(async (nextAddress, prevAddress, label) => {
       if (!nextAddress || nextAddress === prevAddress) return;
       setQsWalletAddress(nextAddress || null);
+      setQsSeekerId(label || null);
       // Only purge + rescan on actual wallet switch, not initial restore
       // (NFTGallery handles the initial scan via autoScanBlockchain)
       if (!prevAddress) return;
@@ -288,13 +289,12 @@ export default function App() {
       } catch (_) {}
 
       try {
-        const serverUrl = getServerUrl();
         let headers = null;
         try {
-          const authConfig = await getAuthHeaders();
+          const authConfig = await getStealthCloudAuthHeaders();
           headers = authConfig?.headers || authConfig;
         } catch (_) {}
-        await NFTOperations.discoverAndImportNFTs(nextAddress, serverUrl, headers);
+        await NFTOperations.discoverAndImportNFTs(nextAddress, 'https://stealthlynk.io', headers);
       } catch (_) {}
 
       // Refresh gallery if open
@@ -419,6 +419,7 @@ export default function App() {
 
   // Quick-stats state
   const [qsWalletAddress, setQsWalletAddress] = useState(null);
+  const [qsSeekerId, setQsSeekerId] = useState(null);
   const [qsNftCount, setQsNftCount] = useState(null);
   const [qsLastBackupTime, setQsLastBackupTime] = useState(null);
 
@@ -448,6 +449,8 @@ export default function App() {
   const autoUploadAssetLogMsRef = useRef(0);
   const autoUploadSummaryLogMsRef = useRef(0);
   const autoUploadRunnerExitLogMsRef = useRef(0);
+  const scTokenRef = useRef(null);  // Cached StealthCloud-specific JWT
+  const scTokenTsRef = useRef(0);   // Timestamp when SC token was obtained
 
   // Cancels any in-flight user-initiated work (backup/sync/cleanup) before starting a new one
   const cancelInFlightOperations = async () => {
@@ -3196,28 +3199,27 @@ export default function App() {
     let interval = null;
     const doSync = async () => {
       try {
-        const url = getServerUrl();
-        if (!url) return;
-        let config = await getAuthHeaders();
+        let config = await getStealthCloudAuthHeaders();
         let headers = config?.headers || config;
         if (!headers) return;
         try {
-          // Sync NFTs from server → local
-          await NFTOperations.syncNFTsFromServer(url, headers);
+          // Sync NFTs from server → local (always StealthCloud)
+          await NFTOperations.syncNFTsFromServer('https://stealthlynk.io', headers);
         } catch (e) {
           if (e?.response?.status === 403) {
-            console.log('[BGSync] 403 on NFT sync — refreshing token');
-            const refreshed = await refreshAuthToken();
-            if (refreshed.success && refreshed.headers) {
-              headers = refreshed.headers;
-              await NFTOperations.syncNFTsFromServer(url, headers);
-            } else return;
+            console.log('[BGSync] 403 on NFT sync — re-auth against StealthCloud');
+            scTokenRef.current = null; // Force re-login
+            try {
+              const freshConfig = await getStealthCloudAuthHeaders();
+              headers = freshConfig?.headers || freshConfig;
+              if (headers) await NFTOperations.syncNFTsFromServer('https://stealthlynk.io', headers);
+            } catch (_) { return; }
           } else throw e;
         }
         // Sync certificates from server → local (graceful if endpoint not deployed)
-        try { await NFTOperations.syncCertificatesFromServer(url, headers); } catch (_) {}
+        try { await NFTOperations.syncCertificatesFromServer('https://stealthlynk.io', headers); } catch (_) {}
         // Backup local certs to server (in case minted offline)
-        try { await NFTOperations.backupCertificatesToServer(url, headers); } catch (_) {}
+        try { await NFTOperations.backupCertificatesToServer('https://stealthlynk.io', headers); } catch (_) {}
       } catch (e) {
         console.log('[BGSync] NFT/cert sync error:', e?.message);
       }
@@ -4069,7 +4071,7 @@ export default function App() {
    * Called from the wallet login overlay. Connects wallet, auto-registers
    * if needed, stores credentials, caches master key, and dismisses overlay.
    */
-  const performWalletLogin = async () => {
+  const performWalletLogin = async ({ skipNewUserConfirmation = false } = {}) => {
     setWalletAuthLoading(true);
     setWalletAuthError('');
     setWalletAuthStatus(t('auth.connectingWallet') || 'Connecting wallet...');
@@ -4080,6 +4082,7 @@ export default function App() {
         localHost,
         remoteHost,
         onStatus: (msg) => setWalletAuthStatus(msg),
+        skipNewUserConfirmation,
       });
 
       if (result.success) {
@@ -4105,6 +4108,31 @@ export default function App() {
         setWalletAuthStatus('');
         setWalletAuthError('');
         setView('home');
+      } else if (result.needsNewUserConfirmation) {
+        // No account found for this wallet — warn user before creating a new one
+        setWalletAuthLoading(false);
+        setWalletAuthStatus('');
+        showDarkAlert(
+          t('auth.newAccountTitle') || 'No Account Found',
+          t('auth.newAccountWarning') || 'No existing account is linked to this wallet. If you previously used PhotoLynk with an email and password, tap "Link Existing Account" to preserve access to your files and encrypted NFTs.\n\nCreating a new account will NOT have access to any previously uploaded files.',
+          [
+            {
+              text: t('auth.linkExistingAccount') || 'Link Existing Account',
+              onPress: () => {
+                setCustomAlert(null);
+                setShowLegacyFields(true);
+                setWalletAuthError('');
+              },
+            },
+            {
+              text: t('auth.createNewAccount') || 'Create New Account',
+              onPress: () => {
+                setCustomAlert(null);
+                performWalletLogin({ skipNewUserConfirmation: true });
+              },
+            },
+          ]
+        );
       } else if (result.userCancelled) {
         // User cancelled wallet prompt — stay on overlay
         setWalletAuthLoading(false);
@@ -4862,6 +4890,71 @@ export default function App() {
   };
 
   /**
+   * Get auth headers specifically for StealthCloud (https://stealthlynk.io).
+   * If the user is already connected to StealthCloud, returns the normal token.
+   * Otherwise, re-authenticates against StealthCloud using stored credentials
+   * and caches the token for 50 minutes to avoid repeated logins.
+   * Used by all NFT/certificate operations which always talk to StealthCloud.
+   */
+  const getStealthCloudAuthHeaders = async () => {
+    // If already on StealthCloud, just use the normal token
+    if (serverTypeRef.current === 'stealthcloud') {
+      return getAuthHeaders();
+    }
+
+    // Check cached SC token (valid for 50 min)
+    if (scTokenRef.current && Date.now() - scTokenTsRef.current < 50 * 60 * 1000) {
+      let uuid = deviceUuid;
+      if (!uuid) {
+        try { uuid = await SecureStore.getItemAsync('device_uuid'); } catch (_) {}
+      }
+      return {
+        headers: {
+          'Authorization': `Bearer ${scTokenRef.current}`,
+          'X-Device-UUID': uuid || '',
+          'X-Client-Build': CLIENT_BUILD,
+        }
+      };
+    }
+
+    // Re-authenticate against StealthCloud
+    const se = await SecureStore.getItemAsync('user_email').catch(() => null);
+    let sp = null;
+    try {
+      sp = await SecureStore.getItemAsync(SAVED_PASSWORD_KEY, { requireAuthentication: false });
+    } catch (_) {}
+    if (!se || !sp) {
+      console.log('[SC-Auth] No stored credentials for StealthCloud login');
+      return getAuthHeaders(); // fallback to normal token
+    }
+    try {
+      const did = await getDeviceUUID(se, sp);
+      const lr = await axios.post('https://stealthlynk.io/api/login', {
+        email: se,
+        password: sp,
+        device_uuid: did,
+        device_name: Platform.OS + ' ' + Platform.Version,
+      }, { timeout: 15000 });
+      if (lr.data?.token) {
+        scTokenRef.current = lr.data.token;
+        scTokenTsRef.current = Date.now();
+        console.log('[SC-Auth] StealthCloud token obtained');
+        return {
+          headers: {
+            'Authorization': `Bearer ${lr.data.token}`,
+            'X-Device-UUID': did,
+            'X-Client-Build': CLIENT_BUILD,
+          }
+        };
+      }
+    } catch (e) {
+      console.log('[SC-Auth] StealthCloud login failed:', e?.response?.status || e?.message);
+    }
+    // Fallback to normal token (may 403 but better than nothing)
+    return getAuthHeaders();
+  };
+
+  /**
    * Backs up all photos to the configured server (local/remote).
    * For StealthCloud, delegates to stealthCloudBackup.
    * @platform Both
@@ -5145,6 +5238,7 @@ export default function App() {
   if (view === 'loading') {
     return (
       <View style={{ flex: 1, backgroundColor: '#000', alignItems: 'center', justifyContent: 'center' }}>
+        <StatusBar barStyle="light-content" translucent backgroundColor="transparent" />
         <GradientSpinner size={90} />
       </View>
     );
@@ -5275,7 +5369,7 @@ export default function App() {
           {cameraPermission?.granted ? (
             <View style={{position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, pointerEvents: 'box-none'}}>
               {/* Top bar with title */}
-              <View style={{paddingTop: Platform.OS === 'ios' ? scaleSpacing(60) : scaleSpacing(40), paddingHorizontal: scaleSpacing(20), backgroundColor: 'rgba(0,0,0,0.5)'}}>
+              <View style={{paddingTop: Platform.OS === 'ios' ? 44 : (StatusBar.currentHeight || 24), paddingHorizontal: scaleSpacing(20), backgroundColor: 'rgba(0,0,0,0.5)'}}>
                 <Text style={{color: '#fff', fontSize: scale(18), fontWeight: '600', textAlign: 'center'}}>
                   {t('qrScanner.title')}
                 </Text>
@@ -5299,7 +5393,7 @@ export default function App() {
           ) : (
             <View style={{position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, pointerEvents: 'box-none'}}>
               {/* Top bar with title - full screen permission view */}
-              <View style={{paddingTop: Platform.OS === 'ios' ? scaleSpacing(60) : scaleSpacing(40), paddingHorizontal: scaleSpacing(20)}}>
+              <View style={{paddingTop: Platform.OS === 'ios' ? 44 : (StatusBar.currentHeight || 24), paddingHorizontal: scaleSpacing(20)}}>
                 <Text style={{color: '#fff', fontSize: scale(18), fontWeight: '600', textAlign: 'center'}}>
                   {t('qrScanner.title')}
                 </Text>
@@ -5466,6 +5560,7 @@ export default function App() {
 
   return (
     <View style={styles.container}>
+      <StatusBar barStyle="light-content" translucent backgroundColor="transparent" />
       <HomeScreen
         appDisplayName={APP_DISPLAY_NAME}
         appVersion="2.0.0"
@@ -5475,7 +5570,7 @@ export default function App() {
         progressAction={progressAction}
         loading={loading}
         glassModeEnabled={glassModeEnabled}
-        qsEmail={emailToSeekerId(email) || email}
+        qsEmail={qsSeekerId || emailToSeekerId(email) || email}
         qsWalletAddress={qsWalletAddress}
         qsNftCount={qsNftCount}
         qsLastBackupTime={qsLastBackupTime}
@@ -5589,7 +5684,7 @@ export default function App() {
       />
 
       {qrScannerOpen && (
-        <View style={{position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: '#000', zIndex: 9999}}>
+        <View style={{position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: '#000', zIndex: 10001, elevation: 10001}}>
           {cameraPermission?.granted ? (
             <CameraView
               style={{flex: 1}}
@@ -5620,7 +5715,7 @@ export default function App() {
           )}
           {cameraPermission?.granted ? (
             <View style={{position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, pointerEvents: 'box-none'}}>
-              <View style={{paddingTop: Platform.OS === 'ios' ? scaleSpacing(60) : scaleSpacing(40), paddingHorizontal: scaleSpacing(20), backgroundColor: 'rgba(0,0,0,0.5)'}}>
+              <View style={{paddingTop: Platform.OS === 'ios' ? 44 : (StatusBar.currentHeight || 24), paddingHorizontal: scaleSpacing(20), backgroundColor: 'rgba(0,0,0,0.5)'}}>
                 <Text style={{color: '#fff', fontSize: scale(18), fontWeight: '600', textAlign: 'center'}}>
                   {t('qrScanner.title')}
                 </Text>
@@ -5641,7 +5736,7 @@ export default function App() {
             </View>
           ) : (
             <View style={{position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, pointerEvents: 'box-none'}}>
-              <View style={{paddingTop: Platform.OS === 'ios' ? scaleSpacing(60) : scaleSpacing(40), paddingHorizontal: scaleSpacing(20)}}>
+              <View style={{paddingTop: Platform.OS === 'ios' ? 44 : (StatusBar.currentHeight || 24), paddingHorizontal: scaleSpacing(20)}}>
                 <Text style={{color: '#fff', fontSize: scale(18), fontWeight: '600', textAlign: 'center'}}>
                   {t('qrScanner.title')}
                 </Text>
@@ -5723,7 +5818,7 @@ export default function App() {
         return (
           <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: '#000' }}>
             {/* Header */}
-            <View style={{ paddingTop: Platform.OS === 'ios' ? 50 : 30, paddingHorizontal: 16, paddingBottom: 12, backgroundColor: 'rgba(0,0,0,0.8)' }}>
+            <View style={{ paddingTop: Platform.OS === 'ios' ? 44 : (StatusBar.currentHeight || 24), paddingHorizontal: 16, paddingBottom: 12, backgroundColor: 'rgba(0,0,0,0.8)' }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
                 <TouchableOpacity onPress={closeSimilarReview} style={{ padding: 8 }}>
                   <Text style={{ color: CLEANUP_MAGENTA, fontSize: scale(16), fontWeight: '600' }}>{t('common.cancel')}</Text>
@@ -6210,11 +6305,7 @@ export default function App() {
                 onPress={async () => {
                   const selectedKeys = getSelectedSyncKeys();
                   closeSyncPicker();
-                  if (serverType === 'stealthcloud') {
-                    await restorePhotos({ manifestIds: selectedKeys });
-                  } else {
-                    await restorePhotos({ onlyFilenames: selectedKeys });
-                  }
+                  await restorePhotos({ manifestIds: selectedKeys });
                 }}
                 style={styles.pickerHeaderBtn}>
                 <Text style={[styles.pickerHeaderBtnText, { color: THEME.secondary }]}>{t('picker.start')}</Text>
@@ -6416,7 +6507,7 @@ export default function App() {
         return (
         <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: '#000' }}>
           {/* Header */}
-          <View style={{ paddingTop: Platform.OS === 'ios' ? 50 : 30, paddingHorizontal: 16, paddingBottom: 12, backgroundColor: 'rgba(0,0,0,0.95)' }}>
+          <View style={{ paddingTop: Platform.OS === 'ios' ? 44 : (StatusBar.currentHeight || 24), paddingHorizontal: 16, paddingBottom: 12, backgroundColor: 'rgba(0,0,0,0.95)' }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
               <TouchableOpacity onPress={() => { setDuplicateReview(null); setStatus(t('status.duplicateScanCancelled')); }} style={{ padding: 8 }}>
                 <Text style={{ color: CLEANUP_MAGENTA, fontSize: scale(16), fontWeight: '600' }}>{t('common.cancel')}</Text>
@@ -6582,7 +6673,7 @@ export default function App() {
       })()}
 
       {customAlert && (
-        <View style={[styles.overlay, glassModeEnabled && styles.overlayGlass, { zIndex: 9999 }]}>
+        <View style={[styles.overlay, glassModeEnabled && styles.overlayGlass, { zIndex: 10001 }]}>
           <View style={[styles.overlayCard, glassModeEnabled && styles.overlayCardGlass, { backgroundColor: glassModeEnabled ? 'rgba(30, 30, 30, 0.9)' : '#1E1E1E', maxWidth: isTablet ? 480 : 340 }]}>
             <Text style={[styles.overlayTitle, { fontSize: scale(18), marginBottom: scaleSpacing(8) }]}>{customAlert.title}</Text>
             <Text style={{ color: '#CCC', fontSize: scale(14), textAlign: 'center', marginBottom: scaleSpacing(14), lineHeight: scale(20) }}>{customAlert.message}</Text>
@@ -6679,7 +6770,7 @@ export default function App() {
         onClose={closeNftPicker}
         onSelectPhoto={handleMintNFT}
         resolveReadableFilePath={resolveReadableFilePath}
-        serverConfig={{ baseUrl: getServerUrl(), getAuthHeaders }}
+        serverConfig={{ baseUrl: getServerUrl(), getAuthHeaders: getStealthCloudAuthHeaders }}
         checkCloudEligibility={(fileSize) => checkStealthCloudEligibility({ baseUrl: getServerUrl(), getAuthHeaders }, fileSize)}
       />
 
@@ -6688,8 +6779,8 @@ export default function App() {
         visible={nftGalleryOpen}
         onClose={closeNftGallery}
         onTransferNFT={handleNftTransfer}
-        serverUrl={getServerUrl()}
-        getAuthHeaders={getAuthHeaders}
+        serverUrl={'https://stealthlynk.io'}
+        getAuthHeaders={getStealthCloudAuthHeaders}
         refreshKey={nftGalleryRefreshKey}
         onShowCertificate={(mintAddress) => {
           setNftGalleryOpen(false);
@@ -6705,8 +6796,8 @@ export default function App() {
       <CertificatesViewer
         visible={nftCertsOpen}
         onClose={() => setNftCertsOpen(false)}
-        serverUrl={getServerUrl()}
-        getAuthHeaders={getAuthHeaders}
+        serverUrl={'https://stealthlynk.io'}
+        getAuthHeaders={getStealthCloudAuthHeaders}
         onShowNFT={(mintAddress) => {
           setNftCertsOpen(false);
           setPendingNftMint(mintAddress);

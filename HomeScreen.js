@@ -603,7 +603,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: scaleSpacing(20),
-    paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 24) + 6 : Math.min(56, SCREEN_HEIGHT * 0.04 + 16),
+    paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 24) : 44,
     paddingBottom: scaleSpacing(8),
     position: 'relative',
   },

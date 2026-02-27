@@ -88,14 +88,15 @@ export const connect = async () => {
       return {
         address: pubkey.toBase58(),
         authToken: authResult.auth_token,
+        label: authResult.accounts[0].label || null,
       };
     });
     
     connectedAddress = result.address;
     authToken = result.authToken;
     
-    console.log('[MWAAdapter] Connected:', result.address);
-    return { success: true, address: result.address };
+    console.log('[MWAAdapter] Connected:', result.address, 'label:', result.label);
+    return { success: true, address: result.address, label: result.label || null };
   } catch (e) {
     if (e.message?.includes('User rejected') || e.message?.includes('cancelled')) {
       return { success: false, error: 'User cancelled', userCancelled: true };

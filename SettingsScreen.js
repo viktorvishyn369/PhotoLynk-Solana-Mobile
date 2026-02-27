@@ -458,7 +458,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: scaleSpacing(20),
-    paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 24) + 8 : Math.min(60, SCREEN_HEIGHT * 0.04 + 20),
+    paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 24) : 44,
     paddingBottom: Platform.OS === 'android' ? 8 : scaleSpacing(16),
     backgroundColor: '#060608',
   },

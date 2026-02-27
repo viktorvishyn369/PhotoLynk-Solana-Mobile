@@ -14,6 +14,7 @@ let MetaMaskAdapter = null;
 // Storage keys
 const WALLET_STORAGE_KEY = 'photolynk_connected_wallet';
 const WALLET_TYPE_KEY = 'photolynk_wallet_type';
+const WALLET_LABEL_KEY = 'photolynk_wallet_label';
 
 // Wallet types enum
 export const WALLET_TYPES = {
@@ -68,6 +69,7 @@ export const WALLET_INFO = {
 let currentWalletType = null;
 let currentAdapter = null;
 let connectedAddress = null;
+let connectedLabel = null;
 let isInitialized = false;
 
 // Subscribers for wallet change events
@@ -79,10 +81,10 @@ export const onWalletChanged = (listener) => {
   return () => walletChangeListeners.delete(listener);
 };
 
-const emitWalletChanged = (nextAddress, prevAddress) => {
+const emitWalletChanged = (nextAddress, prevAddress, label) => {
   try {
     for (const l of walletChangeListeners) {
-      try { l(nextAddress, prevAddress); } catch (_) {}
+      try { l(nextAddress, prevAddress, label); } catch (_) {}
     }
   } catch (_) {}
 };
@@ -154,9 +156,10 @@ const restoreConnection = async () => {
       currentWalletType = storedType;
       connectedAddress = storedAddress;
       currentAdapter = getAdapterForType(storedType);
-      console.log('[WalletAdapter] Restored connection:', storedType, storedAddress);
+      try { connectedLabel = await SecureStore.getItemAsync(WALLET_LABEL_KEY); } catch (_) {}
+      console.log('[WalletAdapter] Restored connection:', storedType, storedAddress, 'label:', connectedLabel);
       if (storedAddress && storedAddress !== prev) {
-        emitWalletChanged(storedAddress, prev);
+        emitWalletChanged(storedAddress, prev, connectedLabel);
       }
     }
   } catch (e) {
@@ -286,15 +289,21 @@ export const connectWallet = async (walletType) => {
       currentWalletType = walletType;
       currentAdapter = adapter;
       connectedAddress = result.address;
+      connectedLabel = result.label || null;
       
       // Persist connection
       await SecureStore.setItemAsync(WALLET_TYPE_KEY, walletType);
       await SecureStore.setItemAsync(WALLET_STORAGE_KEY, result.address);
+      if (connectedLabel) {
+        await SecureStore.setItemAsync(WALLET_LABEL_KEY, connectedLabel);
+      } else {
+        await SecureStore.deleteItemAsync(WALLET_LABEL_KEY).catch(() => {});
+      }
       
-      console.log('[WalletAdapter] Connected:', result.address);
+      console.log('[WalletAdapter] Connected:', result.address, 'label:', connectedLabel);
 
       if (result.address && result.address !== prev) {
-        emitWalletChanged(result.address, prev);
+        emitWalletChanged(result.address, prev, connectedLabel);
       }
     }
     
@@ -336,9 +345,11 @@ export const disconnectWallet = async () => {
   currentWalletType = null;
   currentAdapter = null;
   connectedAddress = null;
+  connectedLabel = null;
   
   await SecureStore.deleteItemAsync(WALLET_TYPE_KEY);
   await SecureStore.deleteItemAsync(WALLET_STORAGE_KEY);
+  await SecureStore.deleteItemAsync(WALLET_LABEL_KEY).catch(() => {});
   
   console.log('[WalletAdapter] Disconnected');
 };
@@ -351,6 +362,7 @@ export const getConnectionStatus = () => {
   return {
     isConnected: !!connectedAddress,
     address: connectedAddress,
+    label: connectedLabel,
     walletType: currentWalletType,
     walletInfo: currentWalletType ? WALLET_INFO[currentWalletType] : null,
   };

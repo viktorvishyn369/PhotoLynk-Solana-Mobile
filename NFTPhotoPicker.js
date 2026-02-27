@@ -289,6 +289,38 @@ const NFTPhotoPicker = ({
     return () => clearTimeout(timer);
   }, [selectedPhoto, storageOption, edition]);
   
+  // Cache of PhotoLynkDeleted asset IDs for filtering
+  const deletedIdsRef = useRef(null);
+
+  // Build set of asset IDs in PhotoLynkDeleted album
+  const getDeletedIds = async () => {
+    if (deletedIdsRef.current) return deletedIdsRef.current;
+    const ids = new Set();
+    try {
+      const albums = await MediaLibrary.getAlbumsAsync({ includeSmartAlbums: false });
+      const deletedAlbum = albums.find(a => a.title === 'PhotoLynkDeleted');
+      if (deletedAlbum) {
+        let cursor = null;
+        while (true) {
+          const page = await MediaLibrary.getAssetsAsync({
+            first: 500,
+            after: cursor || undefined,
+            album: deletedAlbum.id,
+            mediaType: ['photo'],
+          });
+          if (page?.assets) for (const a of page.assets) ids.add(a.id);
+          cursor = page?.endCursor;
+          if (!page?.hasNextPage || !page?.assets?.length) break;
+        }
+        console.log('[NFTPicker] Excluding', ids.size, 'assets from PhotoLynkDeleted');
+      }
+    } catch (e) {
+      console.log('[NFTPicker] Could not get PhotoLynkDeleted album:', e?.message);
+    }
+    deletedIdsRef.current = ids;
+    return ids;
+  };
+
   // Load photos from media library
   const loadPhotos = async (after = null) => {
     try {
@@ -304,6 +336,9 @@ const NFTPhotoPicker = ({
         setLoading(false);
         return;
       }
+
+      // Build excluded IDs set on first load
+      const deletedIds = await getDeletedIds();
       
       const result = await MediaLibrary.getAssetsAsync({
         first: 50,
@@ -312,10 +347,14 @@ const NFTPhotoPicker = ({
         sortBy: [MediaLibrary.SortBy.creationTime],
       });
       
-      // Filter out photos from PhotoLynkDeleted folder (Android: check URI path)
-      const filtered = Platform.OS === 'android'
-        ? result.assets.filter(a => !a.uri?.includes('PhotoLynkDeleted'))
-        : result.assets;
+      // Filter out photos from PhotoLynkDeleted folder (by album ID + URI fallback)
+      const filtered = result.assets.filter(a => {
+        if (deletedIds.has(a.id)) return false;
+        const uri = a?.uri || '';
+        const localUri = a?.localUri || '';
+        if (uri.includes('/PhotoLynkDeleted/') || localUri.includes('/PhotoLynkDeleted/')) return false;
+        return true;
+      });
       
       if (after) {
         setPhotos(prev => [...prev, ...filtered]);
@@ -656,8 +695,10 @@ const NFTPhotoPicker = ({
                   </View>
                   <Text style={styles.mintCertCardDesc}>{t('nftMint.privateCertifiedDesc')}</Text>
                   <View style={styles.mintCertChips}>
+                    <View style={styles.chipGreen}><Text style={styles.chipGreenText}>{t('nftMint.chipFullQuality')}</Text></View>
                     <View style={styles.chipGreen}><Text style={styles.chipGreenText}>{t('nftMint.chipZeroKnowledge')}</Text></View>
                     <View style={styles.chipGreen}><Text style={styles.chipGreenText}>{t('nftMint.chipExifPreserved')}</Text></View>
+                    <View style={styles.chipGreen}><Text style={styles.chipGreenText}>{t('nftMint.chipTransferable')}</Text></View>
                     <View style={styles.chipGreen}><Text style={styles.chipGreenText}>{t('nftMint.chipPrivacyFirst')}</Text></View>
                   </View>
                 </TouchableOpacity>
@@ -682,7 +723,7 @@ const NFTPhotoPicker = ({
               </View>
 
               {/* ── 5. Watermark toggle (public only, matches desktop #watermark-option) ── */}
-              {certificationMode === 'public' && (
+              {false && certificationMode === 'public' && (
                 <TouchableOpacity style={styles.mintToggleRow} onPress={() => setWatermark(!watermark)} activeOpacity={0.85}>
                   <View style={styles.mintToggleLeft}>
                     <Feather name="droplet" size={14} color={watermark ? COLORS.accent : 'rgba(255,255,255,0.5)'} />
@@ -696,15 +737,15 @@ const NFTPhotoPicker = ({
               )}
 
               {/* ── 6. Strip EXIF toggle (matches desktop .nft-toggle-row) ── */}
-              <TouchableOpacity style={styles.mintToggleRow} onPress={() => setStripExif(!stripExif)} activeOpacity={0.85}>
+              <TouchableOpacity style={[styles.mintToggleRow, certificationMode === 'private' && { opacity: 0.4 }]} onPress={() => certificationMode !== 'private' && setStripExif(!stripExif)} activeOpacity={0.85} disabled={certificationMode === 'private'}>
                 <View style={styles.mintToggleLeft}>
                   <Feather name="shield" size={14} color={stripExif ? COLORS.accent : 'rgba(255,255,255,0.5)'} />
                   <View>
                     <Text style={styles.mintToggleTitle}>{t('nftMint.removePrivateData')}</Text>
-                    <Text style={styles.mintToggleDesc}>{t('nftMint.removePrivateDataDesc') || 'Strip location, camera info, and other metadata'}</Text>
+                    <Text style={styles.mintToggleDesc}>{certificationMode === 'private' ? (t('nftMint.exifPreservedPrivate') || 'EXIF preserved in private mode') : (t('nftMint.removePrivateDataDesc') || 'Strip location, camera info, and other metadata')}</Text>
                   </View>
                 </View>
-                <Switch value={stripExif} onValueChange={setStripExif} />
+                <Switch value={stripExif} onValueChange={certificationMode === 'private' ? undefined : setStripExif} disabled={certificationMode === 'private'} />
               </TouchableOpacity>
 
               {/* ── 7. License picker (matches desktop .nft-input select) ── */}
@@ -807,7 +848,6 @@ const NFTPhotoPicker = ({
               }
 
               {false && (
-              <>
               <TouchableOpacity style={[styles.mintPrivacyRow, isOnchainLocked && !isCloudSelected && { opacity: 0.4 }]} onPress={() => !isOnchainLocked && !isCloudSelected && setEncrypt(!encrypt)} activeOpacity={isCloudSelected ? 1 : 0.85} disabled={isOnchainLocked || isCloudSelected}>
                 <View style={styles.mintPrivacyLeft}>
                   <Feather name="lock" size={14} color={encrypt ? COLORS.accent : COLORS.textSecondary} />
@@ -815,6 +855,8 @@ const NFTPhotoPicker = ({
                 </View>
                 <Switch value={encrypt} onValueChange={isCloudSelected ? undefined : setEncrypt} disabled={isOnchainLocked || isCloudSelected} />
               </TouchableOpacity>
+              )}
+              {false && (
               <TouchableOpacity style={[styles.mintPrivacyRow, isOnchainLocked && { opacity: 0.4 }]} onPress={() => !isOnchainLocked && setWatermark(!watermark)} activeOpacity={0.85} disabled={isOnchainLocked}>
                 <View style={styles.mintPrivacyLeft}>
                   <Feather name="droplet" size={14} color={watermark ? COLORS.accent : COLORS.textSecondary} />
@@ -822,8 +864,8 @@ const NFTPhotoPicker = ({
                 </View>
                 <Switch value={watermark} onValueChange={setWatermark} disabled={isOnchainLocked} />
               </TouchableOpacity>
-              </>
               )}
+              
 
               {/* ── 8. Estimated cost (matches desktop .nft-cost-display) ── */}
               <View style={styles.mintCostRow}>
@@ -1085,7 +1127,7 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     borderBottomWidth: 1,
     borderBottomColor: COLORS.border,
-    paddingTop: Platform.OS === 'ios' ? 50 : 12,
+    paddingTop: Platform.OS === 'ios' ? 44 : 12,
   },
   closeButton: {
     padding: 8,
@@ -1236,7 +1278,7 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-start',
     alignItems: 'stretch',
     padding: 0,
-    paddingTop: Platform.OS === 'ios' ? 50 : 44,
+    paddingTop: Platform.OS === 'ios' ? 44 : 44,
     paddingBottom: 0,
   },
   mintPanel: {

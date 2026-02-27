@@ -144,7 +144,7 @@ export const setWalletAuthMode = async (enabled) => {
  *   error?: string
  * }>}
  */
-export const handleWalletAuth = async ({ serverType, localHost, remoteHost, onStatus }) => {
+export const handleWalletAuth = async ({ serverType, localHost, remoteHost, onStatus, skipNewUserConfirmation = false }) => {
   try {
     // Step 1: Connect wallet via MWA (hardware wallet biometric prompt)
     onStatus?.(t('auth.connectingWallet') || 'Connecting wallet...');
@@ -208,9 +208,15 @@ export const handleWalletAuth = async ({ serverType, localHost, remoteHost, onSt
       const status = loginErr?.response?.status;
       const errMsg = loginErr?.response?.data?.error || '';
 
-      // If user not found (401), auto-register
+      // If user not found (401), ask for confirmation before creating a new account
       if (status === 401 && (errMsg.toLowerCase().includes('invalid credentials') || errMsg.toLowerCase().includes('user not found') || errMsg.toLowerCase().includes('no user'))) {
-        console.log('[WalletAuth] User not found, auto-registering...');
+        // Return confirmation-needed flag so UI can warn the user first
+        if (!skipNewUserConfirmation) {
+          console.log('[WalletAuth] User not found — asking for confirmation before creating new account');
+          return { success: false, needsNewUserConfirmation: true, walletAddress };
+        }
+
+        console.log('[WalletAuth] User confirmed new account, registering...');
         onStatus?.(t('auth.registering') || 'Creating account...');
 
         try {

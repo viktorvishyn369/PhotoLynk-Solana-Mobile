@@ -592,7 +592,7 @@ const styles = StyleSheet.create({
   scrollContent: {
     flexGrow: 1,
     paddingHorizontal: scaleSpacing(20),
-    paddingTop: Platform.OS === 'ios' ? scaleSpacing(20) : (StatusBar.currentHeight || 24) + scaleSpacing(12),
+    paddingTop: Platform.OS === 'ios' ? scaleSpacing(20) : (StatusBar.currentHeight || 24),
     paddingBottom: scaleSpacing(30),
   },
   // Header

@@ -4318,10 +4318,10 @@ export const mintPhotoNFT = async ({
       try { await FileSystem.deleteAsync(tmp, { idempotent: true }); } catch (_) {}
     }
     
-    // Save NFT to local storage AND sync to server
-    const serverUrl = serverConfig?.baseUrl || null;
+    // Save NFT to local storage AND sync to server (always StealthCloud for NFT/cert sync)
+    const nftSyncUrl = 'https://stealthlynk.io';
     let authHeaders = null;
-    if (serverUrl && serverConfig?.getAuthHeaders) {
+    if (serverConfig?.getAuthHeaders) {
       try {
         const authConfig = await serverConfig.getAuthHeaders();
         authHeaders = authConfig?.headers || authConfig || null;
@@ -4353,7 +4353,7 @@ export const mintPhotoNFT = async ({
       attributes: metadata?.attributes || [],
       metadata,
       certificationMode,
-    }, serverUrl, authHeaders);
+    }, nftSyncUrl, authHeaders);
     
     // Auto-generate Certificate of Authenticity (all editions)
     if (true) {
@@ -4376,7 +4376,7 @@ export const mintPhotoNFT = async ({
           certificationMode,
         });
         if (cert) {
-          await saveCertificate(cert, serverUrl, authHeaders);
+          await saveCertificate(cert, nftSyncUrl, authHeaders);
           console.log('[NFT] Certificate of Authenticity generated and saved:', cert.id);
         }
       } catch (certErr) {
@@ -5642,6 +5642,9 @@ export const fetchNFTsFromBlockchain = async (walletAddress, knownMints = null) 
   }
 };
 
+// Global lock: only one discoverAndImportNFTs runs at a time; concurrent callers await the same promise
+let _discoverInFlight = null;
+
 // DAS total-check cache: skip full pagination if total hasn't changed (1 call vs ~24)
 let _lastDasTotal = null;
 let _lastDasTotalTs = 0;
@@ -5665,13 +5668,30 @@ const fetchCompressedNFTs = async (walletAddress, knownMints = null) => {
   
   console.log('[cNFT] Fetching compressed NFTs for:', walletAddress);
   
+  // Cooldown: if DAS was called recently (within 2 min), skip unless force-refreshing
+  if (!_dasForceRefresh && _lastDasTotalTs && Date.now() - _lastDasTotalTs < 120000) {
+    console.log(`[cNFT] DAS called ${Math.round((Date.now() - _lastDasTotalTs) / 1000)}s ago, skipping (cooldown 120s)`);
+    return [];
+  }
+  
+  // Early exit: if local cNFT count matches cached DAS total, skip API call entirely (0 calls)
+  const forceRefresh = _dasForceRefresh;
+  if (forceRefresh) _dasForceRefresh = false;
+  if (!forceRefresh && _lastDasTotal !== null && knownMints) {
+    // Count local cNFTs (cnft_ prefix)
+    let localCnftCount = 0;
+    for (const m of knownMints) { if (m.startsWith('cnft_')) localCnftCount++; }
+    if (localCnftCount >= _lastDasTotal && Date.now() - _lastDasTotalTs < 600000) {
+      console.log(`[cNFT] Local cNFTs (${localCnftCount}) >= cached DAS total (${_lastDasTotal}), skipping API call`);
+      return [];
+    }
+  }
+  
   // Paginate DAS API — fetch pages until we find enough new cNFTs or run out of pages
   let compressedItems = [];
   let dasPage = 1;
   let rateLimitRetries = 0;
   const MAX_PAGES = 25; // Safety limit: 25 pages × 20 = 500 items max
-  const forceRefresh = _dasForceRefresh;
-  if (forceRefresh) _dasForceRefresh = false;
   let _dasTotalFromPage1 = null; // Captured from first successful page
   
   while (compressedItems.length < MAX_CNFT_METADATA_PER_CALL && dasPage <= MAX_PAGES) {
@@ -5694,10 +5714,10 @@ const fetchCompressedNFTs = async (walletAddress, knownMints = null) => {
       
       if (!response.ok) {
         // Rate limited (429) — wait and retry with exponential backoff
-        if (response.status === 429 && rateLimitRetries < 6) {
-          const backoff = Math.min(60000, Math.pow(2, rateLimitRetries) * 10000); // 10s, 20s, 40s, 60s, 60s, 60s
+        if (response.status === 429 && rateLimitRetries < 3) {
+          const backoff = Math.min(30000, (rateLimitRetries + 1) * 10000); // 10s, 20s, 30s
           rateLimitRetries++;
-          console.log(`[cNFT] Rate limited (429), retrying in ${backoff / 1000}s (attempt ${rateLimitRetries}/6)`);
+          console.log(`[cNFT] Rate limited (429), retrying in ${backoff / 1000}s (attempt ${rateLimitRetries}/3)`);
           await new Promise(r => setTimeout(r, backoff));
           continue;
         }
@@ -5710,10 +5730,10 @@ const fetchCompressedNFTs = async (walletAddress, knownMints = null) => {
       
       if (data.error) {
         // Rate limited via JSON-RPC error code
-        if (data.error.code === -32429 && rateLimitRetries < 6) {
-          const backoff = Math.min(60000, Math.pow(2, rateLimitRetries) * 10000);
+        if (data.error.code === -32429 && rateLimitRetries < 3) {
+          const backoff = Math.min(30000, (rateLimitRetries + 1) * 10000);
           rateLimitRetries++;
-          console.log(`[cNFT] Rate limited (-32429), retrying in ${backoff / 1000}s (attempt ${rateLimitRetries}/6)`);
+          console.log(`[cNFT] Rate limited (-32429), retrying in ${backoff / 1000}s (attempt ${rateLimitRetries}/3)`);
           await new Promise(r => setTimeout(r, backoff));
           continue;
         }
@@ -6071,6 +6091,25 @@ export const discoverAndImportNFTs = async (walletAddress, serverUrl = null, aut
     console.log('[NFT] discoverAndImportNFTs skipped — minting in progress');
     return { success: true, imported: 0, total: 0, skipped: true };
   }
+
+  // Global lock: if another discover call is already running, piggyback on it
+  if (_discoverInFlight) {
+    console.log('[NFT] discoverAndImportNFTs — already in flight, waiting for existing call');
+    return _discoverInFlight;
+  }
+
+  const run = async () => {
+    try {
+      return await _discoverAndImportNFTsImpl(walletAddress, serverUrl, authHeaders);
+    } finally {
+      _discoverInFlight = null;
+    }
+  };
+  _discoverInFlight = run();
+  return _discoverInFlight;
+};
+
+const _discoverAndImportNFTsImpl = async (walletAddress, serverUrl = null, authHeaders = null) => {
   console.log('[NFT] discoverAndImportNFTs called for:', walletAddress);
   
   // Build set of known mint addresses to skip re-fetching metadata

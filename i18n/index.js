@@ -226,36 +226,66 @@ export const isRTL = () => {
 };
 
 // Translation function - simple key lookup with fallback to English
+// Supports English pluralization via _one/_other suffixes when count is provided
 export const t = (key, options = {}) => {
   const keys = key.split('.');
-  let value = translations[currentLocale];
+  const lastKey = keys[keys.length - 1];
   
-  // Navigate nested keys
-  for (const k of keys) {
-    if (value && typeof value === 'object' && k in value) {
-      value = value[k];
-    } else {
-      // Fallback to English
-      value = translations.en;
-      for (const k2 of keys) {
-        if (value && typeof value === 'object' && k2 in value) {
-          value = value[k2];
-        } else {
-          return key; // Return key if not found
-        }
+  // For English, check for plural forms when count is provided
+  const count = options.count;
+  const needsPlural = currentLocale === 'en' && typeof count === 'number';
+  
+  // Try plural key first for English (e.g., filesOnServer_one or filesOnServer_other)
+  const pluralSuffix = count === 1 ? '_one' : '_other';
+  const keysToTry = needsPlural ? [
+    [...keys.slice(0, -1), lastKey + pluralSuffix],
+    keys
+  ] : [keys];
+  
+  let value = null;
+  
+  for (const tryKeys of keysToTry) {
+    value = translations[currentLocale];
+    let found = true;
+    
+    // Navigate nested keys
+    for (const k of tryKeys) {
+      if (value && typeof value === 'object' && k in value) {
+        value = value[k];
+      } else {
+        found = false;
+        break;
       }
-      break;
     }
+    
+    if (found && typeof value === 'string') break;
+    
+    // Fallback to English
+    value = translations.en;
+    found = true;
+    for (const k2 of tryKeys) {
+      if (value && typeof value === 'object' && k2 in value) {
+        value = value[k2];
+      } else {
+        found = false;
+        break;
+      }
+    }
+    
+    if (found && typeof value === 'string') break;
+    value = null;
   }
   
+  if (!value || typeof value !== 'string') return key;
+  
   // Handle interpolation (e.g., {{count}})
-  if (typeof value === 'string' && options) {
+  if (options) {
     for (const [optKey, optVal] of Object.entries(options)) {
       value = value.replace(new RegExp(`{{${optKey}}}`, 'g'), String(optVal));
     }
   }
   
-  return typeof value === 'string' ? value : key;
+  return value;
 };
 
 // Export translations for direct access if needed
