@@ -5682,9 +5682,9 @@ const fetchCompressedNFTs = async (walletAddress, knownMints = null) => {
   
   console.log('[cNFT] Fetching compressed NFTs for:', walletAddress);
   
-  // Cooldown: if DAS was called recently (within 2 min), skip unless force-refreshing
-  if (!_dasForceRefresh && _lastDasTotalTs && Date.now() - _lastDasTotalTs < 120000) {
-    console.log(`[cNFT] DAS called ${Math.round((Date.now() - _lastDasTotalTs) / 1000)}s ago, skipping (cooldown 120s)`);
+  // Cooldown: if DAS was called recently (within 5 min), skip unless force-refreshing
+  if (!_dasForceRefresh && _lastDasTotalTs && Date.now() - _lastDasTotalTs < 300000) {
+    console.log(`[cNFT] DAS called ${Math.round((Date.now() - _lastDasTotalTs) / 1000)}s ago, skipping (cooldown 300s)`);
     return [];
   }
   
@@ -5695,7 +5695,7 @@ const fetchCompressedNFTs = async (walletAddress, knownMints = null) => {
     // Count local cNFTs (cnft_ prefix)
     let localCnftCount = 0;
     for (const m of knownMints) { if (m.startsWith('cnft_')) localCnftCount++; }
-    if (localCnftCount >= _lastDasTotal && Date.now() - _lastDasTotalTs < 600000) {
+    if (localCnftCount >= _lastDasTotal && Date.now() - _lastDasTotalTs < 900000) {
       console.log(`[cNFT] Local cNFTs (${localCnftCount}) >= cached DAS total (${_lastDasTotal}), skipping API call`);
       return [];
     }
