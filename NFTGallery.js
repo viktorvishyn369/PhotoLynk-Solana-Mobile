@@ -28,7 +28,7 @@ import { SvgXml } from 'react-native-svg';
 import Clipboard from '@react-native-clipboard/clipboard';
 import * as FileSystem from 'expo-file-system';
 import NFTOperations, { decryptNFTImage } from './nftOperations';
-import { getStealthCloudMasterKey } from './backgroundTask';
+import { getStealthCloudMasterKey, getLegacyMasterKey } from './backgroundTask';
 import { t, getCurrentLanguage } from './i18n';
 
 // Import shared cache utilities (avoids circular dependency with nftOperations)
@@ -469,9 +469,10 @@ const DecryptedNFTImage = ({ nft, style, isDetail = false, getAuthHeaders = null
           }
         } catch (_) {}
 
-        // Get master key
+        // Get master key + legacy fallback for pre-migration encrypted NFTs
         const masterKey = await getStealthCloudMasterKey();
         if (!masterKey) { setError('No master key'); setLoading(false); return; }
+        const legacyKey = await getLegacyMasterKey();
 
         // Download encrypted blob — prefer encrypted thumbnail (small) over full image (multi-MB)
         const useThumb = !!(nft.thumbnailUrl && enc.thumbnailNonce);
@@ -542,7 +543,7 @@ const DecryptedNFTImage = ({ nft, style, isDetail = false, getAuthHeaders = null
 
           if (cancelled) { FileSystem.deleteAsync(tmpPath, { idempotent: true }).catch(() => {}); return { cancelled: true }; }
 
-          const result = await decryptNFTImage(tmpPath, enc.wrappedKey, enc.wrapNonce, decryptNonce, masterKey);
+          const result = await decryptNFTImage(tmpPath, enc.wrappedKey, enc.wrapNonce, decryptNonce, masterKey, legacyKey);
           console.log(`[Decrypt] ${nft.name || nft.mintAddress} — result=${result.success} ${result.error || ''}`);
           FileSystem.deleteAsync(tmpPath, { idempotent: true }).catch(() => {});
           return result;

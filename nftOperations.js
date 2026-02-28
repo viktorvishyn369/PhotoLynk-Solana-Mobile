@@ -1821,18 +1821,22 @@ export const encryptNFTImage = async (imagePath, masterKey) => {
  * @param {Uint8Array} masterKey - User's StealthCloud master key (32 bytes)
  * @returns {Object|null} Parsed metadata object or null on failure
  */
-export const decryptMetadataJSON = (encryptedData, encryptionData, masterKey) => {
+export const decryptMetadataJSON = (encryptedData, encryptionData, masterKey, fallbackMasterKey = null) => {
   try {
     if (!encryptedData || !encryptionData?.wrappedKey || !encryptionData?.wrapNonce || !encryptionData?.metadataNonce || !masterKey) {
       return null;
     }
-    // Unwrap per-NFT key
     const wrappedKey = naclUtil.decodeBase64(encryptionData.wrappedKey);
     const wrapNonce = naclUtil.decodeBase64(encryptionData.wrapNonce);
-    const nftKey = nacl.secretbox.open(wrappedKey, wrapNonce, masterKey);
+    
+    // Try primary master key first
+    let nftKey = nacl.secretbox.open(wrappedKey, wrapNonce, masterKey);
+    if (!nftKey && fallbackMasterKey) {
+      console.log('[NFT] Metadata: primary key failed, trying legacy fallback key');
+      nftKey = nacl.secretbox.open(wrappedKey, wrapNonce, fallbackMasterKey);
+    }
     if (!nftKey) return null;
 
-    // Decrypt metadata
     const metadataNonce = naclUtil.decodeBase64(encryptionData.metadataNonce);
     const ciphertext = (typeof encryptedData === 'string') ? naclUtil.decodeBase64(encryptedData) : encryptedData;
     const plaintext = nacl.secretbox.open(ciphertext, metadataNonce, nftKey);
@@ -1855,16 +1859,20 @@ export const decryptMetadataJSON = (encryptedData, encryptionData, masterKey) =>
  * @param {Uint8Array} masterKey - User's StealthCloud master key (32 bytes)
  * @returns {Object} { success, decryptedPath, error }
  */
-export const decryptNFTImage = async (encryptedB64, wrappedKeyB64, wrapNonceB64, nonceB64, masterKey) => {
+export const decryptNFTImage = async (encryptedB64, wrappedKeyB64, wrapNonceB64, nonceB64, masterKey, fallbackMasterKey = null) => {
   try {
     if (!encryptedB64 || !wrappedKeyB64 || !wrapNonceB64 || !nonceB64 || !masterKey) {
       return { success: false, error: 'Missing decryption params' };
     }
 
-    // Unwrap per-NFT key
+    // Unwrap per-NFT key — try primary master key first, then legacy fallback
     const wrappedKey = naclUtil.decodeBase64(wrappedKeyB64);
     const wrapNonce = naclUtil.decodeBase64(wrapNonceB64);
-    const nftKey = nacl.secretbox.open(wrappedKey, wrapNonce, masterKey);
+    let nftKey = nacl.secretbox.open(wrappedKey, wrapNonce, masterKey);
+    if (!nftKey && fallbackMasterKey) {
+      console.log('[NFT] Image: primary key failed, trying legacy fallback key');
+      nftKey = nacl.secretbox.open(wrappedKey, wrapNonce, fallbackMasterKey);
+    }
     if (!nftKey) return { success: false, error: 'Key unwrap failed (wrong master key?)' };
 
     // If encryptedB64 is a file path, read it
@@ -6009,7 +6017,7 @@ const fetchCompressedNFTs = async (walletAddress, knownMints = null) => {
  * @param {string} mintAddress - NFT mint address
  * @returns {Object|null} Metadata object or null
  */
-export const fetchNFTMetadata = async (mintAddress, encryptionData = null, masterKey = null) => {
+export const fetchNFTMetadata = async (mintAddress, encryptionData = null, masterKey = null, fallbackMasterKey = null) => {
   if (!connection) return null;
   
   try {
@@ -6075,7 +6083,7 @@ export const fetchNFTMetadata = async (mintAddress, encryptionData = null, maste
           // Not valid JSON — may be encrypted metadata
           if (encryptionData?.metadataNonce && masterKey) {
             console.log('[NFT] Metadata not JSON, attempting decryption...');
-            metaJson = decryptMetadataJSON(rawBytes, encryptionData, masterKey);
+            metaJson = decryptMetadataJSON(rawBytes, encryptionData, masterKey, fallbackMasterKey);
             if (metaJson) {
               console.log('[NFT] Metadata decrypted successfully');
             } else {

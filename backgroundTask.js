@@ -182,6 +182,43 @@ const pbkdf2Sha256 = (password, salt, iterations, keyLen) => {
 // This ensures same user on different devices gets the same encryption key
 // Cache the derived master key in SecureStore so we don't need biometrics on every backup
 const DERIVED_MASTER_KEY_CACHE = 'stealthcloud_derived_key_v2';
+// Separate cache for the pre-migration (legacy email+password) derived key.
+// This survives independently so old encrypted NFTs can always be decrypted
+// even if the user migrates to wallet auth and legacy_mk_email/password are lost.
+const LEGACY_DERIVED_KEY_CACHE = 'stealthcloud_legacy_derived_key';
+
+// Get the legacy (pre-migration) master key for decrypt fallback.
+// Returns null if the user never migrated (was always wallet-only).
+export const getLegacyMasterKey = async () => {
+  try {
+    const cached = await SecureStore.getItemAsync(LEGACY_DERIVED_KEY_CACHE);
+    if (cached) {
+      console.log('StealthCloud: legacy master key available for decrypt fallback');
+      return naclUtil.decodeBase64(cached);
+    }
+  } catch (e) {}
+  // If no cached derived key, try deriving from stored legacy credentials
+  try {
+    const mkEmail = await SecureStore.getItemAsync('legacy_mk_email');
+    const mkPassword = await SecureStore.getItemAsync('legacy_mk_password');
+    if (mkEmail && mkPassword) {
+      const salt = mkEmail.toLowerCase().trim();
+      const derivedKey = pbkdf2Sha256(mkPassword, salt, 30000, 32);
+      await SecureStore.setItemAsync(LEGACY_DERIVED_KEY_CACHE, naclUtil.encodeBase64(derivedKey));
+      console.log('StealthCloud: derived and cached legacy key from stored creds');
+      return derivedKey;
+    }
+  } catch (e) {}
+  // Also check the old v1 random key (very early users before PBKDF2)
+  try {
+    const v1Key = await SecureStore.getItemAsync('stealthcloud_master_key_v1');
+    if (v1Key) {
+      console.log('StealthCloud: legacy v1 random key available for fallback');
+      return naclUtil.decodeBase64(v1Key);
+    }
+  } catch (e) {}
+  return null;
+};
 
 export const getStealthCloudMasterKey = async () => {
   // First check if we have a cached derived key (set during login)
@@ -261,8 +298,28 @@ export const getStealthCloudMasterKey = async () => {
 // Call this during login to pre-derive and cache the master key
 // Returns a Promise that resolves after key derivation completes
 // Uses setTimeout to yield to the UI thread during heavy PBKDF2 computation
-export const cacheStealthCloudMasterKey = async (email, password) => {
+export const cacheStealthCloudMasterKey = async (email, password, isLegacyCreds = false) => {
   if (!email || !password) return;
+  
+  // If this is being called with legacy (pre-migration) credentials,
+  // also persist the derived key in the separate legacy cache so it
+  // survives even if legacy_mk_email/password are later wiped.
+  if (isLegacyCreds) {
+    try {
+      const existingLegacy = await SecureStore.getItemAsync(LEGACY_DERIVED_KEY_CACHE);
+      if (!existingLegacy) {
+        await new Promise(resolve => setTimeout(resolve, 50));
+        const legacySalt = email.toLowerCase().trim();
+        const legacyKey = pbkdf2Sha256(password, legacySalt, 30000, 32);
+        await new Promise(resolve => setTimeout(resolve, 10));
+        await SecureStore.setItemAsync(LEGACY_DERIVED_KEY_CACHE, naclUtil.encodeBase64(legacyKey));
+        console.log('StealthCloud: persisted legacy master key for future decrypt fallback');
+      }
+    } catch (e) {
+      console.log('StealthCloud: failed to persist legacy key', e.message);
+    }
+  }
+  
   // If already cached, skip re-deriving to avoid extra PBKDF2 cost
   try {
     const existing = await SecureStore.getItemAsync(DERIVED_MASTER_KEY_CACHE);

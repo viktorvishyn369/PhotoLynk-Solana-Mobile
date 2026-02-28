@@ -201,16 +201,17 @@ const CertificatesViewer = ({ visible, onClose, serverUrl, getAuthHeaders, onSho
                 // If JSON parse fails, metadata is encrypted — download as binary file and decrypt
                 if (nft?.encrypted && nft?.encryptionData?.metadataNonce) {
                   try {
-                    const { getStealthCloudMasterKey } = require('./backgroundTask');
+                    const { getStealthCloudMasterKey, getLegacyMasterKey } = require('./backgroundTask');
                     const FileSystem = require('expo-file-system');
                     const masterKey = await getStealthCloudMasterKey();
                     if (masterKey) {
+                      const legacyKey = await getLegacyMasterKey();
                       const tmpMeta = `${FileSystem.cacheDirectory}cert_meta_${Date.now()}.bin`;
                       const dl = await FileSystem.downloadAsync(u, tmpMeta);
                       if (dl?.status === 200) {
                         const b64 = await FileSystem.readAsStringAsync(tmpMeta, { encoding: FileSystem.EncodingType.Base64 });
                         FileSystem.deleteAsync(tmpMeta, { idempotent: true }).catch(() => {});
-                        const decrypted = NFTOperations.decryptMetadataJSON(b64, nft.encryptionData, masterKey);
+                        const decrypted = NFTOperations.decryptMetadataJSON(b64, nft.encryptionData, masterKey, legacyKey);
                         if (decrypted) { metaJson = decrypted; break; }
                       } else {
                         FileSystem.deleteAsync(tmpMeta, { idempotent: true }).catch(() => {});

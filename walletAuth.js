@@ -288,7 +288,7 @@ export const handleWalletAuth = async ({ serverType, localHost, remoteHost, onSt
     onStatus?.(t('common.finalizing') || 'Finalizing...');
     const mkCreds = await getMasterKeyCredentials();
     if (mkCreds) {
-      await cacheStealthCloudMasterKey(mkCreds.email, mkCreds.password);
+      await cacheStealthCloudMasterKey(mkCreds.email, mkCreds.password, true);
     } else {
       await cacheStealthCloudMasterKey(normalizedEmail, walletPassword);
     }
@@ -526,7 +526,7 @@ export const migrateFromLegacy = async ({ legacyEmail, legacyPassword, serverTyp
     // We must continue using the same key so existing files remain decryptable
     // and future uploads are encrypted with the same key.
     onStatus?.(t('common.finalizing') || 'Finalizing...');
-    await cacheStealthCloudMasterKey(normalizedLegacyEmail, legacyPassword);
+    await cacheStealthCloudMasterKey(normalizedLegacyEmail, legacyPassword, true);
 
     console.log('[WalletAuth] Migration complete! Legacy UUID:', legacyUUID, 'Wallet:', walletAddress);
 

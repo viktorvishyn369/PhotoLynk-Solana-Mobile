@@ -4000,7 +4000,7 @@ export default function App() {
           setStatus(t('status.securingSession'));
           const mkCreds = await getMasterKeyCredentials();
           if (mkCreds) {
-            await cacheStealthCloudMasterKey(mkCreds.email, mkCreds.password);
+            await cacheStealthCloudMasterKey(mkCreds.email, mkCreds.password, true);
           } else {
             await cacheStealthCloudMasterKey(storedEmail, validationResult.savedPassword);
           }
@@ -4040,7 +4040,7 @@ export default function App() {
       setStatus(t('status.securingSession'));
       const mkCreds2 = await getMasterKeyCredentials();
       if (mkCreds2) {
-        await cacheStealthCloudMasterKey(mkCreds2.email, mkCreds2.password);
+        await cacheStealthCloudMasterKey(mkCreds2.email, mkCreds2.password, true);
       } else {
         await cacheStealthCloudMasterKey(storedEmail, reauthResult.savedPassword);
       }
@@ -4474,7 +4474,7 @@ export default function App() {
         setAuthLoadingLabel(t('common.finalizing'));
         const mkCredsLogin = await getMasterKeyCredentials();
         if (mkCredsLogin) {
-          await cacheStealthCloudMasterKey(mkCredsLogin.email, mkCredsLogin.password);
+          await cacheStealthCloudMasterKey(mkCredsLogin.email, mkCredsLogin.password, true);
         } else {
           await cacheStealthCloudMasterKey(normalizedEmail, effectivePassword);
         }
@@ -4522,7 +4522,7 @@ export default function App() {
         setAuthLoadingLabel(t('common.finalizing'));
         const mkCredsReg = await getMasterKeyCredentials();
         if (mkCredsReg) {
-          await cacheStealthCloudMasterKey(mkCredsReg.email, mkCredsReg.password);
+          await cacheStealthCloudMasterKey(mkCredsReg.email, mkCredsReg.password, true);
         } else {
           await cacheStealthCloudMasterKey(normalizedEmail, effectivePassword);
         }
