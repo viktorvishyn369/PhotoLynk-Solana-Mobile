@@ -5511,17 +5511,35 @@ export const verifyNFTOnChain = async (mintAddress, txSignature = null) => {
 // NFT DISCOVERY (Fetch NFTs from blockchain)
 // ============================================================================
 
+// Global lock: only one fetchNFTsFromBlockchain runs at a time; concurrent callers await the same promise
+let _fetchBlockchainInFlight = null;
+
 /**
  * Fetch all NFTs owned by a wallet address from the blockchain
  * Uses Solana RPC directly to get token accounts
  * @param {string} walletAddress - Owner's wallet address
  * @returns {Object} { success, nfts, error }
  */
-export const fetchNFTsFromBlockchain = async (walletAddress, knownMints = null) => {
+export const fetchNFTsFromBlockchain = (walletAddress, knownMints = null) => {
   if (!walletAddress) {
-    return { success: false, error: 'No wallet address provided' };
+    return Promise.resolve({ success: false, error: 'No wallet address provided' });
   }
-  
+  if (_fetchBlockchainInFlight) {
+    console.log('[NFT] fetchNFTsFromBlockchain — already in flight, waiting for existing call');
+    return _fetchBlockchainInFlight;
+  }
+  const run = async () => {
+    try {
+      return await _fetchNFTsFromBlockchainImpl(walletAddress, knownMints);
+    } finally {
+      _fetchBlockchainInFlight = null;
+    }
+  };
+  _fetchBlockchainInFlight = run();
+  return _fetchBlockchainInFlight;
+};
+
+const _fetchNFTsFromBlockchainImpl = async (walletAddress, knownMints = null) => {
   console.log(`[NFT] Fetching NFTs for wallet: ${walletAddress}`);
   
   // Initialize connection if not available
