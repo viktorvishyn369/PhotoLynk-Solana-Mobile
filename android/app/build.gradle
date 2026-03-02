@@ -91,7 +91,7 @@ android {
         applicationId 'com.photolynk.solana'
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 61
+        versionCode 62
         versionName "2.0.0"
         resConfigs "en", "en-rGB", "ar", "bg", "cs", "da", "de", "el", "es", "et", "fi", "fr", "hi", "hr", "hu", "in", "it", "ja", "ko", "lt", "lv", "nl", "no", "pl", "pt", "pt-rBR", "ro", "ru", "sv", "tr", "uk", "zh"
         externalNativeBuild {

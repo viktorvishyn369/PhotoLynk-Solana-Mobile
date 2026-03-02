@@ -4555,8 +4555,6 @@ const transferCompressedNFT = async (mintAddress, recipientInput, walletType = n
     connection = new Connection(SOLANA_RPC_ENDPOINT, 'confirmed');
   }
   
-  const DAS_RPC_URL = 'https://api.mainnet-beta.solana.com';
-  
   try {
     // Resolve recipient
     const resolved = await resolveRecipient(recipientInput);
@@ -4578,18 +4576,43 @@ const transferCompressedNFT = async (mintAddress, recipientInput, walletType = n
     console.log('[cNFT Transfer] Asset ID:', assetId);
     console.log('[cNFT Transfer] Recipient:', recipientAddress);
     
-    // Fetch asset data from DAS API
-    const assetResponse = await fetch(DAS_RPC_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        id: 'get-asset',
-        method: 'getAsset',
-        params: { id: assetId },
-      }),
-    });
-    const assetData = await assetResponse.json();
+    // Fetch asset data from DAS API via proxy with Helius fallback
+    const callDAS = async (method, params) => {
+      // Try server proxy first
+      try {
+        const serverType = await SecureStore.getItemAsync('server_type');
+        const serverUrl = serverType === 'stealthcloud' ? 'https://stealthlynk.io' : 'http://192.168.1.100:3000';
+        const resp = await fetch(`${serverUrl}/api/nft-service/das-proxy`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ method, params }),
+          signal: AbortSignal.timeout(10000),
+        });
+        if (resp.ok) return await resp.json();
+      } catch (_) {}
+      // Fallback to direct Helius
+      const DAS_RPC_URLS_FALLBACK = [
+        'https://mainnet.helius-rpc.com/?api-key=8b86bd0d-4534-4ce9-a61d-ec3850cb0b62',
+        'https://mainnet.helius-rpc.com/?api-key=6b3d0180-4354-4e31-a2fc-9b6cd9e550a7',
+      ];
+      for (const dasUrl of DAS_RPC_URLS_FALLBACK) {
+        try {
+          const resp = await fetch(dasUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ jsonrpc: '2.0', id: 'transfer-das', method, params }),
+            signal: AbortSignal.timeout(10000),
+          });
+          if (resp.ok) return await resp.json();
+        } catch (e) {
+          if (e.message && e.message.includes('429')) continue;
+          if (dasUrl === DAS_RPC_URLS_FALLBACK[DAS_RPC_URLS_FALLBACK.length - 1]) throw e;
+        }
+      }
+      throw new Error('RATE_LIMITED');
+    };
+    
+    const assetData = await callDAS('getAsset', { id: assetId });
     
     if (assetData.error || !assetData.result) {
       console.error('[cNFT Transfer] Failed to fetch asset:', assetData.error);
@@ -4599,18 +4622,8 @@ const transferCompressedNFT = async (mintAddress, recipientInput, walletType = n
     const asset = assetData.result;
     console.log('[cNFT Transfer] Asset owner:', asset.ownership?.owner);
     
-    // Fetch asset proof from DAS API
-    const proofResponse = await fetch(DAS_RPC_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        id: 'get-asset-proof',
-        method: 'getAssetProof',
-        params: { id: assetId },
-      }),
-    });
-    const proofData = await proofResponse.json();
+    // Fetch asset proof from DAS API via proxy with Helius fallback
+    const proofData = await callDAS('getAssetProof', { id: assetId });
     
     if (proofData.error || !proofData.result) {
       console.error('[cNFT Transfer] Failed to fetch proof:', proofData.error);
@@ -5690,10 +5703,28 @@ let _lastDasTotal = null;
 let _lastDasTotalTs = 0;
 let _dasForceRefresh = false;
 
-/**
- * Invalidate DAS cache — call after minting to force full re-scan
- */
+/** Invalidate DAS cache — call after minting to force full re-scan */
 export const invalidateDasCache = () => { _dasForceRefresh = true; };
+
+// Persistence key for DAS total cache
+const NFT_DAS_TOTAL_KEY = (wallet) => `nft_das_total_${wallet}`;
+
+/** Save DAS total cache to disk */
+const saveDasCache = async (wallet, total, ts) => {
+  try {
+    if (!wallet) return;
+    await SecureStore.setItemAsync(NFT_DAS_TOTAL_KEY(wallet), JSON.stringify({ total, ts }));
+  } catch (_) {}
+};
+
+/** Load DAS total cache from disk */
+const loadDasCache = async (wallet) => {
+  try {
+    if (!wallet) return null;
+    const json = await SecureStore.getItemAsync(NFT_DAS_TOTAL_KEY(wallet));
+    return json ? JSON.parse(json) : null;
+  } catch (_) { return null; }
+};
 
 /**
  * Fetch compressed NFTs (cNFTs) using DAS API
@@ -5701,24 +5732,75 @@ export const invalidateDasCache = () => { _dasForceRefresh = true; };
  * @returns {Array} Array of cNFT objects
  */
 const fetchCompressedNFTs = async (walletAddress, knownMints = null) => {
-  // DAS API endpoint — only Helius supports DAS (mainnet RPC does NOT)
-  const DAS_RPC_URL = 'https://mainnet.helius-rpc.com/?api-key=15319bf4-5b40-4958-ac8d-6313aa55eb92';
+  // Restore cache from disk if memory cache is empty
+  if (_lastDasTotal === null) {
+    const diskCache = await loadDasCache(walletAddress);
+    if (diskCache) {
+      _lastDasTotal = diskCache.total;
+      _lastDasTotalTs = diskCache.ts;
+      console.log(`[cNFT] Restored DAS cache from disk: total=${_lastDasTotal}, age=${Math.round((Date.now() - _lastDasTotalTs)/1000)}s`);
+    }
+  }
+
+  // DAS API — route through server proxy to avoid per-device Helius rate limits
+  const DAS_RPC_URLS_FALLBACK = [
+    'https://mainnet.helius-rpc.com/?api-key=8b86bd0d-4534-4ce9-a61d-ec3850cb0b62',
+    'https://mainnet.helius-rpc.com/?api-key=6b3d0180-4354-4e31-a2fc-9b6cd9e550a7',
+  ];
   let DAS_PAGE_SIZE = 20; // Small pages — wallets with on-chain SVGs can exceed 20MB at higher limits
   const MAX_CNFT_METADATA_PER_CALL = 20; // Cap IPFS fetches per call to prevent OOM
   
+  /** Call DAS method via server proxy, fallback to direct Helius (both keys) */
+  const callDAS = async (method, params) => {
+    try {
+      const serverType = await SecureStore.getItemAsync('server_type');
+      const host = serverType === 'remote'
+        ? await SecureStore.getItemAsync('remote_host')
+        : await SecureStore.getItemAsync('local_host');
+      const token = await SecureStore.getItemAsync('auth_token');
+      if (host && token) {
+        const resp = await fetch(`${host}/api/nft-service/das-proxy`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+          body: JSON.stringify({ method, params }),
+        });
+        if (resp.ok) {
+          const data = await resp.json();
+          if (data && data.result) return data;
+        }
+      }
+    } catch (_) {}
+    // Fallback to direct Helius — try each key until one works
+    for (const dasUrl of DAS_RPC_URLS_FALLBACK) {
+      try {
+        const resp = await fetch(dasUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ jsonrpc: '2.0', id: 'das-seeker', method, params }),
+        });
+        if (resp.status === 429) continue; // rate-limited, try next key
+        if (!resp.ok) throw new Error(`DAS HTTP error: ${resp.status}`);
+        return await resp.json();
+      } catch (e) {
+        if (e.message && e.message.includes('429')) continue;
+        if (dasUrl === DAS_RPC_URLS_FALLBACK[DAS_RPC_URLS_FALLBACK.length - 1]) throw e;
+      }
+    }
+    throw new Error('RATE_LIMITED');
+  };
+  
   console.log('[cNFT] Fetching compressed NFTs for:', walletAddress);
   
-  // Cooldown: if DAS was called recently (within 5 min), skip unless force-refreshing
-  if (!_dasForceRefresh && _lastDasTotalTs && Date.now() - _lastDasTotalTs < 300000) {
-    console.log(`[cNFT] DAS called ${Math.round((Date.now() - _lastDasTotalTs) / 1000)}s ago, skipping (cooldown 300s)`);
+  // Cooldown: if DAS was called recently (within 5 min) AND returned results, skip unless force-refreshing
+  const forceRefresh = _dasForceRefresh;
+  if (forceRefresh) _dasForceRefresh = false;
+  if (!forceRefresh && _lastDasTotalTs && _lastDasTotal > 0 && Date.now() - _lastDasTotalTs < 300000) {
+    console.log(`[cNFT] DAS called ${Math.round((Date.now() - _lastDasTotalTs) / 1000)}s ago with ${_lastDasTotal} results, skipping (cooldown 300s)`);
     return [];
   }
   
   // Early exit: if local cNFT count matches cached DAS total, skip API call entirely (0 calls)
-  const forceRefresh = _dasForceRefresh;
-  if (forceRefresh) _dasForceRefresh = false;
-  if (!forceRefresh && _lastDasTotal !== null && knownMints) {
-    // Count local cNFTs (cnft_ prefix)
+  if (!forceRefresh && _lastDasTotal !== null && _lastDasTotal > 0 && knownMints) {
     let localCnftCount = 0;
     for (const m of knownMints) { if (m.startsWith('cnft_')) localCnftCount++; }
     if (localCnftCount >= _lastDasTotal && Date.now() - _lastDasTotalTs < 900000) {
@@ -5737,36 +5819,25 @@ const fetchCompressedNFTs = async (walletAddress, knownMints = null) => {
   while (compressedItems.length < MAX_CNFT_METADATA_PER_CALL && dasPage <= MAX_PAGES) {
     try {
       console.log(`[cNFT] DAS page ${dasPage} (limit=${DAS_PAGE_SIZE})...`);
-      const response = await fetch(DAS_RPC_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          jsonrpc: '2.0',
-          id: 'photolynk-cnft-fetch',
-          method: 'getAssetsByOwner',
-          params: {
-            ownerAddress: walletAddress,
-            page: dasPage,
-            limit: DAS_PAGE_SIZE,
-          },
-        }),
-      });
-      
-      if (!response.ok) {
-        // Rate limited (429) — wait and retry with exponential backoff
-        if (response.status === 429 && rateLimitRetries < 3) {
-          const backoff = Math.min(30000, (rateLimitRetries + 1) * 10000); // 10s, 20s, 30s
+      let data;
+      try {
+        data = await callDAS('getAssetsByOwner', {
+          ownerAddress: walletAddress,
+          page: dasPage,
+          limit: DAS_PAGE_SIZE,
+        });
+      } catch (dasErr) {
+        if (dasErr.message === 'RATE_LIMITED' && rateLimitRetries < 3) {
+          const backoff = Math.min(30000, (rateLimitRetries + 1) * 10000);
           rateLimitRetries++;
           console.log(`[cNFT] Rate limited (429), retrying in ${backoff / 1000}s (attempt ${rateLimitRetries}/3)`);
           await new Promise(r => setTimeout(r, backoff));
           continue;
         }
-        console.log('[cNFT] DAS HTTP error:', response.status);
+        console.log(`[cNFT] DAS fetch error: ${dasErr.message}`);
         break;
       }
       rateLimitRetries = 0; // Reset on success
-      
-      const data = await response.json();
       
       if (data.error) {
         // Rate limited via JSON-RPC error code
@@ -5805,6 +5876,7 @@ const fetchCompressedNFTs = async (walletAddress, knownMints = null) => {
           console.log(`[cNFT] Total unchanged (${dasTotal}), skipping full pagination`);
           _lastDasTotal = dasTotal;
           _lastDasTotalTs = Date.now();
+          saveDasCache(walletAddress, _lastDasTotal, _lastDasTotalTs);
           return [];
         }
         console.log(`[cNFT] Total changed: ${_lastDasTotal} → ${dasTotal}, doing full scan`);
@@ -5839,12 +5911,16 @@ const fetchCompressedNFTs = async (walletAddress, knownMints = null) => {
   if (_dasTotalFromPage1 !== null) {
     _lastDasTotal = _dasTotalFromPage1;
   }
-  _lastDasTotalTs = Date.now();
   
   if (compressedItems.length === 0) {
+    // Don't set cooldown on failure — allow immediate retry
     console.log('[cNFT] No new compressed NFTs to process');
     return [];
   }
+  
+  // Only set cooldown after a successful fetch with results
+  _lastDasTotalTs = Date.now();
+  if (_lastDasTotal !== null) saveDasCache(walletAddress, _lastDasTotal, _lastDasTotalTs);
 
   // Cap to MAX_CNFT_METADATA_PER_CALL
   if (compressedItems.length > MAX_CNFT_METADATA_PER_CALL) {

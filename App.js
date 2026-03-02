@@ -3509,14 +3509,20 @@ export default function App() {
     await sleep(cooldownMs);
   };
 
-  // Poll Info screen every 5s while open to catch late server/RC updates
+  // Poll Info screen while open to catch late server/RC updates
+  // Uses 5s interval normally, 60s during active backup to reduce load on weak phones
   const infoRefreshIntervalRef = useRef(null);
   const infoRefreshInFlightRef = useRef(false);
+  const infoAdaptTimerRef = useRef(null);
   useEffect(() => {
     const clearPoll = () => {
       if (infoRefreshIntervalRef.current) {
         clearInterval(infoRefreshIntervalRef.current);
         infoRefreshIntervalRef.current = null;
+      }
+      if (infoAdaptTimerRef.current) {
+        clearInterval(infoAdaptTimerRef.current);
+        infoAdaptTimerRef.current = null;
       }
     };
     if (view !== 'info') {
@@ -3550,7 +3556,21 @@ export default function App() {
       } catch (e) {}
       infoRefreshInFlightRef.current = false;
     };
-    infoRefreshIntervalRef.current = setInterval(tick, 5000);
+    const POLL_NORMAL_MS = 5000;
+    const POLL_BUSY_MS = 60000;
+    let currentInterval = POLL_NORMAL_MS;
+    const startPoll = () => {
+      if (infoRefreshIntervalRef.current) clearInterval(infoRefreshIntervalRef.current);
+      infoRefreshIntervalRef.current = setInterval(tick, currentInterval);
+    };
+    infoAdaptTimerRef.current = setInterval(() => {
+      const desired = loadingRef.current ? POLL_BUSY_MS : POLL_NORMAL_MS;
+      if (desired !== currentInterval) {
+        currentInterval = desired;
+        startPoll();
+      }
+    }, 2000);
+    startPoll();
     return () => clearPoll();
   }, [view]);
 
