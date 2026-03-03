@@ -392,7 +392,7 @@ See [LICENSE](LICENSE) file for full terms.
 
 ## 🔗 Links
 
-- **Demo Video**: [YouTube Link]
+- **Demo Video**: [Watch on YouTube](https://youtube.com/shorts/pp3TYwn68D0?feature=share)
 - **Pitch Deck**: [Slides Link]
 - **Solana Explorer**: [View Minted NFTs](https://explorer.solana.com/)
 - **FreeTSA Verification**: [freetsa.org](https://freetsa.org/)
