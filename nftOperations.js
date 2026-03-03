@@ -4590,10 +4590,9 @@ const transferCompressedNFT = async (mintAddress, recipientInput, walletType = n
         });
         if (resp.ok) return await resp.json();
       } catch (_) {}
-      // Fallback to direct Helius
+      // Fallback to public Solana RPC (no API key needed)
       const DAS_RPC_URLS_FALLBACK = [
-        'https://mainnet.helius-rpc.com/?api-key=8b86bd0d-4534-4ce9-a61d-ec3850cb0b62',
-        'https://mainnet.helius-rpc.com/?api-key=6b3d0180-4354-4e31-a2fc-9b6cd9e550a7',
+        'https://api.mainnet-beta.solana.com',
       ];
       for (const dasUrl of DAS_RPC_URLS_FALLBACK) {
         try {
@@ -5742,10 +5741,9 @@ const fetchCompressedNFTs = async (walletAddress, knownMints = null) => {
     }
   }
 
-  // DAS API — route through server proxy to avoid per-device Helius rate limits
+  // DAS API — route through server proxy to avoid per-device rate limits
   const DAS_RPC_URLS_FALLBACK = [
-    'https://mainnet.helius-rpc.com/?api-key=8b86bd0d-4534-4ce9-a61d-ec3850cb0b62',
-    'https://mainnet.helius-rpc.com/?api-key=6b3d0180-4354-4e31-a2fc-9b6cd9e550a7',
+    'https://api.mainnet-beta.solana.com',
   ];
   let DAS_PAGE_SIZE = 20; // Small pages — wallets with on-chain SVGs can exceed 20MB at higher limits
   const MAX_CNFT_METADATA_PER_CALL = 20; // Cap IPFS fetches per call to prevent OOM
