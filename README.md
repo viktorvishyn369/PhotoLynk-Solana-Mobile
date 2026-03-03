@@ -2,11 +2,15 @@
 
 **Camera-to-Blockchain Authenticity Proof in One Tap**
 
+> **⚠️ INTELLECTUAL PROPERTY NOTICE**  
+> This repository is licensed under **CC BY-NC-ND 4.0**. The code, ideas, logic, algorithms, and implementation patterns are **proprietary intellectual property**. You may view and study the code, but you **MAY NOT** use any part of it (including concepts, logic, or algorithms) in commercial products, listings, or production systems without explicit written permission from Viktor Vishyn (support@photolynk.io). See [LICENSE](LICENSE) for full terms.
+
 PhotoLynk is a mobile-first Android app that transforms your phone's camera into a blockchain-powered authenticity engine. Capture a photo, and in seconds it's minted as a compressed NFT on Solana with cryptographic proof of authenticity — complete with RFC 3161 trusted timestamps, C2PA provenance manifests, and EXIF integrity hashing.
 
 [![Solana Mobile](https://img.shields.io/badge/Solana-Mobile-9945FF?style=flat&logo=solana)](https://solanamobile.com/)
 [![Android](https://img.shields.io/badge/Platform-Android-3DDC84?style=flat&logo=android)](https://developer.android.com/)
 [![React Native](https://img.shields.io/badge/React_Native-0.76-61DAFB?style=flat&logo=react)](https://reactnative.dev/)
+[![License](https://img.shields.io/badge/License-CC_BY--NC--ND_4.0-red)](LICENSE)
 
 ---
 
@@ -372,7 +376,17 @@ git push origin feature/amazing-feature
 
 ## 📄 License
 
-MIT License - see [LICENSE](LICENSE) file
+**CC BY-NC-ND 4.0** (Creative Commons Attribution-NonCommercial-NoDerivatives)
+
+- ✅ View and study source code
+- ✅ Share repository link
+- ❌ No commercial use without permission
+- ❌ No building/distributing APKs without permission
+- ❌ No modified versions
+
+**Commercial use requires written permission**: support@photolynk.io
+
+See [LICENSE](LICENSE) file for full terms.
 
 ---
 
