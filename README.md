@@ -107,6 +107,9 @@ All powered by Solana's speed and Mobile Wallet Adapter for seamless UX.
 
 ### Installation
 
+> **📱 Already Live on Solana dApp Store**  
+> PhotoLynk is production-ready and available on the official Solana dApp Store for Seeker devices.
+
 1. **Download APK**
    ```bash
    # Production build included in submission

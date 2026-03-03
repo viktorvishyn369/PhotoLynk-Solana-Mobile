@@ -172,6 +172,9 @@
 
 ## Current Status: Production Deployed
 
+> **📱 Live on Solana dApp Store**  
+> PhotoLynk is already published and available on the official Solana dApp Store for Seeker devices.
+
 ### Technical Metrics
 - **Minting Cost**: $0.0005 per photo
 - **Confirmation Time**: 2-5 seconds average
@@ -179,6 +182,7 @@
 - **Verification**: 100% success rate (RFC 3161)
 
 ### User Metrics
+- **dApp Store**: Live and published
 - **APK**: Production build ready
 - **Platform**: Android (Expo SDK 52)
 - **Wallet Support**: Phantom, Solflare
